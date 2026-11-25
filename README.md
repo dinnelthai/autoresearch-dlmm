@@ -366,3 +366,7 @@ PRs welcome. The main areas for improvement:
 ## License
 
 MIT
+
+## Offline Adaptive Inventory research terminal
+
+The business-to-math offline engine is separate from the legacy candle heuristic. See [research/README.md](research/README.md). Start with `node research/serve.mjs` (localhost:8787) and `node research/test.mjs` (Node 20+). The new prototype uses synthetic/unverified normalized events, not protocol-exact or calibrated returns.

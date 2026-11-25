@@ -34,6 +34,7 @@ function mountApp(doc, E){
   on("demo",()=>load(E.demo($("scenario").value),"SYNTHETIC DEMO"));
   $("file").addEventListener("change",guard(async e=>{const f=e.target.files[0];if(!f)return;const v=JSON.parse(await f.text());load(Array.isArray(v)?v:v.events,"IMPORTED / UNVERIFIED");}));
   on("analyze",plan);on("compare",compare);on("labRun",compare);on("screen",screen);
+  on("suite",()=>{const r=request();r.pool="DEMO_POOL";const out=E.scenarioSuite(r,cfg()),n=clear("labResult");tab("lab");table(n,["情景","Adaptive vs Bid-Ask SOL","风险事件","Adaptive 决策"],out.rows.map(x=>[x.id,fmt(x.delta),x.adaptiveRiskBreaches,x.adaptiveActions.join(", ")]));json(n,out.summaries);add(n,"p","四个合成场景仅验证计算路径，不代表独立真实市场样本。","sectionnote")});
   on("startAdaptive",()=>start("adaptive"));on("startManual",()=>start("manual"));on("next",()=>advance(1));on("remaining",()=>advance(sessionEvents.length-cursor));on("submit",submit);
   on("save",()=>{if(!last)throw Error("没有账本");const blob=new Blob([JSON.stringify({source,request:sessionRequest,report:last},null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=el("a");a.href=url;a.download="logearn-simulation.json";a.click();URL.revokeObjectURL(url)});
   load(E.demo("range"),"SYNTHETIC DEMO");

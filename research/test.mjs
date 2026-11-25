@@ -34,7 +34,7 @@ const out=Engine.compare(req,ev,cfg);
 let count=0;function check(v,m){if(!v)throw Error(m);count++;}
 for(const r of out.runs.filter(x=>!["hodl","adaptive"].includes(x.mode))){check(r.state.bins.length>0,r.mode+" did not open: "+JSON.stringify(r.state.decisions[0]));check(r.report.fee>0,r.mode+" no fees");check(r.state.decisions[0].reason==="FIXED_BENCHMARK","static baseline incorrectly optimized");}
 const stream=Engine.createSession(req,cfg);for(const e of ev)stream.push(e);check(JSON.stringify(stream.snapshot().report)===JSON.stringify(Engine.run(req,ev,cfg).report),"stream / replay mismatch");
-const rw=Engine.run(req,[ev[0],{id:"reward",t:1,type:"REWARD",x:100,y:.2},ev[2]],{},"manual");check(Math.abs(rw.report.residual)<1e-8&&rw.report.reward>.2,"reward accounting");
+const rw=Engine.run({...req,entry:"position",positionBins:[{id:1,x:1000,y:0}]},[ev[0],{id:"reward",t:1,type:"REWARD",x:100,y:.2},ev[2]],{},"manual");check(Math.abs(rw.report.residual)<1e-8&&rw.report.reward>.2,"reward accounting");
 const expired=Engine.run(req,ev,{executionDelaySeconds:100},"manual",[{t:0,action:{type:"CLAIM"},options:{expiresAfterSeconds:5}}]);check(expired.state.receipts.some(x=>x.status==="EXPIRED"),"expiry");
 const partial=Engine.run(req,ev,cfg,"manual",[{t:120,action:{type:"OPEN",spec:{shape:"spot",width:4,bidFraction:.5,askFraction:.5}},options:{partial:true}}]);check(partial.state.receipts.some(x=>x.status==="PARTIAL")&&partial.state.bins.length>0,"partial deployment");
 check(Engine.analyzeRequest(req,ev.slice(0,5)).analysis.candidates.length>0,"analysis entry");console.log("Additional checks:",count);
@@ -46,3 +46,13 @@ const analysis=Engine.analyzeRequest(bizReq,Engine.demo("range").slice(0,5),{exe
 const w=Engine.weights(4,"hybrid",.5),ba=Engine.weights(4,"bid_ask",0);check(w.every((v,i)=>Math.abs(v-(.125+.5*ba[i]))<1e-10),"normalized mix");
 check(Engine.analyzeRequest(bizReq,[{...Engine.demo("range")[0],references:[]}]).analysis.reason==="REFERENCE_UNAVAILABLE","reference unavailable");
 check(Engine.run(bizReq,Engine.demo("crash"),{executionDelaySeconds:0}).riskBreaches>0,"risk monitor");console.log("Integration assertions:",count);
+
+// Exercise active decision branches using test-only overrides, never production calibration.
+const branchCfg={executionDelaySeconds:0,lambda:0,kappaSol:0,minImprovementSol:0,uncertaintySol:0};
+const branchEvents=Engine.demo("range",branchCfg).map(e=>e.type==="MARKET"?{...e,flowSol:100}:e);
+const branch=Engine.run(req,branchEvents,branchCfg);check(branch.state.receipts.some(x=>x.action==="OPEN"&&x.status==="CONFIRMED"),"adaptive open");check(branch.state.receipts.some(x=>x.action==="REPOSITION"&&x.status==="CONFIRMED"),"adaptive reposition");check(Math.abs(branch.report.residual)<1e-8,"adaptive accounting");
+const stressReq={entry:"position",pool:"DEMO_POOL",sol:5,meme:0,positionBins:[{id:1,x:30000,y:0},{id:-1,x:0,y:1}],initialPrice:.0001};
+const stress=Engine.run(stressReq,Engine.demo("crash"),cfg);check(stress.state.decisions[0].action.type==="HOLD","warmup should not liquidate");check(stress.state.decisions.some(d=>d.regime==="STRESS"&&d.action.type==="REMOVE_AND_HOLD"),"stress removal");check(Math.abs(stress.report.residual)<1e-8,"stress ledger");
+const noReward=Engine.run(req,[ev[0],{id:"reward",t:1,type:"REWARD",x:100,y:.2},ev[2]],{},"hodl");check(noReward.report.reward===0,"HODL must not receive LP rewards");
+const suite=Engine.scenarioSuite(bizReq,cfg);check(suite.rows.length===4&&suite.summaries.scenario.independentGroupCount===4,"scenario suite");check(suite.summaries.scenario.confidenceInterval===null,"no fabricated significance");
+let splitRejected=false;try{Engine.evaluateSamples([{id:"a",group:"same",split:"train",request:req,events:ev},{id:"b",group:"same",split:"test",request:req,events:ev}],cfg)}catch{splitRejected=true}check(splitRejected,"frozen group leakage");console.log("Extended integration assertions:",count);

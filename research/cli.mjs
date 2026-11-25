@@ -8,7 +8,9 @@ const read=path=>JSON.parse(readFileSync(path,'utf8'));
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function output(value,manifest){console.log(JSON.stringify({manifest,...value},null,2));}
 try{
- if(command==='help'){console.log('node research/cli.mjs demo [range|up|down|crash]\nnode research/cli.mjs analyze|compare|run DATASET.json [adaptive|manual|spot|curve|bid_ask|hybrid|asymmetric|hodl]\nnode research/cli.mjs shadow REQUEST.json < events.ndjson\nnode research/cli.mjs opportunities DATASET.json');}
+ if(command==='help'){console.log('node research/cli.mjs demo [range|up|down|crash]\nnode research/cli.mjs analyze|compare|run DATASET.json [adaptive|manual|spot|curve|bid_ask|hybrid|asymmetric|hodl]\nnode research/cli.mjs shadow REQUEST.json < events.ndjson\nnode research/cli.mjs opportunities DATASET.json\nnode research/cli.mjs suite\nnode research/cli.mjs evaluate SAMPLES.json');}
+ else if(command==='suite'){output(Engine.scenarioSuite(defaultRequest),{source:"SYNTHETIC_DEMO",calibrated:false,protocolExact:false});}
+ else if(command==='evaluate'){const d=read(file);output(Engine.evaluateSamples(d.samples,d.config||{}),{source:"IMPORTED_UNVERIFIED",datasetSha256:hash(d),calibrated:false,protocolExact:false});}
  else if(command==='shadow'){
    const d=read(file),s=Engine.createSession(d.request,d.config||{},d.mode||'adaptive');
    for await(const line of createInterface({input:process.stdin,crlfDelay:Infinity})){if(!line.trim())continue;const e=JSON.parse(line);if(e.type==='ACTION')s.action(e.action,e.options||{});else s.push(e);console.log(JSON.stringify({source:'UNVERIFIED_EVENT_STREAM',snapshot:s.snapshot()}));}

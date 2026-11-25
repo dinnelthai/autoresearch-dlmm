@@ -178,7 +178,7 @@ function createResearchEngine() {
     else if(e.type==="SWAP")swap(s,c,e);
     else if(e.type==="POOL_STATE"){assert(Array.isArray(e.bins),"pool snapshot bins required");s.poolBins={};for(const b of e.bins){assert(Number.isInteger(b.id)&&!(b.id in s.poolBins),"invalid snapshot bin");s.poolBins[b.id]=finite(b.externalLiquiditySol,"external liquidity",EPS);}}
     else if(e.type==="LIQUIDITY_UPDATE"){assert(Number.isInteger(e.bin),"invalid update bin");s.poolBins[e.bin]=finite(e.externalLiquiditySol,"external liquidity",EPS);}
-    else if(e.type==="REWARD"){const x=finite(e.x??0,"reward x"),y=finite(e.y??0,"reward y");s.pendingFees.x+=x;s.pendingFees.y+=y;s.rewardsEarned.x+=x;s.rewardsEarned.y+=y;}
+    else if(e.type==="REWARD"){const x=finite(e.x??0,"reward x"),y=finite(e.y??0,"reward y");if(s.bins.length){s.pendingFees.x+=x;s.pendingFees.y+=y;s.rewardsEarned.x+=x;s.rewardsEarned.y+=y;}}
     else assert(false,"unknown event type");
     if(s.market?.ref.valid&&e.t-s.market.t<=c.maxReferenceAge){record(s,s.market.ref.price,e.t);const r=risk(s,c,s.market.ref.price);if(r.violations.length)s.riskLog.push({t:e.t,event:e.id,...r});}
   }
@@ -264,6 +264,7 @@ function createResearchEngine() {
   function decide(s,c,mode="adaptive"){
     if(!s.market?.ref.valid)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"UNKNOWN_REFERENCE",candidates:[],regime:"UNKNOWN"};
     const g=classify(s,c),p=s.market.ref.price,r=risk(s,c,p);
+    if(g.regime==="UNKNOWN"&&!r.violations.length&&!g.flags.includes("HOLDER_CONCENTRATION"))return {action:{type:s.bins.length?"HOLD":"NO_LP"},reason:"WARMUP_OR_INSUFFICIENT_FEATURES",regime:g.regime,risk:r,candidates:[]};
     if(["STRESS","DISTRIBUTION_RANGE","DEAD_RANGE","UNKNOWN"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION")){
       return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"MARKET_GATE",regime:g.regime,risk:r,candidates:[]};
     }
@@ -353,7 +354,32 @@ function createResearchEngine() {
   }
   function opportunities(pools,cfg={}){
     const c=config(cfg);return pools.map(pool=>{const s=newState({entry:"sol",meme:0,sol:10,initialPrice:c.referencePrice},c);for(const e of pool.events)event(s,c,e);const g=classify(s,c);return {pool:pool.id,...g,admitted:!["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)&&!g.flags.includes("HOLDER_CONCENTRATION")}});}
-  return {DEFAULTS,config,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest};
+  function evaluateSamples(samples,overrides={}){
+    assert(Array.isArray(samples)&&samples.length,"samples required");
+    const ids=new Set(),groups=new Map(),rows=[];
+    for(const sample of samples){
+      assert(typeof sample.id==="string"&&!ids.has(sample.id),"sample id missing or duplicate");ids.add(sample.id);
+      assert(typeof sample.group==="string"&&sample.group.length,"group required");
+      const split=sample.split??"scenario";assert(["train","validation","test","scenario"].includes(split),"invalid split");
+      assert(!groups.has(sample.group)||groups.get(sample.group)===split,"group crosses frozen splits");groups.set(sample.group,split);
+      const out=compare(sample.request,sample.events,overrides);
+      const a=out.runs.find(r=>r.mode==="adaptive"),b=out.runs.find(r=>r.mode==="bid_ask");
+      const valid=x=>x.status==="SIMULATED"&&x.report!==null;
+      rows.push({id:sample.id,group:sample.group,split,source:"UNVERIFIED",result:out.results.map(x=>({mode:x.mode,status:x.status,pnl:x.report?.pnl??null,alpha:x.report?.alpha??null,fee:x.report?.fee??null,maxDrawdown:x.maxDrawdown})),delta:valid(a)&&valid(b)?a.report.pnl-b.report.pnl:null,adaptiveRiskBreaches:a.riskBreaches,adaptiveActions:a.state.decisions.map(d=>d.action.type)});
+    }
+    const summaries={};
+    for(const split of new Set(rows.map(r=>r.split))){
+      const all=rows.filter(r=>r.split===split),valid=all.filter(r=>r.delta!==null),byGroup=new Map();
+      for(const v of valid){const l=byGroup.get(v.group)||[];l.push(v.delta);byGroup.set(v.group,l)}
+      const means=[...byGroup.values()].map(l=>sum(l)/l.length).sort((a,b)=>a-b),n=means.length;
+      summaries[split]={sampleCount:all.length,validCount:valid.length,independentGroupCount:n,meanGroupDelta:n?sum(means)/n:null,medianGroupDelta:n?means[Math.floor((n-1)/2)]:null,worstGroupDelta:n?means[0]:null,positiveGroupFraction:n?means.filter(x=>x>0).length/n:null,confidenceInterval:null,conclusion:"INCONCLUSIVE_UNVERIFIED_DATA_NO_CALIBRATION"};
+    }
+    return {source:"UNVERIFIED_OFFLINE_EXPERIMENT",parameterSelection:false,comparison:"Adaptive minus Static Bid-Ask, grouped by declared sample group",config:config(overrides),rows,summaries};
+  }
+  function scenarioSuite(request,overrides={}){
+    return evaluateSamples(["range","up","down","crash"].map(name=>({id:name,group:name,split:"scenario",request,events:demo(name,overrides)})),overrides);
+  }
+  return {DEFAULTS,config,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest,evaluateSamples,scenarioSuite};
 }
 export const Engine=createResearchEngine();
 export {createResearchEngine};
