@@ -19,9 +19,9 @@ function createResearchEngine() {
   function nav(s,p){const b=balances(s);return b.x*p+b.y}
   function hodl(s,p){return s.baseline.x*p+s.baseline.y}
   function reportAt(s,p){
-    const b=balances(s),v=nav(s,p),grossFee=s.feesEarned.x*p+s.feesEarned.y,inventory=sum(s.fills.map(f=>f.q*(p-f.price))),fair=sum(s.fills.filter(f=>f.reference!==null).map(f=>f.q*(p-f.reference))),adverse=sum(s.fills.filter(f=>f.reference!==null).map(f=>f.q*(f.price-f.reference))),unattributed=sum(s.fills.filter(f=>f.reference===null).map(f=>f.q*(p-f.price))),alpha=v-hodl(s,p);
+    const b=balances(s),v=nav(s,p),grossFee=s.feesEarned.x*p+s.feesEarned.y,reward=s.rewardsEarned.x*p+s.rewardsEarned.y,inventory=sum(s.fills.map(f=>f.q*(p-f.price))),fair=sum(s.fills.filter(f=>f.reference!==null).map(f=>f.q*(p-f.reference))),adverse=sum(s.fills.filter(f=>f.reference!==null).map(f=>f.q*(f.price-f.reference))),unattributed=sum(s.fills.filter(f=>f.reference===null).map(f=>f.q*(p-f.price))),alpha=v-hodl(s,p);
     const pnl=v-s.initialNav-s.externalFlows;
-    return {nav:v,pnl,alpha,hodl:hodl(s,p),solBenchmark:s.initialNav+s.externalFlows,alphaSol:pnl,fee:grossFee,feeX:s.feesEarned.x,feeY:s.feesEarned.y,inventory,fair,adverse,unattributed,cost:s.cost,externalFlows:s.externalFlows,reference:p,inventoryX:b.x,inventoryY:b.y,ratio:v>EPS?b.x*p/v:0,residual:alpha-(inventory+grossFee-s.cost),unclaimed:clone(s.pendingFees),claimed:clone(s.claimed),markout:markoutSummary(s),turnover:s.turnover,rebalances:s.rebalances};
+    return {nav:v,pnl,alpha,hodl:hodl(s,p),solBenchmark:s.initialNav+s.externalFlows,alphaSol:pnl,fee:grossFee,reward,feeX:s.feesEarned.x,feeY:s.feesEarned.y,inventory,fair,adverse,unattributed,cost:s.cost,externalFlows:s.externalFlows,reference:p,inventoryX:b.x,inventoryY:b.y,ratio:v>EPS?b.x*p/v:0,residual:alpha-(inventory+grossFee+reward-s.cost),unclaimed:clone(s.pendingFees),claimed:clone(s.claimed),markout:markoutSummary(s),turnover:s.turnover,rebalances:s.rebalances};
   }
   function newState(request,c){
     assert(["holding","sol","position"].includes(request.entry),"invalid entry");
@@ -33,7 +33,7 @@ function createResearchEngine() {
     assert(new Set(bins.map(b=>b.id)).size===bins.length,"duplicate initial bin");
     const pendingFees={x:finite(request.pendingFeeX??0,"pendingFeeX"),y:finite(request.pendingFeeY??0,"pendingFeeY")};
     assert(request.entry==="position"||pendingFees.x+pendingFees.y===0,"pending fees require position");
-    const s={wallet:{x,y},bins,pendingFees,feesEarned:{x:0,y:0},claimed:{x:0,y:0},fills:[],marks:[],market:null,history:[],baseline:{x:0,y:0},initialNav:0,externalFlows:0,cost:0,turnover:0,rebalances:0,receipts:[],pending:null,lastActionTime:-1e12,curve:[],seen:[],lastTime:-1,quality:[],status:bins.length?"OPEN":"FLAT",decisions:[]};
+    const s={wallet:{x,y},bins,pendingFees,feesEarned:{x:0,y:0},rewardsEarned:{x:0,y:0},poolBins:{},claimed:{x:0,y:0},fills:[],marks:[],market:null,history:[],baseline:{x:0,y:0},initialNav:0,externalFlows:0,cost:0,turnover:0,rebalances:0,receipts:[],pending:null,lastActionTime:-1e12,curve:[],seen:[],lastTime:-1,quality:[],status:bins.length?"OPEN":"FLAT",decisions:[]};
     s.baseline=balances(s);s.initialNav=nav(s,p);assert(s.initialNav>0,"initial capital must be positive");return s;
   }
   function reference(e,c){
@@ -86,6 +86,7 @@ function createResearchEngine() {
     const loss=Math.max(0,v-stressedValue,s.initialNav+s.externalFlows-stressedValue);
     const worstRatio=postX*p+postY>EPS?postX*p/(postX*p+postY):0;
     const violations=[];
+    if(s.market?.ref.valid&&(!Number.isFinite(s.market.exitDepth)||postX*p>s.market.exitDepth+EPS))violations.push("EXIT_CAPACITY");
     if(s.wallet.y<c.minSolReserve-EPS)violations.push("SOL_RESERVE");
     if(postX>c.maxInventoryTokens+EPS)violations.push("INVENTORY_QUANTITY");
     if(worstRatio>c.maxInventoryRatio+EPS)violations.push("INVENTORY_RATIO");
@@ -131,28 +132,29 @@ function createResearchEngine() {
   function applyAction(s,c,action,t,opts={}){
     const p=s.market?.ref.valid?s.market.ref.price:null;
     const k=action.type;if(["HOLD","NO_LP"].includes(k))return {status:"NO_ACTION"};
-    if(k==="FUND"){assert(p!==null,"reference required for external flows");const x=finite(action.x??0,"fund x"),y=finite(action.y??0,"fund y");s.wallet.x+=x;s.wallet.y+=y;s.baseline.x+=x;s.baseline.y+=y;s.externalFlows+=x*p+y;return {status:"CONFIRMED"}}
+    if(k==="FUND"||k==="WITHDRAW"){assert(p!==null,"reference required for external flows");const x=finite(action.x??0,"flow x"),y=finite(action.y??0,"flow y"),sign=k==="FUND"?1:-1;if(sign<0)assert(x<=Math.min(s.wallet.x,s.baseline.x)+EPS&&y<=Math.min(s.wallet.y,s.baseline.y)+EPS,"withdraw exceeds wallet or matched HODL inventory");s.wallet.x+=sign*x;s.wallet.y+=sign*y;s.baseline.x+=sign*x;s.baseline.y+=sign*y;s.externalFlows+=sign*(x*p+y);return {status:"CONFIRMED"}}
     assert(p!==null||["CLAIM","REMOVE","REMOVE_AND_HOLD","REDUCE"].includes(k),"reference required for "+k);
     pay(s,c.operationCostSol);
     if(opts.fail)return {status:"FAILED",reason:"SYNTHETIC_FAILURE"};
     if(k==="CLAIM"){claim(s);return {status:"CONFIRMED"}}
+    if(k==="DISPOSE"){const wanted=Math.min(finite(action.quantity??s.wallet.x,"dispose quantity"),s.wallet.x),sold=-spot(s,c,p,-wanted,s.market,t);return {status:sold+EPS<wanted?"PARTIAL":"CONFIRMED",sold,remainingInventory:s.wallet.x}}
     if(k==="REDUCE"||k==="REMOVE"||k==="REMOVE_AND_HOLD"||k==="REMOVE_AND_DISPOSE"){
       const fraction=k==="REDUCE"?finite(action.fraction??.5,"reduce fraction",0,1):1;
       release(s,fraction*(opts.partial?.5:1));if(k.startsWith("REMOVE"))claim(s);
-      let remaining=0;
-      if(k==="REMOVE_AND_DISPOSE"&&!opts.partial){const wanted=s.wallet.x;spot(s,c,p,-wanted,s.market,t);remaining=s.wallet.x}
-      return {status:opts.partial||remaining>EPS?"PARTIAL":"CONFIRMED",remainingInventory:remaining};
+      let remaining=s.wallet.x,sold=0;
+      if(k==="REMOVE_AND_DISPOSE"&&!opts.partial){const wanted=s.wallet.x;sold=-spot(s,c,p,-wanted,s.market,t);remaining=s.wallet.x}
+      return {status:opts.partial||(k==="REMOVE_AND_DISPOSE"&&remaining>EPS)?"PARTIAL":"CONFIRMED",remainingInventory:remaining,sold,phases:k==="REMOVE_AND_DISPOSE"?["REMOVE",opts.partial?"DISPOSE_NOT_ATTEMPTED":"DISPOSE"]:["REMOVE"]};
     }
     assert(["OPEN","ADD","REPOSITION"].includes(k),"unsupported action "+k);
     if(k==="OPEN")assert(s.bins.length===0,"OPEN requires flat position");
     if(k==="REPOSITION"){release(s);claim(s);s.rebalances++;if(opts.partial)return {status:"PARTIAL",reason:"REMOVED_NOT_REDEPLOYED"}}
     if(action.acquireSol){const budget=Math.min(action.acquireSol,Math.max(0,s.wallet.y-c.minSolReserve));spot(s,c,p,budget/(p*(1+c.slippageBps/10000)),s.market,t)}
-    const spec=action.spec;assert(spec&&Number.isInteger(spec.width)&&spec.width>0&&spec.width<=50,"invalid plan");
+    const spec=action.spec?{...action.spec}:null;assert(spec&&Number.isInteger(spec.width)&&spec.width>0&&spec.width<=50,"invalid plan");
     for(const key of ["bidFraction","askFraction","active","alphaBid","alphaAsk"])if(spec[key]!=null)finite(spec[key],key,0,1);
-    const d=deploy(s,c,p,spec);return {status:opts.partial?"PARTIAL":"CONFIRMED",...d};
+    if(opts.partial){spec.bidFraction*=.5;spec.askFraction*=.5;}const d=deploy(s,c,p,spec);return {status:opts.partial?"PARTIAL":"CONFIRMED",...d};
   }
   function swap(s,c,e){
-    const p=price(c,e.bin),q=finite(e.baseQty,"swap baseQty"),ext=finite(e.externalLiquiditySol,"external liquidity",EPS),fx=finite(e.mmFeeX,"MM fee X"),fy=finite(e.mmFeeY,"MM fee Y");assert(["LP_BUY","LP_SELL"].includes(e.side),"invalid swap direction");
+    const p=price(c,e.bin),q=finite(e.baseQty,"swap baseQty"),ext=finite(e.externalLiquiditySol??s.poolBins[e.bin],"external liquidity",EPS),fx=finite(e.mmFeeX,"MM fee X"),fy=finite(e.mmFeeY,"MM fee Y");assert(["LP_BUY","LP_SELL"].includes(e.side),"invalid swap direction");
     const b=s.bins.find(b=>b.id===e.bin);if(!b||b.liquidity<EPS||q===0)return;
     const share=b.liquidity/(ext+b.liquidity);
     if(share>c.maxBinShare+EPS){s.quality.push({id:e.id,reason:"FROZEN_PATH_SHARE_LIMIT",share});return;}
@@ -171,15 +173,20 @@ function createResearchEngine() {
     assert(typeof e.id==="string"&&e.id.length,"event id required");finite(e.t,"event time");assert(e.t>=s.lastTime,"out of order event");assert(!s.seen.includes(e.id),"duplicate event");s.seen.push(e.id);s.lastTime=e.t;
     if(e.type==="MARKET"){const ref=reference(e,c);s.market={...e,ref};if(ref.valid){s.history.push(s.market);mature(s,c,s.market)}else s.quality.push({id:e.id,reason:ref.reason})}
     else if(e.type==="SWAP")swap(s,c,e);
+    else if(e.type==="POOL_STATE"){assert(Array.isArray(e.bins),"pool snapshot bins required");s.poolBins={};for(const b of e.bins){assert(Number.isInteger(b.id)&&!(b.id in s.poolBins),"invalid snapshot bin");s.poolBins[b.id]=finite(b.externalLiquiditySol,"external liquidity",EPS);}}
+    else if(e.type==="LIQUIDITY_UPDATE"){assert(Number.isInteger(e.bin),"invalid update bin");s.poolBins[e.bin]=finite(e.externalLiquiditySol,"external liquidity",EPS);}
+    else if(e.type==="REWARD"){const x=finite(e.x??0,"reward x"),y=finite(e.y??0,"reward y");s.pendingFees.x+=x;s.pendingFees.y+=y;s.rewardsEarned.x+=x;s.rewardsEarned.y+=y;}
     else assert(false,"unknown event type");
     if(s.market?.ref.valid&&e.t-s.market.t<=c.maxReferenceAge)record(s,s.market.ref.price,e.t);
   }
   function executePending(s,c,t){
-    if(!s.pending||t<s.pending.due)return;
+    if(!s.pending)return;
+    if(s.pending.expires!==null&&t>s.pending.expires){const op=s.pending;s.pending=null;s.receipts.push({id:op.id,t,action:op.action.type,status:"EXPIRED"});return;}
+    if(t<s.pending.due)return;
     const op=s.pending,trial=clone(s);trial.pending=null;
     try{
       const result=applyAction(trial,c,op.action,t,op.options);
-      if(["OPEN","ADD","REPOSITION"].includes(op.action.type)&&result.status!=="FAILED"){
+      if(["OPEN","ADD","REPOSITION"].includes(op.action.type)&&result.status!=="FAILED"&&result.reason!=="REMOVED_NOT_REDEPLOYED"){
         assert(trial.market?.ref.valid,"invalid execution reference");
         const r=risk(trial,c,trial.market.ref.price),g=classify(trial,c);
         assert(!r.violations.length,"execution risk: "+r.violations.join(","));
@@ -191,7 +198,7 @@ function createResearchEngine() {
   }
   function submit(s,c,action,t,options={}){
     assert(!s.pending,"operation already pending");const id="operation:"+s.receipts.length;
-    s.pending={id,action:clone(action),due:t+c.executionDelaySeconds,options:clone(options)};s.receipts.push({id,t,action:action.type,status:"SUBMITTED"});
+    const expires=options.expiresAfterSeconds==null?null:t+finite(options.expiresAfterSeconds,"expiry");s.pending={id,action:clone(action),due:t+c.executionDelaySeconds,expires,options:clone(options)};s.receipts.push({id,t,action:action.type,status:"SUBMITTED"});
     if(c.executionDelaySeconds===0)executePending(s,c,t);
   }
   function forecast(s,c){
@@ -204,7 +211,7 @@ function createResearchEngine() {
       for(let i=1;i<=c.forecastSteps;i++){
         const id=mid+pat.f(i)+(j===0?drift*i:0),px=price(c,id),t=m.t+60*i;
         events.push({type:"MARKET",id:"f"+j+"m"+i,t,pool:m.pool,references:[{pool:"scenario-a",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t},{pool:"scenario-b",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t}],exitDepth:m.exitDepth,tokenSafe:m.tokenSafe,holderShare:m.holderShare,holderOutflow:m.holderOutflow,buyImbalance:m.buyImbalance,flowSol:m.flowSol});
-        const qty=Math.max(0,m.flowSol||0)/px*.25,side=pat.f(i)>=pat.f(i-1)?"LP_SELL":"LP_BUY",fee=qty*c.feeBps/10000*(1-c.protocolShare);
+        const qty=Math.max(0,m.flowSol||0)/px*.25,side=pat.f(i)+(j===0?drift*i:0)>=pat.f(i-1)+(j===0?drift*(i-1):0)?"LP_SELL":"LP_BUY",fee=qty*c.feeBps/10000*(1-c.protocolShare);
         events.push({type:"SWAP",id:"f"+j+"s"+i,t,bin:id,side,baseQty:qty,externalLiquiditySol:Math.max(10,m.ref.depth/2),mmFeeX:side==="LP_BUY"?fee:0,mmFeeY:side==="LP_SELL"?fee*px:0});
       }
       return {name:pat.name,events};
@@ -216,6 +223,7 @@ function createResearchEngine() {
     try{start=clone(s);start.pending=null;const a=applyAction(start,c,action,s.market.t);const g=classify(start,c),rr=risk(start,c,p);
       if(["OPEN","ADD","REPOSITION"].includes(action.type)){
         if(!start.bins.length)throw Error("EMPTY_DEPLOYMENT");
+        if(action.type==="REPOSITION"&&(start.turnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances))throw Error("REBALANCE_BUDGET");
         if(["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION"))throw Error("MARKET_ADMISSION");
         if(g.flags.includes("TOXIC_BID")&&sum(start.bins.map(b=>b.y))>EPS)throw Error("TOXIC_BID");
         if(g.flags.includes("TOXIC_ASK")&&sum(start.bins.map(b=>b.x))>EPS)throw Error("TOXIC_ASK");
@@ -255,7 +263,7 @@ function createResearchEngine() {
     if(!feasible.length)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"RISK_BLOCKED",regime:g.regime,risk:r,candidates:results};
     let best=feasible[0];
     if(base.feasible&&best.action.type!==base.action.type&&best.utility-base.utility<=c.uncertaintySol+c.minImprovementSol)best=base;
-    if(best.action.type==="REPOSITION"&&(s.market.t-s.lastActionTime<c.cooldownSeconds||s.rebalances>=c.maxRebalances||s.turnover>=c.maxTurnoverSol)&&base.feasible)best=base;
+    if(best.action.type==="REPOSITION"&&(s.market.t-s.lastActionTime<c.cooldownSeconds||s.rebalances>=c.maxRebalances||s.turnover>=c.maxTurnoverSol)){if(base.feasible)best=base;else best=feasible.find(v=>v.action.type!=="REPOSITION")||{action:{type:"REMOVE_AND_HOLD"},feasible:false,reason:"REBALANCE_BUDGET"};}
     return {action:best.action,reason:best===base?"BASELINE_WINS_OR_MARGIN":"MAX_FEASIBLE_UTILITY",regime:g.regime,risk:r,selected:best,candidates:results,forecastLabel:"SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED"};
   }
   function liquidation(s,c){
@@ -265,23 +273,59 @@ function createResearchEngine() {
     const sell=Math.min(b.x,depth/p),remaining=b.x-sell,proceeds=sell*p*(1-c.slippageBps/10000);
     return {status:remaining>EPS?"PARTIAL":"ESTIMATE",value:remaining>EPS?null:b.y+proceeds,solProceeds:b.y+proceeds,unsoldMeme:remaining};
   }
-  function run(request,events,overrides={},mode="adaptive",manual=[]){
-    const c=config(overrides),s=newState(request,c);assert(Array.isArray(events)&&events.length,"events required");
+  function createSession(request,overrides={},mode="adaptive"){
+    const c=config(overrides),s=newState(request,c);
     assert(["adaptive","spot","curve","bid_ask","hybrid","asymmetric","hodl","sol_hold","manual"].includes(mode),"invalid mode");
-    const sorted=manual.slice().sort((a,b)=>a.t-b.t);let mi=0,lastDecision=-Infinity,opened=false;
-    for(const e of events){
+    const staticMode=!["adaptive","hodl","sol_hold","manual"].includes(mode);
+    let lastDecision=-Infinity,staticAttempted=false;
+    if(mode==="hodl"||mode==="sol_hold"){release(s);claim(s);}
+    function push(e){
       event(s,c,e);executePending(s,c,e.t);
-      while(mi<sorted.length&&sorted[mi].t<=e.t){const op=sorted[mi++];if(s.pending){s.receipts.push({t:e.t,status:"REJECTED",action:op.action.type,reason:"OPERATION_PENDING"});continue;}submit(s,c,op.action,e.t,op.options||{});}
-      if(e.type!=="MARKET"||s.pending||mode==="manual"||mode==="hodl"||mode==="sol_hold")continue;
-      if(mode!=="adaptive"&&opened)continue;
-      if(e.t-lastDecision<c.cooldownSeconds)continue;
-      const d=decide(s,c,mode);s.decisions.push({t:e.t,regime:d.regime,action:d.action,reason:d.reason,selected:d.selected??null,candidates:d.candidates.map(x=>({label:x.action.label||x.action.type,action:x.action,utility:x.utility??null,feasible:x.feasible,reason:x.reason??null}))});lastDecision=e.t;
-      if(!["HOLD","NO_LP"].includes(d.action.type)){submit(s,c,d.action,e.t);if(mode!=="adaptive")opened=true}
+      if(e.type!=="MARKET"||s.pending||["manual","hodl","sol_hold"].includes(mode))return;
+      if(e.t-lastDecision<c.cooldownSeconds)return;
+      let d;
+      if(staticMode){
+        if(staticAttempted)return;
+        const g=classify(s,c);
+        if(!s.market.ref.valid||g.regime==="UNKNOWN")return;
+        staticAttempted=true;
+        const label=mode,shape=mode==="asymmetric"?"hybrid":mode;
+        const action={type:s.bins.length?"REPOSITION":"OPEN",label,spec:{shape,width:4,bidFraction:.5,askFraction:.7,active:shape==="curve"?.2:shape==="spot"?.1:0,alphaBid:mode==="asymmetric"?.75:.5,alphaAsk:mode==="asymmetric"?.25:.5,skewBid:mode==="asymmetric"?-1:0,skewAsk:mode==="asymmetric"?1:0}};
+        const v=evaluate(s,c,action,forecast(s,c));
+        d={action:v.feasible?action:{type:"NO_LP"},reason:v.feasible?"FIXED_BENCHMARK":"FIXED_BENCHMARK_BLOCKED:"+v.reason,regime:g.regime,selected:v.feasible?v:null,candidates:[v]};
+      }else d=decide(s,c,mode);
+      s.decisions.push({t:e.t,regime:d.regime,action:d.action,reason:d.reason,selected:d.selected??null,candidates:d.candidates.map(x=>({label:x.action.label||x.action.type,action:x.action,utility:x.utility??null,feasible:x.feasible,reason:x.reason??null}))});lastDecision=e.t;
+      if(!["HOLD","NO_LP"].includes(d.action.type))submit(s,c,d.action,e.t);
     }
-    const m=s.market,valid=m?.ref.valid&&s.lastTime-m.t<=c.maxReferenceAge;
-    const report=valid?reportAt(s,m.ref.price):null;
-    if(report)assert(Math.abs(report.residual)<1e-6*Math.max(1,Math.abs(report.nav)),"accounting residual");
-    return {source:"SYNTHETIC_OR_UNVERIFIED_NORMALIZED_EVENTS",calibrated:false,protocolExact:false,status:!valid?"REFERENCE_UNAVAILABLE":s.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT")?"INVALID_SHARE_ASSUMPTION":s.pending?"PENDING":"SIMULATED",mode,entry:request.entry,report,liquidation:valid?liquidation(s,c):{status:"UNAVAILABLE",value:null},risk:valid?risk(s,c,m.ref.price):null,maxDrawdown:Math.max(0,...s.curve.map(x=>x.drawdown)),state:s,config:c};
+    function action(a,options={}){
+      assert(s.lastTime>=0,"feed market event first");
+      if(s.pending){s.receipts.push({t:s.lastTime,status:"REJECTED",action:a.type,reason:"OPERATION_PENDING"});return;}
+      submit(s,c,a,s.lastTime,options);
+    }
+    function analyze(){
+      if(!s.market?.ref.valid||s.lastTime-s.market.t>c.maxReferenceAge)return {action:{type:"NO_LP"},reason:"REFERENCE_UNAVAILABLE",candidates:[]};
+      return decide(s,c,"adaptive");
+    }
+    function snapshot(){
+      const m=s.market,valid=m?.ref.valid&&s.lastTime-m.t<=c.maxReferenceAge;
+      const report=valid?reportAt(s,m.ref.price):null;
+      if(report)assert(Math.abs(report.residual)<1e-6*Math.max(1,Math.abs(report.nav)),"accounting residual");
+      const status=!valid?"REFERENCE_UNAVAILABLE":s.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT")?"INVALID_SHARE_ASSUMPTION":s.pending?"PENDING":"SIMULATED";
+      const curve=s.curve,avgCapital=curve.length?sum(curve.map(x=>x.nav))/curve.length:null;
+      return clone({source:"SYNTHETIC_OR_UNVERIFIED_NORMALIZED_EVENTS",calibrated:false,protocolExact:false,status,mode,entry:request.entry,report,liquidation:valid?liquidation(s,c):{status:"UNAVAILABLE",value:null},risk:valid?risk(s,c,m.ref.price):null,maxDrawdown:Math.max(0,...curve.map(x=>x.drawdown)),avgObservedNav:avgCapital,state:s,config:c});
+    }
+    return {push,action,analyze,snapshot};
+  }
+  function run(request,events,overrides={},mode="adaptive",manual=[]){
+    assert(Array.isArray(events)&&events.length,"events required");
+    const session=createSession(request,overrides,mode);
+    const sorted=manual.slice().sort((a,b)=>a.t-b.t);let mi=0;
+    for(const e of events){session.push(e);while(mi<sorted.length&&sorted[mi].t<=e.t){const op=sorted[mi++];session.action(op.action,op.options||{});}}
+    return session.snapshot();
+  }
+  function analyzeRequest(request,events,overrides={}){
+    const s=createSession(request,overrides,"manual");for(const e of events)s.push(e);
+    return {analysis:s.analyze(),snapshot:s.snapshot()};
   }
   function compare(request,events,overrides={}){
     const modes=["hodl","spot","curve","bid_ask","hybrid","asymmetric","adaptive"];
@@ -299,7 +343,7 @@ function createResearchEngine() {
   }
   function opportunities(pools,cfg={}){
     const c=config(cfg);return pools.map(pool=>{const s=newState({entry:"sol",meme:0,sol:10,initialPrice:c.referencePrice},c);for(const e of pool.events)event(s,c,e);const g=classify(s,c);return {pool:pool.id,...g,admitted:!["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)&&!g.flags.includes("HOLDER_CONCENTRATION")}});}
-  return {DEFAULTS,config,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities};
+  return {DEFAULTS,config,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest};
 }
 export const Engine=createResearchEngine();
 export {createResearchEngine};

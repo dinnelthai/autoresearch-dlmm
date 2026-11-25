@@ -27,3 +27,14 @@ function selfTest(E){
   return {count,results:result.results.map(r=>({mode:r.mode,status:r.status,pnl:r.report.pnl,alpha:r.report.alpha,fee:r.report.fee})),adaptiveDecisions:result.runs.at(-1).state.decisions.map(d=>d.action.type)};
 }
 console.log(JSON.stringify(selfTest(Engine),null,2));
+
+// Integration checks: static baselines must execute their own fixed allocations.
+const req={entry:"holding",meme:50000,sol:5,initialPrice:.0001},ev=Engine.demo("range"),cfg={executionDelaySeconds:0};
+const out=Engine.compare(req,ev,cfg);
+let count=0;function check(v,m){if(!v)throw Error(m);count++;}
+for(const r of out.runs.filter(x=>!["hodl","adaptive"].includes(x.mode))){check(r.state.bins.length>0,r.mode+" did not open: "+JSON.stringify(r.state.decisions[0]));check(r.report.fee>0,r.mode+" no fees");check(r.state.decisions[0].reason==="FIXED_BENCHMARK","static baseline incorrectly optimized");}
+const stream=Engine.createSession(req,cfg);for(const e of ev)stream.push(e);check(JSON.stringify(stream.snapshot().report)===JSON.stringify(Engine.run(req,ev,cfg).report),"stream / replay mismatch");
+const rw=Engine.run(req,[ev[0],{id:"reward",t:1,type:"REWARD",x:100,y:.2},ev[2]],{},"manual");check(Math.abs(rw.report.residual)<1e-8&&rw.report.reward>.2,"reward accounting");
+const expired=Engine.run(req,ev,{executionDelaySeconds:100},"manual",[{t:0,action:{type:"CLAIM"},options:{expiresAfterSeconds:5}}]);check(expired.state.receipts.some(x=>x.status==="EXPIRED"),"expiry");
+const partial=Engine.run(req,ev,cfg,"manual",[{t:120,action:{type:"OPEN",spec:{shape:"spot",width:4,bidFraction:.5,askFraction:.5}},options:{partial:true}}]);check(partial.state.receipts.some(x=>x.status==="PARTIAL")&&partial.state.bins.length>0,"partial deployment");
+check(Engine.analyzeRequest(req,ev.slice(0,5)).analysis.candidates.length>0,"analysis entry");console.log("Additional checks:",count);
