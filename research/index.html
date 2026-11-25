@@ -9,7 +9,7 @@
 <label>资产场景<select id="entry"><option value="holding">已持有 MEME</option><option value="sol">持有 SOL</option><option value="position">已有 LP Position</option></select></label>
 <label>Token / Pool 标识<input id="pool" value="DEMO_POOL"></label><div class="subgrid"><label>钱包 SOL<input id="sol" type="number" min="0" step="any" value="5"></label><label>钱包 MEME<input id="meme" type="number" min="0" step="any" value="50000"></label></div>
 <label>初始价格 SOL/MEME<input id="initialPrice" type="number" min="0" step="any" value="0.0001"></label>
-<label id="positionLabel">已有仓位归一化 Bin JSON<textarea id="positionBins">[{"id":1,"x":30000,"y":0},{"id":-1,"x":0,"y":1}]</textarea></label>
+<label id="positionLabel">已有仓位 Bin 数组 / 整数快照 JSON<textarea id="positionBins">[{"id":1,"x":30000,"y":0},{"id":-1,"x":0,"y":1}]</textarea></label>
 <label>目标<select id="goal"><option value="balanced">平衡型</option><option value="defensive">防御型</option><option value="growth">趋势型</option></select></label>
 <label>预测周期（合成情景）<select id="horizon"><option value="480">8 分钟</option><option value="10800">3 小时</option><option value="86400">24 小时</option><option value="259200">3 天</option><option value="604800">7 天</option></select></label>
 <label><input id="dispose" type="checkbox">允许模型模拟出售现货库存</label>
