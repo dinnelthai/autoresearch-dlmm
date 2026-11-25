@@ -239,14 +239,16 @@ function createResearchEngine() {
       }
       if(rr.violations.length)throw Error(rr.violations.join(","));
       for(const scenario of scenarios){
-        const sim=clone(start);sim.seen=[];sim.lastTime=s.lastTime;sim.quality=[];
-        for(const e of scenario.events)event(sim,c,e);
+        const sim=clone(s);sim.pending=null;sim.seen=[];sim.lastTime=s.lastTime;sim.quality=[];
+        if(!["HOLD","NO_LP"].includes(action.type))submit(sim,c,action,s.lastTime);
+        for(const e of scenario.events){event(sim,c,e);executePending(sim,c,e.t);}
+        if(sim.pending||sim.receipts.slice(s.receipts.length).some(r=>["REJECTED","FAILED","EXPIRED"].includes(r.status)))throw Error("SCENARIO_EXECUTION_UNAVAILABLE");
         const end=reportAt(sim,sim.market.ref.price),before=reportAt(s,sim.market.ref.price);
         if(sim.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT"))throw Error("FROZEN_PATH_SHARE_LIMIT");
         out.push({name:scenario.name,incrementalAlpha:end.alpha-before.alpha,pnl:end.nav-base,loss:Math.max(0,base-end.nav),ratio:end.ratio,fee:end.fee-before.fee,cost:end.cost-before.cost});
       }
       const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
-      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,scenarios:out,allocation:clone(start.bins),risk:rr};
+      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
     }catch(err){return {action,feasible:false,reason:err.message}}
   }
   function candidatePlans(s,c,mode="adaptive"){
