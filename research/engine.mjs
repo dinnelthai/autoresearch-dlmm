@@ -14,7 +14,7 @@ function createResearchEngine() {
   }
   function price(c,id){assert(Number.isInteger(id),"bin id must be integer");let p=c.anchorPrice*Math.pow(1+c.binStepBps/10000,id);return finite(p,"bin price",Number.MIN_VALUE);}
   function binId(c,p){return Math.round(Math.log(finite(p,"price",Number.MIN_VALUE)/c.anchorPrice)/Math.log(1+c.binStepBps/10000))}
-  function cvar(losses,beta){assert(losses.length>0,"empty loss sample");const a=losses.slice().sort((x,y)=>y-x),mass=a.length*(1-beta);let s=0;for(let i=0;i<a.length&&i<mass;i++)s+=a[i]*Math.min(1,mass-i);return s/mass}
+  function cvar(losses,beta){assert(losses.length>0,"empty loss sample");finite(beta,"beta",0,1);assert(beta<1&&losses.every(v=>Number.isFinite(v)&&v>=0),"invalid loss sample");const a=losses.slice().sort((x,y)=>y-x),mass=a.length*(1-beta);let s=0;for(let i=0;i<a.length&&i<mass;i++)s+=a[i]*Math.min(1,mass-i);return s/mass}
   function balances(s){return {x:s.wallet.x+s.pendingFees.x+sum(s.bins.map(b=>b.x)),y:s.wallet.y+s.pendingFees.y+sum(s.bins.map(b=>b.y))}}
   function nav(s,p){const b=balances(s);return b.x*p+b.y}
   function hodl(s,p){return s.baseline.x*p+s.baseline.y}
@@ -38,15 +38,16 @@ function createResearchEngine() {
   }
   function reference(e,c){
     if(!Array.isArray(e.references))return {valid:false,reason:"MISSING_REFERENCES"};
-    const rs=e.references.filter(r=>r.pool!==e.pool&&typeof r.pool==="string"&&typeof r.price==="number"&&r.price>0&&Number.isFinite(r.price)&&typeof r.depth==="number"&&r.depth>=c.minDepthSol&&typeof r.availableAt==="number"&&r.availableAt<=e.t&&r.availableAt>=e.t-c.maxReferenceAge);
-    const uniq=[...new Map(rs.map(r=>[r.pool,r])).values()];
+    const rs=e.references.filter(r=>r.pool!==e.pool&&typeof r.pool==="string"&&typeof r.price==="number"&&r.price>0&&Number.isFinite(r.price)&&typeof r.depth==="number"&&Number.isFinite(r.depth)&&r.depth>=c.minDepthSol&&Number.isFinite(r.availableAt)&&r.availableAt<=e.t&&r.availableAt>=e.t-c.maxReferenceAge&&Number.isFinite(r.observedAt??r.availableAt)&&(r.observedAt??r.availableAt)<=r.availableAt&&(r.observedAt??r.availableAt)>=e.t-c.maxReferenceAge);
+    const uniq=[...new Map(rs.slice().sort((a,b)=>a.availableAt-b.availableAt).map(r=>[r.pool,r])).values()];
     if(uniq.length<2)return {valid:false,reason:"INSUFFICIENT_INDEPENDENT_POOLS"};
     const ps=uniq.map(r=>r.price),p=sum(uniq.map(r=>r.price*r.depth))/sum(uniq.map(r=>r.depth));
     if((Math.max(...ps)-Math.min(...ps))/p>c.maxReferenceDivergence)return {valid:false,reason:"REFERENCE_DIVERGENCE"};
-    return {valid:true,price:p,depth:sum(uniq.map(r=>r.depth)),pools:uniq.map(r=>r.pool)};
+    return {valid:true,price:p,depth:sum(uniq.map(r=>r.depth)),pools:uniq.map(r=>r.pool),expiresAt:Math.min(...uniq.map(r=>(r.observedAt??r.availableAt)+c.maxReferenceAge))};
   }
+  function fresh(s,c,t=s.lastTime){return !!s.market?.ref.valid&&t<=s.market.ref.expiresAt&&t-s.market.t<=c.maxReferenceAge;}
   function classify(s,c){
-    const m=s.market;if(!m||!m.ref.valid)return {regime:"UNKNOWN",flags:["REFERENCE_UNAVAILABLE"],features:{}};
+    const m=s.market;if(!m||!fresh(s,c))return {regime:"UNKNOWN",flags:["REFERENCE_UNAVAILABLE"],features:{}};
     const flags=[];
     if(m.tokenSafe!==true)flags.push("TOKEN_RISK");
     if(!Number.isFinite(m.holderShare))flags.push("HOLDER_UNKNOWN");else if(m.holderShare>c.maxHolderShare)flags.push("HOLDER_CONCENTRATION");
@@ -133,7 +134,7 @@ function createResearchEngine() {
     s.status=s.bins.length?"OPEN":"FLAT";return {bid,ask};
   }
   function applyAction(s,c,action,t,opts={}){
-    const p=s.market?.ref.valid?s.market.ref.price:null;
+    const p=fresh(s,c,t)?s.market.ref.price:null;
     const k=action.type;if(["HOLD","NO_LP"].includes(k))return {status:"NO_ACTION"};
     if(k==="FUND"||k==="WITHDRAW"){assert(p!==null,"reference required for external flows");const x=finite(action.x??0,"flow x"),y=finite(action.y??0,"flow y"),sign=k==="FUND"?1:-1;if(sign<0)assert(x<=Math.min(s.wallet.x,s.baseline.x)+EPS&&y<=Math.min(s.wallet.y,s.baseline.y)+EPS,"withdraw exceeds wallet or matched HODL inventory");s.wallet.x+=sign*x;s.wallet.y+=sign*y;s.baseline.x+=sign*x;s.baseline.y+=sign*y;s.externalFlows+=sign*(x*p+y);return {status:"CONFIRMED"}}
     assert(p!==null||["CLAIM","REMOVE","REMOVE_AND_HOLD","REDUCE"].includes(k),"reference required for "+k);
@@ -151,9 +152,10 @@ function createResearchEngine() {
     assert(["OPEN","ADD","REPOSITION"].includes(k),"unsupported action "+k);
     if(k==="OPEN")assert(s.bins.length===0,"OPEN requires flat position");
     if(k==="REPOSITION"){s.rebalanceTurnover+=sum(s.bins.map(b=>b.x*p+b.y));release(s);claim(s);s.rebalances++;if(opts.partial)return {status:"PARTIAL",reason:"REMOVED_NOT_REDEPLOYED"}}
-    if(action.acquireSol){const budget=Math.min(action.acquireSol,Math.max(0,s.wallet.y-c.minSolReserve));spot(s,c,p,budget/(p*(1+c.slippageBps/10000)),s.market,t)}
+    if(action.acquireSol){const budget=Math.min(finite(action.acquireSol,"acquireSol"),Math.max(0,s.wallet.y-c.minSolReserve));spot(s,c,p,budget/(p*(1+c.slippageBps/10000)),s.market,t)}
     const spec=action.spec?{...action.spec}:null;assert(spec&&Number.isInteger(spec.width)&&spec.width>0&&spec.width<=50,"invalid plan");
-    for(const key of ["bidFraction","askFraction","active","alphaBid","alphaAsk"])if(spec[key]!=null)finite(spec[key],key,0,1);
+    for(const key of ["bidFraction","askFraction"])finite(spec[key],key,0,1);
+    for(const key of ["active","alphaBid","alphaAsk"])if(spec[key]!=null)finite(spec[key],key,0,1);
     if(opts.partial){spec.bidFraction*=.5;spec.askFraction*=.5;}const d=deploy(s,c,p,spec);if(k==="REPOSITION")s.rebalanceTurnover+=d.bid+d.ask*p;return {status:opts.partial?"PARTIAL":"CONFIRMED",...d};
   }
   function swap(s,c,e){
@@ -165,7 +167,7 @@ function createResearchEngine() {
     if(amount<EPS)return;
     const d=e.side==="LP_BUY"?amount:-amount,ratio=amount/q,feeX=fx*ratio,feeY=fy*ratio;
     b.x=Math.max(0,b.x+d);b.y=Math.max(0,b.y-d*p);s.pendingFees.x+=feeX;s.pendingFees.y+=feeY;s.feesEarned.x+=feeX;s.feesEarned.y+=feeY;
-    const ref=s.market?.ref.valid&&e.t-s.market.t<=c.maxReferenceAge?s.market.ref.price:null;
+    const ref=fresh(s,c,e.t)?s.market.ref.price:null;
     s.fills.push({id:e.id,t:e.t,kind:"LP",bin:e.bin,q:d,price:p,reference:ref,feeX,feeY,share});
   }
   function record(s,p,t){
@@ -174,13 +176,13 @@ function createResearchEngine() {
   }
   function event(s,c,e){
     assert(typeof e.id==="string"&&e.id.length,"event id required");finite(e.t,"event time");assert(e.t>=s.lastTime,"out of order event");assert(!s.seen.includes(e.id),"duplicate event");s.seen.push(e.id);s.lastTime=e.t;
-    if(e.type==="MARKET"){assert(!s.pool||s.pool===e.pool,"market pool mismatch");const ref=reference(e,c);s.market={...e,ref};if(ref.valid){s.history.push(s.market);mature(s,c,s.market)}else s.quality.push({id:e.id,reason:ref.reason})}
-    else if(e.type==="SWAP")swap(s,c,e);
+    if(e.type==="MARKET"){assert(typeof e.pool==="string"&&e.pool.length>0,"market pool required");assert(!s.pool||s.pool===e.pool,"market pool mismatch");if(!s.pool)s.pool=e.pool;const ref=reference(e,c);s.market={...e,ref};if(ref.valid){s.history.push(s.market);mature(s,c,s.market)}else s.quality.push({id:e.id,reason:ref.reason})}
+    else if(e.type==="SWAP"){assert(!e.pool||e.pool===s.pool,"swap pool mismatch");swap(s,c,e);}
     else if(e.type==="POOL_STATE"){assert(Array.isArray(e.bins),"pool snapshot bins required");s.poolBins={};for(const b of e.bins){assert(Number.isInteger(b.id)&&!(b.id in s.poolBins),"invalid snapshot bin");s.poolBins[b.id]=finite(b.externalLiquiditySol,"external liquidity",EPS);}}
     else if(e.type==="LIQUIDITY_UPDATE"){assert(Number.isInteger(e.bin),"invalid update bin");s.poolBins[e.bin]=finite(e.externalLiquiditySol,"external liquidity",EPS);}
     else if(e.type==="REWARD"){const x=finite(e.x??0,"reward x"),y=finite(e.y??0,"reward y");if(s.bins.length){s.pendingFees.x+=x;s.pendingFees.y+=y;s.rewardsEarned.x+=x;s.rewardsEarned.y+=y;}}
     else assert(false,"unknown event type");
-    if(s.market?.ref.valid&&e.t-s.market.t<=c.maxReferenceAge){record(s,s.market.ref.price,e.t);const r=risk(s,c,s.market.ref.price);if(r.violations.length)s.riskLog.push({t:e.t,event:e.id,...r});}
+    if(fresh(s,c,e.t)){record(s,s.market.ref.price,e.t);const r=risk(s,c,s.market.ref.price);if(r.violations.length)s.riskLog.push({t:e.t,event:e.id,...r});}
   }
   function executePending(s,c,t){
     if(!s.pending)return;
@@ -192,7 +194,7 @@ function createResearchEngine() {
       if(["OPEN","ADD","REPOSITION"].includes(op.action.type)&&result.status!=="FAILED"&&result.reason!=="REMOVED_NOT_REDEPLOYED"){
         assert(trial.market?.ref.valid,"invalid execution reference");
         const r=risk(trial,c,trial.market.ref.price),g=classify(trial,c);
-        assert(t-trial.market.t<=c.maxReferenceAge,"stale execution reference");
+        assert(fresh(trial,c,t),"stale execution reference");
         assert(trial.rebalances<=c.maxRebalances&&trial.rebalanceTurnover+trial.turnover<=c.maxTurnoverSol,"turnover budget exceeded");
         assert(!g.flags.includes("TOXIC_BID")||!trial.bins.some(b=>b.y>EPS),"toxic bid blocked");
         assert(!g.flags.includes("TOXIC_ASK")||!trial.bins.some(b=>b.x>EPS),"toxic ask blocked");
@@ -200,7 +202,7 @@ function createResearchEngine() {
         assert(!["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)&&!g.flags.includes("HOLDER_CONCENTRATION"),"market admission changed");
       }
       Object.assign(s,trial);s.lastActionTime=t;s.receipts.push({id:op.id,t,action:op.action.type,...result});
-      if(s.market?.ref.valid)record(s,s.market.ref.price,t);
+      if(fresh(s,c,t))record(s,s.market.ref.price,t);
     }catch(err){s.pending=null;s.receipts.push({id:op.id,t,action:op.action.type,status:"REJECTED",reason:String(err.message)});}
   }
   function submit(s,c,action,t,options={}){
@@ -262,7 +264,7 @@ function createResearchEngine() {
     return plans;
   }
   function decide(s,c,mode="adaptive"){
-    if(!s.market?.ref.valid)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"UNKNOWN_REFERENCE",candidates:[],regime:"UNKNOWN"};
+    if(!fresh(s,c))return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"UNKNOWN_REFERENCE",candidates:[],regime:"UNKNOWN"};
     const g=classify(s,c),p=s.market.ref.price,r=risk(s,c,p);
     if(g.regime==="UNKNOWN"&&!r.violations.length&&!g.flags.includes("HOLDER_CONCENTRATION"))return {action:{type:s.bins.length?"HOLD":"NO_LP"},reason:"WARMUP_OR_INSUFFICIENT_FEATURES",regime:g.regime,risk:r,candidates:[]};
     if(["STRESS","DISTRIBUTION_RANGE","DEAD_RANGE","UNKNOWN"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION")){
@@ -276,7 +278,7 @@ function createResearchEngine() {
     return {action:best.action,reason:best===base?"BASELINE_WINS_OR_MARGIN":"MAX_FEASIBLE_UTILITY",regime:g.regime,risk:r,selected:best,candidates:results,forecastLabel:"SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED"};
   }
   function liquidation(s,c){
-    if(!s.market?.ref.valid)return {status:"UNAVAILABLE",value:null};
+    if(!fresh(s,c))return {status:"UNAVAILABLE",value:null};
     const p=s.market.ref.price,b=balances(s),depth=s.market.exitDepth;
     if(!Number.isFinite(depth)||depth<0)return {status:"UNAVAILABLE",value:null};
     const sell=Math.min(b.x,depth/p),remaining=b.x-sell,proceeds=sell*p*(1-c.slippageBps/10000);
@@ -290,7 +292,13 @@ function createResearchEngine() {
     let lastDecision=-Infinity,staticAttempted=false;
     if(mode==="hodl"||mode==="sol_hold"){release(s);claim(s);}
     function push(e){
-      event(s,c,e);executePending(s,c,e.t);
+      // Validate/commit the incoming event atomically. Never consume a rejected event ID.
+      const trial=clone(s);event(trial,c,e);Object.assign(s,trial);
+      const g=classify(s,c),rr=fresh(s,c)?risk(s,c,s.market.ref.price):null;
+      const emergency=mode==="adaptive"&&(!fresh(s,c)||g.regime==="STRESS"||g.flags.includes("HOLDER_CONCENTRATION")||!!rr?.violations.length);
+      if(emergency&&s.pending&&["OPEN","ADD","REPOSITION"].includes(s.pending.action.type)){const op=s.pending;s.pending=null;s.receipts.push({id:op.id,t:e.t,action:op.action.type,status:"CANCELLED",reason:"RISK_OVERRIDE"});}
+      executePending(s,c,e.t);
+      if(emergency&&s.bins.length&&!s.pending){const d={t:e.t,regime:g.regime,action:{type:"REMOVE_AND_HOLD"},reason:"HARD_RISK_OVERRIDE",selected:null,candidates:[]};s.decisions.push(d);lastDecision=e.t;submit(s,c,d.action,e.t);return;}
       if(e.type!=="MARKET"||s.pending||["manual","hodl","sol_hold"].includes(mode))return;
       if(e.t-lastDecision<c.cooldownSeconds)return;
       let d;
@@ -313,17 +321,18 @@ function createResearchEngine() {
       submit(s,c,a,s.lastTime,options);
     }
     function analyze(){
-      if(!s.market?.ref.valid||s.lastTime-s.market.t>c.maxReferenceAge)return {action:{type:"NO_LP"},reason:"REFERENCE_UNAVAILABLE",candidates:[]};
+      if(!fresh(s,c))return {action:{type:"NO_LP"},reason:"REFERENCE_UNAVAILABLE",candidates:[]};
       return decide(s,c,"adaptive");
     }
     function snapshot(){
-      const m=s.market,valid=m?.ref.valid&&s.lastTime-m.t<=c.maxReferenceAge;
+      const m=s.market,valid=fresh(s,c);
       const report=valid?reportAt(s,m.ref.price):null;
       if(report)assert(Math.abs(report.residual)<1e-6*Math.max(1,Math.abs(report.nav)),"accounting residual");
       const status=!valid?"REFERENCE_UNAVAILABLE":s.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT")?"INVALID_SHARE_ASSUMPTION":s.pending?"PENDING":"SIMULATED";
       const curve=s.curve,avgCapital=curve.length?sum(curve.map(x=>x.nav))/curve.length:null;
+      let capitalSeconds=0;for(let i=1;i<curve.length;i++)capitalSeconds+=curve[i-1].nav*(curve[i].t-curve[i-1].t);const duration=curve.length?curve.at(-1).t-curve[0].t:0;const timeWeightedNav=duration>0?capitalSeconds/duration:null;
       const maxInventoryX=Math.max(balances(s).x,...curve.map(x=>x.x)),minObservedSol=Math.min(balances(s).y,...curve.map(x=>x.y));
-      return clone({source:"SYNTHETIC_OR_UNVERIFIED_NORMALIZED_EVENTS",calibrated:false,protocolExact:false,status,mode,entry:request.entry,report,liquidation:valid?liquidation(s,c):{status:"UNAVAILABLE",value:null},risk:valid?risk(s,c,m.ref.price):null,maxDrawdown:Math.max(0,...curve.map(x=>x.drawdown)),avgObservedNav:avgCapital,maxInventoryX,minObservedSol,riskBreaches:s.riskLog.length,durationSeconds:curve.length?curve.at(-1).t-curve[0].t:0,state:s,config:c});
+      return clone({source:"SYNTHETIC_OR_UNVERIFIED_NORMALIZED_EVENTS",calibrated:false,protocolExact:false,status,mode,entry:request.entry,report,liquidation:valid?liquidation(s,c):{status:"UNAVAILABLE",value:null},risk:valid?risk(s,c,m.ref.price):null,maxDrawdown:Math.max(0,...curve.map(x=>x.drawdown)),avgObservedNav:avgCapital,timeWeightedNav,capitalSeconds,netPerSolHour:report&&capitalSeconds>0?report.pnl*3600/capitalSeconds:null,maxInventoryX,minObservedSol,riskBreaches:s.riskLog.length,durationSeconds:curve.length?curve.at(-1).t-curve[0].t:0,state:s,config:c});
     }
     return {push,action,analyze,snapshot};
   }

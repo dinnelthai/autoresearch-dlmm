@@ -48,3 +48,7 @@ Source specifications: v0.2–v1.1 in docs. All outputs label fidelity. Sample r
 ## Extended review
 
 `node research/cli.mjs suite` runs four synthetic scenarios. `node research/cli.mjs evaluate SAMPLES.json` accepts `{samples:[{id,group,split,request,events}],config}`; groups cannot cross train/validation/test, and paired Adaptive minus Bid-Ask results are aggregated by declared group. No confidence interval or evidence of profitability is claimed for unverified data. There is no parameter training or selection. Data quality, true historical timestamp boundaries and independent grouping still require real data validation. The browser includes a four-scenario comparison action. Unknown market during warmup does not force withdrawal of a risk-compliant existing position; hard risks and invalid reference are separate decisions. Synthetic reward events apply only while an LP is active; allocation entitlement remains unverified.
+
+## Safety review
+
+Reference observations may include observedAt (defaults to availableAt for legacy normalized input); expiry is measured from observed time, not polling or receipt time. Invalid events are applied to a trial state and rejected atomically at the session boundary. Adaptive hard-risk checks run before normal cooldown, cancel pending exposure-increasing virtual actions, and request removal while preserving spot inventory. Capital-time and SOL-hour net return are reported as time-weighted estimates. This remains a floating-point normalized-event model.
