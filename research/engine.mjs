@@ -1,7 +1,7 @@
 /* Offline normalized-event research engine. No RPC, wallet, or protocol-exact claim. */
 function createResearchEngine() {
   const EPS=1e-9, clone=o=>JSON.parse(JSON.stringify(o)), sum=a=>a.reduce((s,v)=>s+v,0), clip=(x,l,h)=>Math.min(h,Math.max(l,x));
-  const DEFAULTS=Object.freeze({binStepBps:100,anchorPrice:0.0001,maxInventoryRatio:.65,maxInventoryTokens:200000,minSolReserve:1,maxLossSol:6,stressDrop:.6,maxBinShare:.1,lambda:.5,kappaSol:.2,targetRatio:.45,beta:.95,minImprovementSol:.005,uncertaintySol:.005,operationCostSol:.002,cooldownSeconds:120,executionDelaySeconds:10,maxRebalances:8,maxTurnoverSol:30,maxReferenceAge:120,maxReferenceDivergence:.05,minDepthSol:2,maxHolderShare:.55,minFlowSol:1,markoutSeconds:30,forecastSteps:8,feeBps:30,protocolShare:.05,slippageBps:50,referencePrice:0.0001});
+  const DEFAULTS=Object.freeze({binStepBps:100,anchorPrice:0.0001,maxInventoryRatio:.65,maxInventoryTokens:200000,minSolReserve:1,maxLossSol:6,stressDrop:.6,maxBinShare:.1,lambda:.5,kappaSol:.2,targetRatio:.45,beta:.95,minImprovementSol:.005,uncertaintySol:.005,operationCostSol:.002,cooldownSeconds:120,executionDelaySeconds:10,maxRebalances:8,maxTurnoverSol:30,maxReferenceAge:120,maxReferenceDivergence:.05,minDepthSol:2,maxHolderShare:.55,minFlowSol:1,markoutSeconds:30,forecastSteps:8,forecastHorizonSeconds:480,feeBps:30,protocolShare:.05,slippageBps:50,referencePrice:0.0001});
   const assert=(b,m)=>{if(!b)throw Error(m)};
   const finite=(v,n,min=0,max=Infinity)=>{assert(typeof v==="number"&&Number.isFinite(v)&&v>=min&&v<=max,n+" invalid");return v};
   function config(overrides={}) {
@@ -9,7 +9,7 @@ function createResearchEngine() {
     const c={...DEFAULTS,...overrides};
     for(const [k,v] of Object.entries(c))finite(v,k);
     for(const k of ["maxInventoryRatio","stressDrop","maxBinShare","targetRatio","beta","maxReferenceDivergence","maxHolderShare","protocolShare"])finite(c[k],k,0,1);
-    assert(c.beta<1&&c.maxBinShare>0&&c.binStepBps>0&&c.anchorPrice>0&&c.referencePrice>0&&c.feeBps<10000&&c.slippageBps<10000&&c.forecastSteps>=2&&Number.isInteger(c.forecastSteps)&&c.forecastSteps<=100&&Number.isInteger(c.maxRebalances),"invalid config domain");
+    assert(c.beta<1&&c.maxBinShare>0&&c.binStepBps>0&&c.anchorPrice>0&&c.referencePrice>0&&c.feeBps<10000&&c.slippageBps<10000&&c.forecastSteps>=2&&Number.isInteger(c.forecastSteps)&&c.forecastSteps<=100&&c.forecastHorizonSeconds>0&&Number.isInteger(c.maxRebalances),"invalid config domain");
     return c;
   }
   function price(c,id){assert(Number.isInteger(id),"bin id must be integer");let p=c.anchorPrice*Math.pow(1+c.binStepBps/10000,id);return finite(p,"bin price",Number.MIN_VALUE);}
@@ -21,7 +21,7 @@ function createResearchEngine() {
   function reportAt(s,p){
     const b=balances(s),v=nav(s,p),grossFee=s.feesEarned.x*p+s.feesEarned.y,reward=s.rewardsEarned.x*p+s.rewardsEarned.y,inventory=sum(s.fills.map(f=>f.q*(p-f.price))),fair=sum(s.fills.filter(f=>f.reference!==null).map(f=>f.q*(p-f.reference))),adverse=sum(s.fills.filter(f=>f.reference!==null).map(f=>f.q*(f.price-f.reference))),unattributed=sum(s.fills.filter(f=>f.reference===null).map(f=>f.q*(p-f.price))),alpha=v-hodl(s,p);
     const pnl=v-s.initialNav-s.externalFlows;
-    return {nav:v,pnl,alpha,hodl:hodl(s,p),solBenchmark:s.initialNav+s.externalFlows,alphaSol:pnl,fee:grossFee,reward,feeX:s.feesEarned.x,feeY:s.feesEarned.y,inventory,fair,adverse,unattributed,cost:s.cost,externalFlows:s.externalFlows,reference:p,inventoryX:b.x,inventoryY:b.y,ratio:v>EPS?b.x*p/v:0,residual:alpha-(inventory+grossFee+reward-s.cost),unclaimed:clone(s.pendingFees),claimed:clone(s.claimed),markout:markoutSummary(s),turnover:s.turnover,rebalances:s.rebalances};
+    return {nav:v,pnl,alpha,hodl:hodl(s,p),solBenchmark:s.initialNav+s.externalFlows,alphaSol:pnl,fee:grossFee,reward,feeX:s.feesEarned.x,feeY:s.feesEarned.y,inventory,fair,adverse,unattributed,cost:s.cost,externalFlows:s.externalFlows,reference:p,inventoryX:b.x,inventoryY:b.y,ratio:v>EPS?b.x*p/v:0,residual:alpha-(inventory+grossFee+reward-s.cost),unclaimed:clone(s.pendingFees),claimed:clone(s.claimed),markout:markoutSummary(s),turnover:s.turnover,rebalanceTurnover:s.rebalanceTurnover,rebalances:s.rebalances};
   }
   function newState(request,c){
     assert(["holding","sol","position"].includes(request.entry),"invalid entry");
@@ -33,7 +33,7 @@ function createResearchEngine() {
     assert(new Set(bins.map(b=>b.id)).size===bins.length,"duplicate initial bin");
     const pendingFees={x:finite(request.pendingFeeX??0,"pendingFeeX"),y:finite(request.pendingFeeY??0,"pendingFeeY")};
     assert(request.entry==="position"||pendingFees.x+pendingFees.y===0,"pending fees require position");
-    const s={wallet:{x,y},bins,pendingFees,feesEarned:{x:0,y:0},rewardsEarned:{x:0,y:0},poolBins:{},claimed:{x:0,y:0},fills:[],marks:[],market:null,history:[],baseline:{x:0,y:0},initialNav:0,externalFlows:0,cost:0,turnover:0,rebalances:0,receipts:[],pending:null,lastActionTime:-1e12,curve:[],seen:[],lastTime:-1,quality:[],status:bins.length?"OPEN":"FLAT",decisions:[]};
+    const s={wallet:{x,y},bins,pendingFees,feesEarned:{x:0,y:0},rewardsEarned:{x:0,y:0},poolBins:{},claimed:{x:0,y:0},fills:[],marks:[],market:null,history:[],baseline:{x:0,y:0},initialNav:0,externalFlows:0,cost:0,turnover:0,rebalances:0,receipts:[],pending:null,lastActionTime:-1e12,curve:[],seen:[],lastTime:-1,quality:[],status:bins.length?"OPEN":"FLAT",decisions:[],allowDispose:request.allowDispose===true,pool:request.pool??null,goal:request.goal??"balanced",riskLog:[],rebalanceTurnover:0};
     s.baseline=balances(s);s.initialNav=nav(s,p);assert(s.initialNav>0,"initial capital must be positive");return s;
   }
   function reference(e,c){
@@ -111,7 +111,9 @@ function createResearchEngine() {
     s.fills.push({id:"spot:"+s.fills.length,t,kind:"SPOT",q:d,price:e,reference:p,feeX:0,feeY:0});return d;
   }
   function weights(n,shape,alpha,skew=0){
-    const raw=Array.from({length:n},(_,i)=>{const u=(i+1)/n;const edge=.1+u*u,curve=Math.exp(-3*u*u);const w=shape==="spot"?1:shape==="curve"?curve:shape==="bid_ask"?edge:alpha+(1-alpha)*edge;return w*Math.exp(skew*u)});
+    assert(["spot","curve","bid_ask","hybrid"].includes(shape),"unknown shape");finite(alpha,"hybrid alpha",0,1);assert(Number.isFinite(skew),"invalid skew");
+    const edge=Array.from({length:n},(_,i)=>.1+((i+1)/n)**2),edgeSum=sum(edge),curve=Array.from({length:n},(_,i)=>Math.exp(-3*((i+1)/n)**2));
+    const raw=edge.map((v,i)=>(shape==="spot"?1/n:shape==="curve"?curve[i]:shape==="bid_ask"?v/edgeSum:alpha/n+(1-alpha)*v/edgeSum)*Math.exp(skew*(i+1)/n));
     const total=sum(raw);return raw.map(x=>x/total);
   }
   function planBins(c,p,bid,ask,spec){
@@ -120,7 +122,8 @@ function createResearchEngine() {
     const active=spec.active??0;
     const map=new Map();
     function add(id,x,y){const b=map.get(id)||{id,x:0,y:0,liquidity:0};b.x+=x;b.y+=y;b.liquidity=b.x*price(c,id)+b.y;map.set(id,b)}
-    for(let i=0;i<n;i++){add(mid-1-i,0,bid*(1-active)*wb[i]);add(mid+1+i,ask*(1-active)*wa[i],0)}
+    const ax=wa.map((w,i)=>w/price(c,mid+1+i)),axs=sum(ax);
+    for(let i=0;i<n;i++){add(mid-1-i,0,bid*(1-active)*wb[i]);add(mid+1+i,ask*(1-active)*ax[i]/axs,0)}
     add(mid,ask*active,bid*active);return [...map.values()].filter(b=>b.liquidity>EPS).sort((a,b)=>a.id-b.id);
   }
   function deploy(s,c,p,spec){
@@ -147,11 +150,11 @@ function createResearchEngine() {
     }
     assert(["OPEN","ADD","REPOSITION"].includes(k),"unsupported action "+k);
     if(k==="OPEN")assert(s.bins.length===0,"OPEN requires flat position");
-    if(k==="REPOSITION"){release(s);claim(s);s.rebalances++;if(opts.partial)return {status:"PARTIAL",reason:"REMOVED_NOT_REDEPLOYED"}}
+    if(k==="REPOSITION"){s.rebalanceTurnover+=sum(s.bins.map(b=>b.x*p+b.y));release(s);claim(s);s.rebalances++;if(opts.partial)return {status:"PARTIAL",reason:"REMOVED_NOT_REDEPLOYED"}}
     if(action.acquireSol){const budget=Math.min(action.acquireSol,Math.max(0,s.wallet.y-c.minSolReserve));spot(s,c,p,budget/(p*(1+c.slippageBps/10000)),s.market,t)}
     const spec=action.spec?{...action.spec}:null;assert(spec&&Number.isInteger(spec.width)&&spec.width>0&&spec.width<=50,"invalid plan");
     for(const key of ["bidFraction","askFraction","active","alphaBid","alphaAsk"])if(spec[key]!=null)finite(spec[key],key,0,1);
-    if(opts.partial){spec.bidFraction*=.5;spec.askFraction*=.5;}const d=deploy(s,c,p,spec);return {status:opts.partial?"PARTIAL":"CONFIRMED",...d};
+    if(opts.partial){spec.bidFraction*=.5;spec.askFraction*=.5;}const d=deploy(s,c,p,spec);if(k==="REPOSITION")s.rebalanceTurnover+=d.bid+d.ask*p;return {status:opts.partial?"PARTIAL":"CONFIRMED",...d};
   }
   function swap(s,c,e){
     const p=price(c,e.bin),q=finite(e.baseQty,"swap baseQty"),ext=finite(e.externalLiquiditySol??s.poolBins[e.bin],"external liquidity",EPS),fx=finite(e.mmFeeX,"MM fee X"),fy=finite(e.mmFeeY,"MM fee Y");assert(["LP_BUY","LP_SELL"].includes(e.side),"invalid swap direction");
@@ -171,13 +174,13 @@ function createResearchEngine() {
   }
   function event(s,c,e){
     assert(typeof e.id==="string"&&e.id.length,"event id required");finite(e.t,"event time");assert(e.t>=s.lastTime,"out of order event");assert(!s.seen.includes(e.id),"duplicate event");s.seen.push(e.id);s.lastTime=e.t;
-    if(e.type==="MARKET"){const ref=reference(e,c);s.market={...e,ref};if(ref.valid){s.history.push(s.market);mature(s,c,s.market)}else s.quality.push({id:e.id,reason:ref.reason})}
+    if(e.type==="MARKET"){assert(!s.pool||s.pool===e.pool,"market pool mismatch");const ref=reference(e,c);s.market={...e,ref};if(ref.valid){s.history.push(s.market);mature(s,c,s.market)}else s.quality.push({id:e.id,reason:ref.reason})}
     else if(e.type==="SWAP")swap(s,c,e);
     else if(e.type==="POOL_STATE"){assert(Array.isArray(e.bins),"pool snapshot bins required");s.poolBins={};for(const b of e.bins){assert(Number.isInteger(b.id)&&!(b.id in s.poolBins),"invalid snapshot bin");s.poolBins[b.id]=finite(b.externalLiquiditySol,"external liquidity",EPS);}}
     else if(e.type==="LIQUIDITY_UPDATE"){assert(Number.isInteger(e.bin),"invalid update bin");s.poolBins[e.bin]=finite(e.externalLiquiditySol,"external liquidity",EPS);}
     else if(e.type==="REWARD"){const x=finite(e.x??0,"reward x"),y=finite(e.y??0,"reward y");s.pendingFees.x+=x;s.pendingFees.y+=y;s.rewardsEarned.x+=x;s.rewardsEarned.y+=y;}
     else assert(false,"unknown event type");
-    if(s.market?.ref.valid&&e.t-s.market.t<=c.maxReferenceAge)record(s,s.market.ref.price,e.t);
+    if(s.market?.ref.valid&&e.t-s.market.t<=c.maxReferenceAge){record(s,s.market.ref.price,e.t);const r=risk(s,c,s.market.ref.price);if(r.violations.length)s.riskLog.push({t:e.t,event:e.id,...r});}
   }
   function executePending(s,c,t){
     if(!s.pending)return;
@@ -189,6 +192,10 @@ function createResearchEngine() {
       if(["OPEN","ADD","REPOSITION"].includes(op.action.type)&&result.status!=="FAILED"&&result.reason!=="REMOVED_NOT_REDEPLOYED"){
         assert(trial.market?.ref.valid,"invalid execution reference");
         const r=risk(trial,c,trial.market.ref.price),g=classify(trial,c);
+        assert(t-trial.market.t<=c.maxReferenceAge,"stale execution reference");
+        assert(trial.rebalances<=c.maxRebalances&&trial.rebalanceTurnover+trial.turnover<=c.maxTurnoverSol,"turnover budget exceeded");
+        assert(!g.flags.includes("TOXIC_BID")||!trial.bins.some(b=>b.y>EPS),"toxic bid blocked");
+        assert(!g.flags.includes("TOXIC_ASK")||!trial.bins.some(b=>b.x>EPS),"toxic ask blocked");
         assert(!r.violations.length,"execution risk: "+r.violations.join(","));
         assert(!["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)&&!g.flags.includes("HOLDER_CONCENTRATION"),"market admission changed");
       }
@@ -209,7 +216,7 @@ function createResearchEngine() {
     return patterns.map((pat,j)=>{
       const events=[];
       for(let i=1;i<=c.forecastSteps;i++){
-        const id=mid+pat.f(i)+(j===0?drift*i:0),px=price(c,id),t=m.t+60*i;
+        const id=mid+pat.f(i)+(j===0?drift*i:0),px=price(c,id),t=s.lastTime+c.forecastHorizonSeconds*i/c.forecastSteps;
         events.push({type:"MARKET",id:"f"+j+"m"+i,t,pool:m.pool,references:[{pool:"scenario-a",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t},{pool:"scenario-b",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t}],exitDepth:m.exitDepth,tokenSafe:m.tokenSafe,holderShare:m.holderShare,holderOutflow:m.holderOutflow,buyImbalance:m.buyImbalance,flowSol:m.flowSol});
         const qty=Math.max(0,m.flowSol||0)/px*.25,side=pat.f(i)+(j===0?drift*i:0)>=pat.f(i-1)+(j===0?drift*(i-1):0)?"LP_SELL":"LP_BUY",fee=qty*c.feeBps/10000*(1-c.protocolShare);
         events.push({type:"SWAP",id:"f"+j+"s"+i,t,bin:id,side,baseQty:qty,externalLiquiditySol:Math.max(10,m.ref.depth/2),mmFeeX:side==="LP_BUY"?fee:0,mmFeeY:side==="LP_SELL"?fee*px:0});
@@ -220,17 +227,17 @@ function createResearchEngine() {
   function evaluate(s,c,action,scenarios){
     const p=s.market.ref.price,base=nav(s,p),out=[];
     let start;
-    try{start=clone(s);start.pending=null;const a=applyAction(start,c,action,s.market.t);const g=classify(start,c),rr=risk(start,c,p);
+    try{start=clone(s);start.pending=null;const a=applyAction(start,c,action,s.lastTime);const g=classify(start,c),rr=risk(start,c,p);
       if(["OPEN","ADD","REPOSITION"].includes(action.type)){
         if(!start.bins.length)throw Error("EMPTY_DEPLOYMENT");
-        if(action.type==="REPOSITION"&&(start.turnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances))throw Error("REBALANCE_BUDGET");
+        if(action.type==="REPOSITION"&&(start.turnover+start.rebalanceTurnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances))throw Error("REBALANCE_BUDGET");
         if(["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION"))throw Error("MARKET_ADMISSION");
         if(g.flags.includes("TOXIC_BID")&&sum(start.bins.map(b=>b.y))>EPS)throw Error("TOXIC_BID");
         if(g.flags.includes("TOXIC_ASK")&&sum(start.bins.map(b=>b.x))>EPS)throw Error("TOXIC_ASK");
       }
       if(rr.violations.length)throw Error(rr.violations.join(","));
       for(const scenario of scenarios){
-        const sim=clone(start);sim.seen=[];sim.lastTime=s.market.t;sim.quality=[];
+        const sim=clone(start);sim.seen=[];sim.lastTime=s.lastTime;sim.quality=[];
         for(const e of scenario.events)event(sim,c,e);
         const end=reportAt(sim,sim.market.ref.price),before=reportAt(s,sim.market.ref.price);
         if(sim.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT"))throw Error("FROZEN_PATH_SHARE_LIMIT");
@@ -242,8 +249,8 @@ function createResearchEngine() {
   }
   function candidatePlans(s,c,mode="adaptive"){
     const g=classify(s,c),open=s.bins.length>0,plans=[{type:open?"HOLD":"NO_LP"}];
-    if(open)plans.push({type:"REDUCE",fraction:.5},{type:"REMOVE_AND_HOLD"},{type:"REMOVE_AND_DISPOSE"});
-    else if(balances(s).x>EPS)plans.push({type:"REMOVE_AND_DISPOSE"});
+    if(open)plans.push({type:"REDUCE",fraction:.5},{type:"REMOVE_AND_HOLD"});
+    if(s.allowDispose&&balances(s).x>EPS)plans.push({type:"REMOVE_AND_DISPOSE"});
     const shapes=mode==="adaptive"?["spot","curve","bid_ask","hybrid","asymmetric"]:[mode==="asymmetric"?"asymmetric":mode];
     for(const shape of shapes)for(const width of (mode==="adaptive"?[2,4,8]:[4]))for(const size of (mode==="adaptive"?[.5,1]:[1])){
       const isAsym=shape==="asymmetric";
@@ -251,6 +258,7 @@ function createResearchEngine() {
       const action={type:open?"REPOSITION":"OPEN",label:shape,spec};plans.push(action);
       if(!open&&balances(s).x<EPS&&s.wallet.y>c.minSolReserve)plans.push({...action,acquireSol:(s.wallet.y-c.minSolReserve)*.25,label:shape+"+initial_inventory"});
     }
+    if(mode==="adaptive")for(const a of [0,.25,.5,.75,1])for(const b of [0,.25,.5,.75,1]){plans.push({type:open?"REPOSITION":"OPEN",label:"hybrid_grid",spec:{shape:"hybrid",width:4,bidFraction:g.regime==="DOWNTREND"||g.flags.includes("TOXIC_BID")?0:.5,askFraction:g.flags.includes("TOXIC_ASK")?0:.5,alphaBid:a,alphaAsk:b,active:0}})}
     return plans;
   }
   function decide(s,c,mode="adaptive"){
@@ -263,7 +271,7 @@ function createResearchEngine() {
     if(!feasible.length)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"RISK_BLOCKED",regime:g.regime,risk:r,candidates:results};
     let best=feasible[0];
     if(base.feasible&&best.action.type!==base.action.type&&best.utility-base.utility<=c.uncertaintySol+c.minImprovementSol)best=base;
-    if(best.action.type==="REPOSITION"&&(s.market.t-s.lastActionTime<c.cooldownSeconds||s.rebalances>=c.maxRebalances||s.turnover>=c.maxTurnoverSol)){if(base.feasible)best=base;else best=feasible.find(v=>v.action.type!=="REPOSITION")||{action:{type:"REMOVE_AND_HOLD"},feasible:false,reason:"REBALANCE_BUDGET"};}
+    if(best.action.type==="REPOSITION"&&(s.market.t-s.lastActionTime<c.cooldownSeconds||s.rebalances>=c.maxRebalances||s.turnover+s.rebalanceTurnover>=c.maxTurnoverSol)){if(base.feasible)best=base;else best=feasible.find(v=>v.action.type!=="REPOSITION")||{action:{type:"REMOVE_AND_HOLD"},feasible:false,reason:"REBALANCE_BUDGET"};}
     return {action:best.action,reason:best===base?"BASELINE_WINS_OR_MARGIN":"MAX_FEASIBLE_UTILITY",regime:g.regime,risk:r,selected:best,candidates:results,forecastLabel:"SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED"};
   }
   function liquidation(s,c){
@@ -274,7 +282,8 @@ function createResearchEngine() {
     return {status:remaining>EPS?"PARTIAL":"ESTIMATE",value:remaining>EPS?null:b.y+proceeds,solProceeds:b.y+proceeds,unsoldMeme:remaining};
   }
   function createSession(request,overrides={},mode="adaptive"){
-    const c=config(overrides),s=newState(request,c);
+    const goals={defensive:{lambda:1,kappaSol:.3,targetRatio:.25},balanced:{},growth:{lambda:.25,kappaSol:.4,targetRatio:.65}};assert((request.goal??"balanced") in goals,"invalid goal");
+    const c=config({...goals[request.goal??"balanced"],...(request.horizonSeconds!=null?{forecastHorizonSeconds:finite(request.horizonSeconds,"horizon",1)}:{}),...overrides}),s=newState(request,c);
     assert(["adaptive","spot","curve","bid_ask","hybrid","asymmetric","hodl","sol_hold","manual"].includes(mode),"invalid mode");
     const staticMode=!["adaptive","hodl","sol_hold","manual"].includes(mode);
     let lastDecision=-Infinity,staticAttempted=false;
@@ -312,7 +321,8 @@ function createResearchEngine() {
       if(report)assert(Math.abs(report.residual)<1e-6*Math.max(1,Math.abs(report.nav)),"accounting residual");
       const status=!valid?"REFERENCE_UNAVAILABLE":s.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT")?"INVALID_SHARE_ASSUMPTION":s.pending?"PENDING":"SIMULATED";
       const curve=s.curve,avgCapital=curve.length?sum(curve.map(x=>x.nav))/curve.length:null;
-      return clone({source:"SYNTHETIC_OR_UNVERIFIED_NORMALIZED_EVENTS",calibrated:false,protocolExact:false,status,mode,entry:request.entry,report,liquidation:valid?liquidation(s,c):{status:"UNAVAILABLE",value:null},risk:valid?risk(s,c,m.ref.price):null,maxDrawdown:Math.max(0,...curve.map(x=>x.drawdown)),avgObservedNav:avgCapital,state:s,config:c});
+      const maxInventoryX=Math.max(balances(s).x,...curve.map(x=>x.x)),minObservedSol=Math.min(balances(s).y,...curve.map(x=>x.y));
+      return clone({source:"SYNTHETIC_OR_UNVERIFIED_NORMALIZED_EVENTS",calibrated:false,protocolExact:false,status,mode,entry:request.entry,report,liquidation:valid?liquidation(s,c):{status:"UNAVAILABLE",value:null},risk:valid?risk(s,c,m.ref.price):null,maxDrawdown:Math.max(0,...curve.map(x=>x.drawdown)),avgObservedNav:avgCapital,maxInventoryX,minObservedSol,riskBreaches:s.riskLog.length,durationSeconds:curve.length?curve.at(-1).t-curve[0].t:0,state:s,config:c});
     }
     return {push,action,analyze,snapshot};
   }

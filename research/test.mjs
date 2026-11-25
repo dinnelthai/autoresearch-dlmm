@@ -38,3 +38,11 @@ const rw=Engine.run(req,[ev[0],{id:"reward",t:1,type:"REWARD",x:100,y:.2},ev[2]]
 const expired=Engine.run(req,ev,{executionDelaySeconds:100},"manual",[{t:0,action:{type:"CLAIM"},options:{expiresAfterSeconds:5}}]);check(expired.state.receipts.some(x=>x.status==="EXPIRED"),"expiry");
 const partial=Engine.run(req,ev,cfg,"manual",[{t:120,action:{type:"OPEN",spec:{shape:"spot",width:4,bidFraction:.5,askFraction:.5}},options:{partial:true}}]);check(partial.state.receipts.some(x=>x.status==="PARTIAL")&&partial.state.bins.length>0,"partial deployment");
 check(Engine.analyzeRequest(req,ev.slice(0,5)).analysis.candidates.length>0,"analysis entry");console.log("Additional checks:",count);
+
+const bizReq={entry:"holding",meme:50000,sol:5,initialPrice:.0001,pool:"DEMO_POOL",goal:"balanced",horizonSeconds:10800};
+const biz=Engine.compare(bizReq,Engine.demo("range"),{executionDelaySeconds:0});
+check(biz.runs.at(-1).state.fills.every(f=>f.kind!=="SPOT"||f.q>=0),"disposal without permission");
+const analysis=Engine.analyzeRequest(bizReq,Engine.demo("range").slice(0,5),{executionDelaySeconds:0});check(analysis.analysis.candidates.filter(v=>v.action.label==="hybrid_grid").length===25,"hybrid grid");check(analysis.snapshot.config.forecastHorizonSeconds===10800,"horizon");
+const w=Engine.weights(4,"hybrid",.5),ba=Engine.weights(4,"bid_ask",0);check(w.every((v,i)=>Math.abs(v-(.125+.5*ba[i]))<1e-10),"normalized mix");
+check(Engine.analyzeRequest(bizReq,[{...Engine.demo("range")[0],references:[]}]).analysis.reason==="REFERENCE_UNAVAILABLE","reference unavailable");
+check(Engine.run(bizReq,Engine.demo("crash"),{executionDelaySeconds:0}).riskBreaches>0,"risk monitor");console.log("Integration assertions:",count);
