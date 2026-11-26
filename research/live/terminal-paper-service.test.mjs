@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,rm,stat} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm,stat,realpath} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
@@ -72,7 +72,7 @@ test('real tick repairs terminal pointer after committed endpoint and rejects ch
 test('real service starts, advances twice, archives and resumes from disk with injected decoded captures',async t=>{
  const {IntegerKernel:K}=await import('../integer.mjs');
  const {createPaperHistoryStore}=await import('./paper-history-store.mjs');
- const DATA=await mkdtemp(join(tmpdir(),'paper-service-forward-'));
+ const DATA=await realpath(await mkdtemp(join(tmpdir(),'paper-service-forward-')));
  const {backendHash}=await sourceInventory(ROOT);
  const io=createTerminalRuntime({ROOT,DATA}),captures=new Map(),services=[];
  t.after(async()=>{try{await Promise.all(services.map(s=>s.stop()))}finally{await rm(DATA,{recursive:true,force:true})}});

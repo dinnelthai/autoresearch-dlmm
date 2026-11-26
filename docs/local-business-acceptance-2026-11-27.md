@@ -1,0 +1,13 @@
+# Local business acceptance — 2026-11-27
+
+Scope: virtual capital only, no signing or real funds. Real-market acceptance remains blocked; no live return is claimed.
+
+- Base: `0bf2f4d62bf0f02ad370e310e0d6cf36108cd246`, fast-forwarded from origin/main. Existing uncommitted changes were preserved in `stash@{0}` and are not included in the test checkout.
+- Local Node: v23.11.0, not the specified v22.23.4. The pinned SDK tarball hash matched `7e8da2ee2e528a5aba4c1efd3909dcd74ac94cfed380fa9636f256ade1a41b3b`.
+- `node --test research/live/sdk-runtime.test.mjs`: 1 pass; CJS adapter and CLI start, with pure JS bigint fallback. Direct ESM import fails `ERR_UNSUPPORTED_DIR_IMPORT` for Anchor's `utils/bytes`. This does not close C02, its dependency/security review, or protocol validation.
+- Existing basket configurations match. `check-local` returned `LOCAL_READ_CHECKS_BLOCKED`: both localhost listeners absent, no market slot and model/decision/execution readiness false. No configured service was started: the handoff prohibits collector or scheduler startup before formal C02 approval.
+- Core isolated test command: `node --test research/live/terminal-paper-service.test.mjs research/live/paper-router-http.test.mjs research/live/paper-snapshot-run-core.test.mjs research/live/paper-history-fs.test.mjs`. Result: 20 pass, 0 fail, 0 skipped. This includes HTTP scope/fail-closed routes, eight rows, three synthetic snapshots, fee accrual, restart, history verification, risk blocks and HODL. These are injected fixtures, not live data or proof of all eight strategies producing returns.
+- `node research/live/verify-offline.mjs`: `OFFLINE_CHECKS_PASSED`, 217 modules, 85 test files, 341 passed, 0 failed, 0 blocked; local machine-readable report `data/acceptance/offline-1795717085070.json` (ignored by Git). This was run on Node 23, not the prescribed Node 22.
+- The initial Mac lifecycle test failed because fixture paths used `/var` while the service resolves `/private/var`. Canonicalizing the disposable test directory fixes the test; no production model or UI changed. The initial sandboxed loopback test was denied `EPERM`; rerunning with loopback permission passed.
+
+Remaining: resolve the direct ESM contract and independent dependency-risk review, obtain formal C02 acceptance, use the prescribed Node version, then start the existing configured services and collect finalized live evidence. Verify matching raw hashes and at least three increasing slots, eight strategy rows including blocked paths, fees/costs/equity/drawdown and same-window HODL, inspect the actual UI, and audit the archive. A seven-day window must elapse before a window-level conclusion. None of these live gates was passed in this run.
