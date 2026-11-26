@@ -10,6 +10,7 @@ const b=normalizePosition(snapshot,request,events,{executionDelaySeconds:0});
 check(b.request.positionBins[0].x===1000&&b.request.positionBins[0].y===.2,"raw -> human principal");
 check(b.request.pendingFeeX===.00002&&b.request.pendingFeeY===.000000002,"raw -> pending fee");
 check(b.config.anchorPrice===.0001&&b.config.binStepBps===100,"absolute bin grid");
+check(normalizePosition(snapshot,request,events,{anchorPrice:.0001}).config.anchorPrice===.0001,"equivalent explicit decimal anchor is accepted");
 const out=Engine.run(b.request,events,b.config,"manual",[{t:1,action:{type:"REMOVE_AND_HOLD"}}]);check(out.state.bins.length===0&&Math.abs(out.report.residual)<1e-8,"business existing position accounting");
 check(b.evidence.status==="MATCHES_SUPPLIED_EXPECTED"&&out.protocolExact===false,"fidelity preserved");
 for(const [s,r,e,c] of [[{...snapshot,asOf:1},request,events,{}],[{...snapshot,expected:{...snapshot.expected,feeX:"3"}},request,events,{}],[snapshot,{...request,positionBins:[]},events,{}],[snapshot,request,events,{anchorPrice:.1}],[{...snapshot,tokenExtensions:true},request,events,{}]]){let rejected=false;try{normalizePosition(s,r,e,c)}catch{rejected=true}check(rejected,"bad snapshot bridge input")}

@@ -12,7 +12,7 @@ function normalizePosition(snapshot,request,events,config={}){
   if(typeof snapshot.binStep!=="string"||!/^\d+$/.test(snapshot.binStep))throw Error("snapshot bin step must be decimal integer string");
   const binStepBps=Number(snapshot.binStep);
   if(!Number.isInteger(binStepBps)||binStepBps<1||binStepBps>65535)throw Error("invalid bin step");
-  const anchorPrice=10**(snapshot.decimalsX-snapshot.decimalsY);
+  const anchorPrice=Number(`1e${snapshot.decimalsX-snapshot.decimalsY}`);
   if(config.binStepBps!=null&&config.binStepBps!==binStepBps||config.anchorPrice!=null&&config.anchorPrice!==anchorPrice)throw Error("snapshot price grid conflicts with config");
   const reconciliation=K.reconcile(snapshot);
   if(reconciliation.status==="MISMATCH")throw Error("integer position snapshot mismatch");
