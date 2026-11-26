@@ -26,3 +26,12 @@ const cooling=P(s,c,market,{...opts,operations});
 assert.equal(cooling.controls.cooldownElapsed,false);
 assert.ok(cooling.candidates.filter(r=>r.action.type==='REPOSITION').every(r=>!r.feasible));
 console.log('T10 management fixture checks passed; no live acceptance.');
+
+// Matched HOLD gate must apply even when reviewed counters allow reposition.
+const eligibleOps={...operations,lastActionTime:0};
+const economic=P(s,c,market,{...opts,operations:eligibleOps});
+assert.equal(economic.controls.cooldownElapsed,true);
+assert.equal(economic.costBasis,'DECLARED_LOGICAL_OPERATION_AGGREGATE_ALREADY_IN_NET_NAV');
+assert.ok(economic.candidates.filter(r=>r.action.type==='REPOSITION'&&r.feasible).every(r=>r.holdComparison?.eligible===true&&r.holdComparison.netPnlDeltaSol>0));
+assert.ok(economic.candidates.filter(r=>r.reason==='REPOSITION_NET_ADVANTAGE_NOT_ESTABLISHED').every(r=>r.holdComparison?.eligible===false));
+assert.ok(economic.selected?.action.type!=='REPOSITION'||economic.selected.holdComparison?.eligible===true);
