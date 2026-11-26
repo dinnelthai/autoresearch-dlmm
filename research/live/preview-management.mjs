@@ -4,7 +4,7 @@ const finite=n=>typeof n==='number'&&Number.isFinite(n);
 const sum=(a,k)=>a.reduce((s,b)=>s+b[k],0);
 const copy=v=>JSON.parse(JSON.stringify(v));
 export function previewManagement(model,cfg,market,{asOf,operations=null,position=null}={}){
- const result={status:'BLOCKED',decisionReady:false,executionReady:false,selected:null,candidates:[],alerts:[],forecastLabel:'SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED',scope:'EXISTING_POSITION_ONLY'};
+ const result={status:'BLOCKED',decisionReady:false,executionReady:false,selected:null,candidates:[],alerts:[],forecastLabel:'SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED',volumeBasis:'EXPLICIT_FLOW_WINDOW_FROZEN_TARGET_BIN_PROXY',scope:'EXISTING_POSITION_ONLY'};
  const block=reason=>({...result,reason});
  if(!model.bins.some(b=>b.liquidity>0)||model.status!=='OPEN')return block('NO_NONEMPTY_POSITION');
  if(!model.market?.ref?.valid||!Number.isSafeInteger(asOf)||asOf<model.lastTime||asOf>model.market.ref.expiresAt||asOf-model.market.t>cfg.maxReferenceAge)return {...block('REFERENCE_UNAVAILABLE_OR_STALE'),alerts:['MANUAL_POSITION_REVIEW_REQUIRED']};
@@ -49,7 +49,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
    const v=Engine.evaluate(s,cfg,action,scenarios);
    if(!v.feasible)throw Error(v.reason??'MODEL_INFEASIBLE');
    if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
-   row.feasible=true;row.score=v.utility;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV'};
+   row.feasible=true;row.score=v.utility;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics};
   }catch(e){row.reason=String(e.message).slice(0,180);}
   result.candidates.push(row);
  }
