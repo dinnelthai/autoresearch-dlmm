@@ -17,7 +17,7 @@ export function calculateSeries({windows,maxIntervalSeconds,seriesHash}){
    const r=calculateWindow(w);assert(r.status==='BOUNDED_WINDOW_ACCOUNTING_DIAGNOSTIC','SERIES_WINDOW_BLOCKED_'+(r.reason??'UNKNOWN'));
    const {ledger:l,opening,closing,marks,policy,bindings}=w;
    assert(['pool','position','owner','mintX','mintY','decimalsX','decimalsY'].every(k=>l[k]===first.ledger[k])&&policy.scope===first.policy.scope&&policy.maxAgeSeconds===first.policy.maxAgeSeconds&&policy.maxSpreadBps===first.policy.maxSpreadBps,'SERIES_SCOPE_CHANGED');
-   assert(!prior||(prior.closing.slot===opening.slot&&prior.bindings.closingHash===bindings.openingHash&&JSON.stringify(prior.marks.closing)===JSON.stringify(marks.opening)),'SERIES_BOUNDARY_MISMATCH');
+   assert(!prior||(prior.closing.slot===opening.slot&&prior.bindings.closingHash===bindings.openingHash&&JSON.stringify(prior.closing)===JSON.stringify(opening)&&JSON.stringify(prior.marks.closing)===JSON.stringify(marks.opening)),'SERIES_BOUNDARY_MISMATCH');
    const dt=r.closingTime-r.openingTime;assert(dt>0&&dt<=maxIntervalSeconds,'SERIES_INTERVAL_GAP');
    for(const row of l.rows){assert(!seen.has(row.signature),'SERIES_DUPLICATE_SIGNATURE');seen.add(row.signature);allRows.push(row)}
    assert(allRows.length<=20000,'SERIES_TOO_MANY_TRANSACTIONS');allMarks.push(...marks.flows);
@@ -30,11 +30,11 @@ export function calculateSeries({windows,maxIntervalSeconds,seriesHash}){
    // NAV is principal + pending fees, not idle wallet capital. Trapezoidal estimate, not exact utilization.
    const openingNav=fixed(r.metrics.openingValue),closingNav=fixed(r.metrics.closingNav);
    timeWeightedPrincipal2+=(openingNav+closingNav)*BigInt(dt);
-   const startBasis=previous?fixed(previous.metrics.capitalBasis):baseline,endBasis=fixed(m.capitalBasis);
+   const startBasis=previous?fixed(previous.metrics.capitalBasis):baseline,flowMarks=new Map(marks.flows.map(x=>[x.signature,x]));
    // Exact contributed-capital-time from contribution times, not a trapezoidal capital estimate.
    timeWeightedCapital2+=startBasis*2n*BigInt(dt);
    for(const row of l.rows){if(BigInt(row.depositXRaw)||BigInt(row.depositYRaw)){
-    const mark=marks.flows.find(x=>x.signature===row.signature),p=(BigInt(mark.references[0].priceE18)+BigInt(mark.references[1].priceE18))/2n;
+    const mark=flowMarks.get(row.signature),p=(BigInt(mark.references[0].priceE18)+BigInt(mark.references[1].priceE18))/2n;
     const amount=BigInt(row.depositXRaw)*p*10n**BigInt(18-l.decimalsX)+BigInt(row.depositYRaw)*10n**27n;
     timeWeightedCapital2+=amount*2n*BigInt(r.closingTime-row.blockTime);
    }}
