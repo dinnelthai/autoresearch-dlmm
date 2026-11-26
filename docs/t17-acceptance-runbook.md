@@ -70,3 +70,6 @@ Offline verifier writes data/acceptance/offline-*.json; it runs actual Node synt
 ## Status at handoff
 
 76 pre-T17 .mjs modules and 26 test entry files found by GitHub tree inspection; verifier adds one module. 25 .test.mjs files and one legacy research/test.mjs. No npm lockfile at inspected revision. Local Node 22.16.0 available; git ls-remote failed because github.com DNS resolution failed. Full checkout/test run not performed. Two source-confirmed integration issues fixed: mismatched/partial decoded history was eligible for history merge; valuation window config bytes were not included in source binding. Full suite and regressions pending local execution. All 17 live task gates remain unaccepted; code coverage does not imply product readiness.
+
+## CR-15 closure update
+Use [final Codex handoff](codex-final-handoff.md) as the current task entry point. Supersedes the initial inventory: 86 .mjs files, 33 node test files + one legacy suite. Verifier now checks mandatory inventory and TAP counts per file. Latest source-only rechecks: 15 selected entry modules parsed, 238 engine/T09/T10 assertions, 26 Shadow assertions and 75 legacy engine assertions passed. Full checkout still blocked by DNS; actual runtime and all live gates remain unaccepted. No signing/production execution in this handoff.
