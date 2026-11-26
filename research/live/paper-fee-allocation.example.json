@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "pool": "REPLACE_POOL",
+  "mintX": "REPLACE_MINT_X",
+  "mintY": "REPLACE_MINT_Y",
+  "openingSlot": 0,
+  "openingRawHash": "REPLACE_CAPTURE_HASH",
+  "shares": [
+    {
+      "binId": 0,
+      "shareRaw": "0"
+    }
+  ]
+}

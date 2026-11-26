@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import {createTerminalRuntime} from './terminal-runtime.mjs';
 import {reconcileInterval} from './paper-interval-core.mjs';
+import {createPaperSnapshotReader} from './paper-snapshot.mjs';
 import {assert,errorCode,hash,poolAddress} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data'),io=createTerminalRuntime({ROOT,DATA});
@@ -31,12 +32,7 @@ async function main(){
  const [beforePath,afterPath,historyPath,idl]=await Promise.all([...paths,values.idl].map(io.safeDataPath));
  const dir=join(DATA,'paper-intervals');await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir);const tmp=await mkdtemp(join(dir,'.pending-'));
  try{
-  async function snapshot(p){
-   const mb=await read(join(p,'manifest.json'),16*1024*1024),ab=await read(join(p,'accounts.json'),32*1024*1024),args=['--capture',p,'--idl',idl];
-   const identity=await io.run(args,'inspect-pool.mjs',30000),bins=await io.run(args,'inspect-bins.mjs',30000);
-   assert(identity.rawHash===sha(ab)&&bins.rawHash===sha(ab)&&sha(await read(join(p,'manifest.json'),16*1024*1024))===sha(mb)&&sha(await read(join(p,'accounts.json'),32*1024*1024))===sha(ab),'PAPER_CAPTURE_CHANGED');
-   return {identity,bins,proof:{path:relative(ROOT,p),manifestHash:sha(mb),accountsHash:sha(ab)}};
-  }
+  const snapshot=createPaperSnapshotReader({ROOT,io,idl});
   const before=await snapshot(beforePath),after=await snapshot(afterPath);if(values.pool)assert(before.identity.pool===values.pool&&after.identity.pool===values.pool,'PAPER_RECENT_POOL_MISMATCH');const mb=await read(join(historyPath,'manifest.json'),16*1024*1024),manifest=JSON.parse(mb),identityPath=join(tmp,'identity.json');await writeFile(identityPath,JSON.stringify(before.identity),{flag:'wx',mode:0o600});
   const history=await io.run(['--capture',historyPath,'--idl',idl,'--identity',identityPath],'inspect-swaps.mjs',120000);
   assert(sha(await read(join(historyPath,'manifest.json'),16*1024*1024))===sha(mb),'PAPER_HISTORY_CHANGED');

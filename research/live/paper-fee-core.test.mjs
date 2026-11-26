@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {IntegerKernel as K} from '../integer.mjs';
+import {estimateFeeGrowth,feeEventDiagnostic,checkpointFees} from './paper-fee-core.mjs';
+const Q=1n<<64n,pool='A'.repeat(32),mintX='B'.repeat(32),mintY='C'.repeat(32);
+function fixture(){
+ const snapshot=(slot,after)=>{const identity={pool,mintX,mintY,slot,rawHash:(after?'b':'a').repeat(64),sdkCommit:K.SDK_COMMIT,idlBlob:'idl',binStep:100,activeId:0,vaultX:'vx',vaultY:'vy',status:'IDENTITY_CHECKED_UNVERIFIED',orientation:'MEME_X_SOL_Y'};return {identity,bins:{...identity,status:'BITMAP_COVERAGE_CHECKED_UNVERIFIED',coverage:{expected:1,decoded:1,missing:0,unsupported:0},arrays:[{version:3,bins:Array.from({length:70},(_,binId)=>({binId,priceQ64Raw:String(Q),liquiditySupplyRaw:String(100n*Q),feeXPerTokenRaw:String(after?10n*Q:0n),feeYPerTokenRaw:String(after?20n*Q:0n),openOrderAmountRaw:'0',totalProcessingOrderAmountRaw:'0',processedOrderRemainingAmountRaw:'0'}))}]}}};
+ return {before:snapshot(1,false),after:snapshot(2,true),allocation:{schemaVersion:1,pool,mintX,mintY,openingSlot:1,openingRawHash:'a'.repeat(64),shares:[{binId:0,shareRaw:String(10n*Q)}]}};
+}
+test('SDK integer rounding and dilution sensitivity',()=>{const r=estimateFeeGrowth(fixture());assert.equal(r.status,'PAPER_FEE_ESTIMATES_UNVERIFIED');assert.deepEqual(r.totals,{observedXRaw:'100',observedYRaw:'200',dilutedXRaw:'90',dilutedYRaw:'181'});assert.equal(r.pnlReady,false);assert.equal(checkpointFees(0,Q-1n,{x:0n,y:0n},{x:Q,y:Q}).feeX,0n)});
+test('changed supply removes diluted estimates, not observed checkpoint arithmetic',()=>{const x=fixture();x.after.bins.arrays[0].bins[0].liquiditySupplyRaw=String(120n*Q);const r=estimateFeeGrowth(x);assert.equal(r.totals.observedXRaw,'100');assert.equal(r.totals.dilutedXRaw,null)});
+test('invalid scope, regressed growth, missing bin, excessive shares and order state fail closed',()=>{for(const mutate of [x=>x.allocation.openingSlot=0,x=>x.allocation.shares[0].binId=99,x=>x.allocation.shares[0].shareRaw=String(11n*Q),x=>x.before.bins.arrays[0].bins[0].feeXPerTokenRaw=String(11n*Q),x=>x.after.bins.arrays[0].bins[0].openOrderAmountRaw='1']){const x=fixture();mutate(x);const r=estimateFeeGrowth(x);assert.equal(r.status,'BLOCKED');assert.equal(r.totals,null);assert.deepEqual(r.rows,[])}});
+test('whole supply comparison is not protocol verification',()=>{const x=fixture(),r=feeEventDiagnostic({bin:0,preBin:x.before.bins.arrays[0].bins[0],postBin:x.after.bins.arrays[0].bins[0],feeToken:'X',mmFeeRaw:'1001'});assert.equal(r.wholeSupplyCheckpointFeeRaw,'1000');assert.equal(r.differenceRaw,'-1');assert.equal(r.modelEligible,false)});

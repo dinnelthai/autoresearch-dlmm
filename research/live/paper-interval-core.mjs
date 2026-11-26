@@ -1,8 +1,8 @@
 // Narrow observational interval reconciliation. Never a complete event stream or protocol replay.
 import {assert,hash,poolAddress} from './research-contract.mjs';
 import {classifySwapCandidate} from './paper-event-core.mjs';
+import {feeEventDiagnostic} from './paper-fee-core.mjs';
 const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits)),'PAPER_RAW_INTEGER_INVALID');return BigInt(v)};
-const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const fields=['amountXRaw','amountYRaw','priceQ64Raw','liquiditySupplyRaw','feeXPerTokenRaw','feeYPerTokenRaw'];
 const orders=['openOrderAmountRaw','totalProcessingOrderAmountRaw','processedOrderRemainingAmountRaw'];
 function bins(report){
@@ -46,6 +46,7 @@ export function reconcileInterval({before,after,history,manifest}){
   result.status='SINGLE_BIN_PRINCIPAL_MATCHED_UNVERIFIED';result.reason='FEE_GROWTH_UNITS_AND_COVERAGE_REQUIRE_INDEPENDENT_REVIEW';
   // Raw facts only; not a PER_BIN_RECONCILED model fill.
   result.candidate={signature:e.signature,slot:e.slot,txIndex:e.txIndex,bin:d.bin,side:candidate.side,basePrincipalRaw:(e.swapForY?dx:-dx).toString(),mmFeeRaw:e.mmFeeRaw,feeToken:e.feeToken,preBin:x,postBin:y};
+  result.feeCalibration=feeEventDiagnostic(result.candidate);
  }catch(e){result.reason=/^[A-Z][A-Z0-9_]+$/.test(e.message)?e.message:'PAPER_INTERVAL_INVALID'}
  return result;
 }
