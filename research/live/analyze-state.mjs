@@ -62,7 +62,8 @@ async function main(){
     pools.add(r.pool);venues.add(r.venue);sources.add(r.source);
    }
    assert(venues.size>=2&&sources.size>=2,'same-venue or same-source reference set insufficient for this bridge');
-   const e={type:'MARKET',id:o.id,t:o.t,pool:m.pool,references:o.references.map(r=>({pool:r.pool,price:r.price,depth:r.depth,observedAt:r.observedAt,availableAt:r.availableAt})),tokenSafe:o.tokenSafe,holderShare:o.holderShare,holderOutflow:o.holderOutflow,buyImbalance:o.buyImbalance,flowSol:o.flowSol,exitDepth:o.exitDepth};
+   assert(o.flowWindowSeconds==null||(Number.isSafeInteger(o.flowWindowSeconds)&&o.flowWindowSeconds>0&&o.flowWindowSeconds<=86400),'invalid flow observation window');
+   const e={type:'MARKET',id:o.id,t:o.t,pool:m.pool,references:o.references.map(r=>({pool:r.pool,price:r.price,depth:r.depth,observedAt:r.observedAt,availableAt:r.availableAt})),tokenSafe:o.tokenSafe,holderShare:o.holderShare,holderOutflow:o.holderOutflow,buyImbalance:o.buyImbalance,flowSol:o.flowSol,flowWindowSeconds:o.flowWindowSeconds??null,exitDepth:o.exitDepth};
    const ref=Engine.reference(e,cfg);assert(ref.valid,'reference quality: '+ref.reason);observations.push({...e,ref});
   }
   const latest=observations.at(-1);checkTime(latest.t,latest.t,asOf,maxAge);
