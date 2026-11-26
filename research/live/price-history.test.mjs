@@ -9,3 +9,5 @@ test('validates real OHLCV shape and rejects invalid or out-of-order candles',()
  assert.throws(()=>validateCandles({timeframe:'1h',data:[{...row,timestamp:now+3601}]},now));
  assert.throws(()=>validateCandles({timeframe:'5m',data:[row]},now));
 });
+
+test('official optional timeframe field is accepted',()=>{const now=1800000000,row={timestamp:now,open:1,high:2,low:1,close:2,volume:0};assert.deepEqual(validateCandles({data:[row]},now),[row])});
