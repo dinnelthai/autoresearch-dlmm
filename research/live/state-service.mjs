@@ -119,7 +119,7 @@ try{
   assert(m.pool===pool&&m.indexAddress===address&&m.position===(address===pool?null:address)&&m.commitment==='finalized'&&Array.isArray(m.signatures),'history identity mismatch');
   if(m.status==='EMPTY_PAGE_OBSERVED_UNVERIFIED'&&m.signatures.length===0&&!m.gaps?.length)return {capture:relative(ROOT,p),historyStatus:'EMPTY_OR_UNAVAILABLE',added:0,overlap:0};
   // Only merge fully captured windows. Partial windows remain archived for later repair.
-  assert(m.status==='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'&&!m.gaps?.length,'history window partial');
+  if(m.status!=='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'||m.gaps?.length)return {capture:relative(ROOT,p),historyStatus:'CAPTURE_PARTIAL',signatureCount:m.signatures.length,gapCount:m.gaps?.length??0,gapReasons:[...new Set((m.gaps??[]).map(g=>g.reason))].slice(0,20),added:0,overlap:0};
   const decoded=await inspect('inspect-swaps.mjs',p);
   assert(decoded.pool===pool&&decoded.position===(address===pool?null:address)&&Array.isArray(decoded.transactions)&&Array.isArray(decoded.gaps),'history report mismatch');
   if(decoded.status!=='EVENTS_DECODED_UNVERIFIED'||decoded.gaps.length)return {capture:relative(ROOT,p),historyStatus:'DECODE_PARTIAL',added:0,overlap:0,decoded};
@@ -139,7 +139,7 @@ try{
  async function persist(){const tmp=stateFile+'.tmp',data=JSON.stringify(state)+'\n';assert(Buffer.byteLength(data)<=64*1024*1024,'state exceeds size cap');await writeFile(tmp,data,{mode:0o600});await rename(tmp,stateFile);}
  async function collect(name,fn){
   const startedAt=Date.now();
-  try{const evidence=await fn();const partial=['OVERLAP_MISSING','DECODE_PARTIAL','EMPTY_OR_UNAVAILABLE'].includes(evidence.historyStatus)||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:evidence.commonMarketCapture===true?Math.min(startedAt,state.streams.market.receivedAt):startedAt,completedAt:Date.now(),evidence};}
+  try{const evidence=await fn();const partial=['OVERLAP_MISSING','DECODE_PARTIAL','EMPTY_OR_UNAVAILABLE','CAPTURE_PARTIAL'].includes(evidence.historyStatus)||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:evidence.commonMarketCapture===true?Math.min(startedAt,state.streams.market.receivedAt):startedAt,completedAt:Date.now(),evidence};}
   catch{state.streams[name]={status:'BLOCKED',startedAt,receivedAt:Date.now(),reason:'CAPTURE_OR_VALIDATION_FAILED',previousEvidence:state.streams[name]?.evidence??state.streams[name]?.previousEvidence??null};}
   console.log(JSON.stringify({sequence:state.sequence,stream:name,status:state.streams[name].status,at:new Date().toISOString()}));await persist();
  }

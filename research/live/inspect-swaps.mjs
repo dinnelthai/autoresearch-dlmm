@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import anchor from '@coral-xyz/anchor';
 import bs58 from 'bs58';
 import {PublicKey} from '@solana/web3.js';
+import {resolveReadMessage} from './transaction-version.mjs';
 import {PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const sha=b=>createHash('sha256').update(b).digest('hex');
@@ -61,8 +62,8 @@ async function main(){
    const tx=await load('tx-'+s.signature+'.json','getTransaction',s.signature);assert(tx.slot===s.slot&&tx.transaction.signatures[0]===s.signature&&tx.meta&&'err' in s&&'err' in tx.meta&&JSON.stringify(s.err)===JSON.stringify(tx.meta.err)&&s.blockTime===tx.blockTime,'transaction identity or outcome mismatch');
    if(!blocks.has(s.slot)){const b=await load('block-'+s.slot+'.json','getBlock',s.slot);assert(Array.isArray(b.signatures)&&new Set(b.signatures).size===b.signatures.length,'invalid block signature order');blocks.set(s.slot,b.signatures);}
    const txIndex=blocks.get(s.slot).indexOf(s.signature);assert(txIndex>=0,'transaction missing in block');
-   const meta=tx.meta,msg=tx.transaction.message,keys=[...msg.accountKeys,...(meta.loadedAddresses?.writable??[]),...(meta.loadedAddresses?.readonly??[])];assert(keys.every(k=>typeof k==='string'),'unexpected account key format');
-   const record={signature:s.signature,slot:s.slot,txIndex,blockTime:tx.blockTime,success:meta.err===null,networkFeeLamports:Number.isSafeInteger(meta.fee)?String(meta.fee):null,eventCount:0};
+   const {meta,msg,keys,version}=resolveReadMessage(tx);
+   const record={signature:s.signature,slot:s.slot,txIndex,blockTime:tx.blockTime,transactionVersion:version,success:meta.err===null,networkFeeLamports:Number.isSafeInteger(meta.fee)?String(meta.fee):null,eventCount:0};
    if(identity){record.vaultX=balances(meta,keys,identity.vaultX);record.vaultY=balances(meta,keys,identity.vaultY);if(record.vaultX&&record.vaultX.mint!==identity.mintX||record.vaultY&&record.vaultY.mint!==identity.mintY)throw Error('vault mint mismatch');record.vaultStatus=record.vaultX&&record.vaultY?'DELTA_OBSERVED_NOT_RECONCILED':'MISSING';}
    if(!record.success){report.transactions.push(record);continue;}
    const cpi=[],logs=[],posCpi=[],posLogs=[];

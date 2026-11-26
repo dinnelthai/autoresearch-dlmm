@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
+import {MAX_READ_TRANSACTION_VERSION,resolveReadMessage} from './transaction-version.mjs';
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const assert=(v,m)=>{if(!v)throw Error(m);};
 async function main(){
@@ -26,7 +27,7 @@ async function main(){
    const raw=await res.text(),receivedAt=new Date().toISOString();
    if(!res.ok){manifest.gaps.push({method,file,reason:'HTTP_'+res.status});return null;}
    let p;try{p=JSON.parse(raw);}catch{manifest.gaps.push({method,file,reason:'INVALID_JSON'});return null;}
-   if(p.jsonrpc!=='2.0'||p.id!==rid||p.error||!('result'in p)){manifest.gaps.push({method,file,reason:'RPC_ERROR_OR_BAD_ENVELOPE'});return null;}
+   if(p.jsonrpc!=='2.0'||p.id!==rid||p.error||!('result'in p)){manifest.gaps.push({method,file,reason:p.error?.code===-32015?'RPC_TRANSACTION_VERSION_UNSUPPORTED':'RPC_ERROR_OR_BAD_ENVELOPE',...(Number.isSafeInteger(p.error?.code)?{rpcCode:p.error.code}:{})});return null;}
    await writeFile(join(dir,file),raw,{mode:0o600,flag:'wx'});
    manifest.files.push({file,method,params,requestId:rid,requestedAt,receivedAt,sha256:sha(raw)});
    if(p.result===null)manifest.gaps.push({method,file,reason:'NULL_RESULT'});
@@ -43,15 +44,16 @@ async function main(){
   for(const row of rows){
    if(typeof row.signature!=='string'||!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(row.signature)||!Number.isSafeInteger(row.slot)||row.slot<0||seen.has(row.signature)){manifest.gaps.push({reason:'INVALID_OR_DUPLICATE_SIGNATURE',page:i});continue;}
    seen.add(row.signature);slots.add(row.slot);manifest.signatures.push({signature:row.signature,slot:row.slot,err:row.err,blockTime:row.blockTime});
-   const tx=await rpc('getTransaction',[row.signature,{commitment:'finalized',encoding:'json',maxSupportedTransactionVersion:0}],'tx-'+row.signature+'.json');
+   const tx=await rpc('getTransaction',[row.signature,{commitment:'finalized',encoding:'json',maxSupportedTransactionVersion:MAX_READ_TRANSACTION_VERSION}],'tx-'+row.signature+'.json');
    if(!tx||tx.slot!==row.slot||tx.transaction?.signatures?.[0]!==row.signature)manifest.gaps.push({signature:row.signature,reason:'TRANSACTION_IDENTITY_OR_AVAILABILITY'});
+   else try{resolveReadMessage(tx)}catch(e){manifest.gaps.push({signature:row.signature,reason:'TRANSACTION_MESSAGE_UNSUPPORTED',detail:e.message})}
   }
   const next=rows.at(-1)?.signature;if(!next||next===cursor){manifest.gaps.push({reason:'CURSOR_DID_NOT_ADVANCE',page:i});break;}
   cursor=next;manifest.nextBefore=cursor;
   if(rows.length<limit){manifest.stopReason='SHORT_PAGE';break;}
  }
  for(const slot of [...slots].sort((a,b)=>a-b)){
-  const b=await rpc('getBlock',[slot,{commitment:'finalized',transactionDetails:'signatures',rewards:false,maxSupportedTransactionVersion:0}],'block-'+slot+'.json');
+  const b=await rpc('getBlock',[slot,{commitment:'finalized',transactionDetails:'signatures',rewards:false,maxSupportedTransactionVersion:MAX_READ_TRANSACTION_VERSION}],'block-'+slot+'.json');
   if(!Array.isArray(b?.signatures)||new Set(b.signatures).size!==b.signatures.length){manifest.gaps.push({slot,reason:'BLOCK_ORDER_UNAVAILABLE'});continue;}
   manifest.blocks.push({slot,file:'block-'+slot+'.json'});
   for(const s of manifest.signatures.filter(s=>s.slot===slot))if(!b.signatures.includes(s.signature))manifest.gaps.push({signature:s.signature,slot,reason:'SIGNATURE_NOT_IN_BLOCK'});
