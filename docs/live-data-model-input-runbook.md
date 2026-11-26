@@ -1,0 +1,10 @@
+# Live data / model input integration checkpoint
+The terminal exposes /health (process identity and HTML/server hashes, no RPC credentials) and /api/terminal/input-status?pool=ADDRESS. The input-status panel projects actual current market data, an exact integer sum of fully decoded bounded swap events and a current same-snapshot external quote if available. It never interprets a bounded sample as complete-window flow, never invents holders, token safety or reviewed observations, and never creates a MARKET event from one venue. The existing reviewed-artifact engine path is preserved. Fixed an undefined binding variable in inspectReview.
+
+## Local startup and verification
+1. git pull --ff-only origin main; git rev-parse --short HEAD.
+2. node --check research/live/terminal-server.mjs; node --test research/live/research-input-status.test.mjs; node research/live/verify-offline.mjs.
+3. Check lsof -nP -iTCP:8788 -sTCP:LISTEN and lsof -nP -iTCP:8790 -sTCP:LISTEN. Stop only the old processes after identifying them; restart with the existing local configs and RPC environment. Do not paste RPC secrets into logs.
+4. In separate shells: node research/live/state-service.mjs --config data/live-config.json --port 8788; node research/live/terminal-server.mjs --config data/terminal-config.json --port 8790.
+5. curl -fsS http://127.0.0.1:8790/health; curl -fsS http://127.0.0.1:8788/health; curl -fsS http://127.0.0.1:8790/api/terminal/state; curl -fsS http://127.0.0.1:8790/api/terminal/input-status. Refresh the browser. The API version should be flow-data-v7. These are local instructions, not a claim that the user's host ran them.
+6. Remaining inputs: independent second venue/source; validated chain time; owner-level concentration and historical outflow; complete time-bounded flow; token safety evidence; at least three time-ordered reviewed observations with hashed evidence. Only then run the existing research engine. No trade execution is enabled.

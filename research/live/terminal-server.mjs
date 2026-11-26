@@ -16,6 +16,7 @@ import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObs
 import {getPriceHistory} from './price-history.mjs';
 import {getPoolInfo,cachedLoader} from './market-api.mjs';
 import {observeExternalMarket} from './external-market.mjs';
+import {inputStatus} from './research-input-status.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
@@ -71,6 +72,7 @@ async function scopedOverview(scope){
  return {pool:scope,sequence,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason:market?null:reason,market,collection,reviewGate:{status:'BLOCKED',reason:'POOL_RESEARCH_NOT_CONFIGURED'},positions:[],monitoring:[],streams:{},decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY',scope:'MARKET_PREVIEW_ONLY'};
 }
 const html=await readFile(join(ROOT,'research/live/terminal.html'));
+const startup={apiVersion:'flow-data-v7',startedAt:Date.now(),htmlHash:sha(html),serverHash:sha(await readFile(fileURLToPath(import.meta.url)))};
 let busy=false,monitorTimer=null,monitorJob=null,stopping=false,monitorLock=null,monitorLockPath=null,monitorFile=null,monitorCursor=0,monitorError=null,monitorLastCycle=null;
 const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitoring?.intervalSeconds??30;
 assert(Number.isInteger(monitorSeconds)&&monitorSeconds>=15&&monitorSeconds<=600,'INVALID_MONITOR_INTERVAL');
@@ -217,7 +219,7 @@ async function reviewContext(body){
  return {saved,r,b,m,result};
 }
 async function inspectReview(body){
- const {saved,r,m,result}=await reviewContext(body);
+ const {saved,r,b,m,result}=await reviewContext(body);
  const integerAllocation=saved.mode==='plans'?allocationDiagnostic({row:r.planPreview.families[body.rowIndex].best,market:m,budget:b.researchBudget}):{status:'BLOCKED',reason:'MANAGEMENT_INTEGER_MAPPING_PENDING',executionReady:false,signingAvailable:false};
  let captureDirectory=null;if(cfg.weightDiagnostic?.inverseEnabled===true&&typeof m.capture==='string'){try{captureDirectory=await safeDataPath(m.capture)}catch{}}
  const weightDiagnostic=await sdkWeightDiagnostic(integerAllocation,m,cfg.weightDiagnostic,captureDirectory);
@@ -256,6 +258,13 @@ async function observeWallet(body){
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
 let externalBusy=false,externalLast=null;
+async function researchInputs(scope){
+ const now=Date.now();let state=null,m=null,review=null,reason=null;
+ try{state=await loadState(scope);m=currentMarket(state,scope,now,maxAgeMs)}catch{reason='MARKET_CAPTURE_UNAVAILABLE'}
+ if(m&&scope===pool){try{review=(await loadReview(m,now)).review}catch(e){reason=e.message}}
+ else if(m)reason='POOL_RESEARCH_NOT_CONFIGURED';
+ return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:externalLast,review,reviewReason:reason,now,maxAgeMs});
+}
 async function externalObservation(body){
  const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),now=Date.now();
  if(externalLast&&externalLast.pool===scope&&externalLast.marketRawHash===m.rawHash&&externalLast.expiresAt>now)return externalLast;
@@ -301,6 +310,8 @@ const server=createServer(async(req,res)=>{
   const scoped=req.method==='GET'?scopedTerminalRequest(req.url,pool):{path:req.url,pool};
   const scope=validateScope(scoped.pool);
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
+  if(req.method==='GET'&&req.url==='/health'){send(res,200,{status:'RUNNING',pool,...startup,decisionReady:false,executionReady:false});return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/input-status'){send(res,200,await researchInputs(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/monitor'){send(res,200,scope===pool?publicMonitor():{pool:scope,enabled:false,current:{},events:[],decisionReady:false,executionReady:false});return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/pool-info'){try{const m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);send(res,200,await indexedPool([m.pool,m.mintX,m.mintY,m.decimalsX,m.decimalsY].join(':'),m))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^INDEX_[A-Z_]+$/.test(e.message)?e.message:'POOL_INFO_UNAVAILABLE'})}return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/price-history'){try{send(res,200,await indexedHistory(scope,scope))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^(INDEX|HISTORY|INVALID)_[A-Z_]+$/.test(e.message)?e.message:'HISTORY_UNAVAILABLE'})}return}
