@@ -6,6 +6,7 @@ import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {parseArgs} from 'node:util';
 import {lamportsRaw,tokenObservation} from './wallet-evidence-core.mjs';
+import {createReadRpc} from './rpc-read.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m)};
 const sha=v=>createHash('sha256').update(v).digest('hex');
 const key=v=>{const p=new PublicKey(v);assert(p.toBase58()===v,'INVALID_PUBLIC_KEY');return p};
@@ -18,12 +19,10 @@ async function main(){
  const endpoint=new URL(process.env.SOLANA_RPC_URL);assert(endpoint.protocol==='https:'||endpoint.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(endpoint.hostname),'WALLET_RPC_SCHEME_INVALID');
  const ax=getAssociatedTokenAddressSync(x,wallet,false,TOKEN_PROGRAM_ID),ay=getAssociatedTokenAddressSync(y,wallet,false,TOKEN_PROGRAM_ID);
  const addresses=[wallet,x,y,ax,ay].map(k=>k.toBase58());assert(new Set(addresses).size===5,'WALLET_CAPTURE_ADDRESS_COLLISION');
- const calls=[];
+ const calls=[],transport=createReadRpc(endpoint,{maxBytes:512*1024,totalMs:8000,timeoutMs:4000,maxAttempts:2});
  async function rpc(method,params){
   const request={jsonrpc:'2.0',id:calls.length+1,method,params},startedAt=Date.now();const record={request,startedAt};calls.push(record);
-  const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request),signal:AbortSignal.timeout(8000),redirect:'error'});
-  assert(response.ok,'WALLET_RPC_HTTP_FAILURE');const text=await response.text();assert(text.length<=512*1024,'WALLET_RPC_RESPONSE_TOO_LARGE');
-  record.receivedAt=Date.now();record.body=text;const p=JSON.parse(text);assert(p.jsonrpc==='2.0'&&p.id===request.id&&!p.error,'WALLET_RPC_RESPONSE_INVALID');return p.result;
+  const r=await transport(request);record.receivedAt=Date.now();record.body=r.raw;record.attempts=r.attempts;return r.payload.result;
  }
  assert(await rpc('getGenesisHash',[])===genesis,'WALLET_RPC_GENESIS_MISMATCH');
  const result=await rpc('getMultipleAccounts',[addresses,{encoding:'base64',commitment:'finalized',minContextSlot:minSlot}]),receivedAt=Date.now();
@@ -45,4 +44,4 @@ async function main(){
  const report={schemaVersion:1,status:'WALLET_CAPTURED_UNVERIFIED',decisionReady:false,executionReady:false,wallet:wallet.toBase58(),mintX:x.toBase58(),mintY:y.toBase58(),decimalsX:dx,decimalsY:9,genesisHash:genesis,commitment:'finalized',slot:result.context.slot,receivedAt,walletAccountStatus:w?'SYSTEM_ACCOUNT':'MISSING',nativeSolRaw:lamportsRaw(w?.lamports??0),memeAta,wsolAta,classicTokenAccountRentRaw:rent,rawHash,directory};
  await writeFile(join(directory,'manifest.json'),JSON.stringify(report,null,2)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(report));
 }
-main().catch(e=>{const m=String(e.message);console.log(JSON.stringify({status:'BLOCKED',decisionReady:false,executionReady:false,reason:/^WALLET_[A-Z0-9_]+$|^TOKEN_ACCOUNT_INVALID$|^INVALID_PUBLIC_KEY$/.test(m)?m:'WALLET_CAPTURE_FAILED'}));process.exitCode=1});
+main().catch(e=>{const m=String(e.message);console.log(JSON.stringify({status:'BLOCKED',decisionReady:false,executionReady:false,reason:/^(WALLET|RPC)_[A-Z0-9_]+$|^TOKEN_ACCOUNT_INVALID$|^INVALID_PUBLIC_KEY$/.test(m)?m:'WALLET_CAPTURE_FAILED'}));process.exitCode=1});

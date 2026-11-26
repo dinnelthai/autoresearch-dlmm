@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {PublicKey} from '@solana/web3.js';
 import {positionV2Filter,positionLbPairFilter,positionOwnerFilter} from './sdk-runtime.mjs';
 import {PROGRAM,SDK_COMMIT} from './inspect-pool.mjs';
+import {createReadRpc} from './rpc-read.mjs';
 async function main(){
  const {values}=parseArgs({options:{pool:{type:'string'},owner:{type:'string'},provider:{type:'string',default:'solana-rpc'},help:{type:'boolean'}}});
  if(values.help){console.log('node research/live/discover-positions.mjs --pool ADDRESS [--owner WALLET]');return;}
@@ -18,12 +19,8 @@ async function main(){
  const root=join('data','raw');await mkdir(root,{recursive:true,mode:0o700});const dir=await mkdtemp(join(root,'positions-'));
  const report={sdkCommit:SDK_COMMIT,pool:pool.toBase58(),owner:owner?.toBase58()??null,provider:values.provider,requestedAt:new Date().toISOString(),status:'BLOCKED',scope:'POSITION_V2_ACCOUNT_INDEX_ONLY',positions:[]};
  try{
-  const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'getProgramAccounts',params}),signal:AbortSignal.timeout(30000),redirect:'error'});
-  report.httpStatus=response.status;
-  if(!response.ok)throw Error('RPC HTTP failure');
-  const reader=response.body?.getReader();if(!reader)throw Error('missing body');let size=0,parts=[];
-  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>4*1024*1024)throw Error('index response cap');parts.push(Buffer.from(value))}}catch(e){await reader.cancel().catch(()=>{});throw e}finally{reader.releaseLock()}
-  const raw=Buffer.concat(parts).toString('utf8'),p=JSON.parse(raw);
+  const r=await createReadRpc(endpoint,{maxBytes:4*1024*1024})({jsonrpc:'2.0',id:1,method:'getProgramAccounts',params});
+  report.httpStatus=r.httpStatus;report.rpcAttempts=r.attempts;const raw=r.raw,p=r.payload;
   if(p.id!==1||p.jsonrpc!=='2.0'||p.error||!Number.isSafeInteger(p.result?.context?.slot)||!Array.isArray(p.result.value)||p.result.value.length>5000)throw Error('invalid context or response');
   const seen=new Set();
   for(const v of p.result.value){
@@ -33,7 +30,7 @@ async function main(){
    seen.add(address);report.positions.push({address,owner:new PublicKey(data.subarray(40,72)).toBase58()});
   }
   await writeFile(join(dir,'accounts.json'),raw,{mode:0o600,flag:'wx'});report.rawHash=createHash('sha256').update(raw).digest('hex');report.slot=p.result.context.slot;report.status='INDEX_CAPTURED_UNVERIFIED';
- }catch{report.positions=[];report.failure='RPC, decoding or storage failure; check provider limits';}
+ }catch(e){report.positions=[];if(/^RPC_[A-Z0-9_]+$/.test(e.message))report.rpcReason=e.message;report.failure='RPC, decoding or storage failure; check provider limits';}
  report.receivedAt=new Date().toISOString();report.limitations=['Current V2 index, not historical or all position versions.','Each position must be recaptured and decoded with its pool and bins in a single context.','No position assets or PnL inferred from index.'];
  await writeFile(join(dir,'manifest.json'),JSON.stringify(report,null,2)+'\n',{mode:0o600,flag:'wx'});
  console.log(JSON.stringify({directory:dir,status:report.status,count:report.positions.length,slot:report.slot}));if(report.status!=='INDEX_CAPTURED_UNVERIFIED')process.exitCode=1;

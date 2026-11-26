@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
 import {MAX_READ_TRANSACTION_VERSION,resolveReadMessage} from './transaction-version.mjs';
+import {createReadRpc} from './rpc-read.mjs';
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const assert=(v,m)=>{if(!v)throw Error(m);};
 async function main(){
@@ -19,20 +20,17 @@ async function main(){
  assert(endpoint.protocol==='https:'||(endpoint.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(endpoint.hostname)),'RPC requires HTTPS or local HTTP');
  const root=join('data','raw');await mkdir(root,{recursive:true,mode:0o700});const dir=await mkdtemp(join(root,'swaps-'));
  const manifest={schemaVersion:1,pool,position,indexAddress,provider:values.provider,commitment:'finalized',requestedAt:new Date().toISOString(),pagesRequested:pages,pageLimit:limit,before:values.before??null,files:[],gaps:[],signatures:[],blocks:[],status:'PARTIAL',limitations:['Address-indexed bounded sample only; no historical completeness claim.','Block signature lists supply transaction order, not per-bin state.']};
- let id=0;
+ let id=0;const transport=createReadRpc(endpoint,{maxBytes:16*1024*1024});
  async function rpc(method,params,file){
   const requestedAt=new Date().toISOString(),rid=++id;
   try{
-   const res=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:rid,method,params}),signal:AbortSignal.timeout(30000),redirect:'error'});
-   const raw=await res.text(),receivedAt=new Date().toISOString();
-   if(!res.ok){manifest.gaps.push({method,file,reason:'HTTP_'+res.status});return null;}
-   let p;try{p=JSON.parse(raw);}catch{manifest.gaps.push({method,file,reason:'INVALID_JSON'});return null;}
-   if(p.jsonrpc!=='2.0'||p.id!==rid||p.error||!('result'in p)){manifest.gaps.push({method,file,reason:p.error?.code===-32015?'RPC_TRANSACTION_VERSION_UNSUPPORTED':'RPC_ERROR_OR_BAD_ENVELOPE',...(Number.isSafeInteger(p.error?.code)?{rpcCode:p.error.code}:{})});return null;}
+   const r=await transport({jsonrpc:'2.0',id:rid,method,params});
+   const raw=r.raw,p=r.payload,receivedAt=new Date().toISOString();
    await writeFile(join(dir,file),raw,{mode:0o600,flag:'wx'});
-   manifest.files.push({file,method,params,requestId:rid,requestedAt,receivedAt,sha256:sha(raw)});
+   manifest.files.push({file,method,params,requestId:rid,requestedAt,receivedAt,attempts:r.attempts,sha256:sha(raw)});
    if(p.result===null)manifest.gaps.push({method,file,reason:'NULL_RESULT'});
    return p.result;
-  }catch{manifest.gaps.push({method,file,reason:'NETWORK_OR_STORAGE_FAILURE'});return null;}
+  }catch(e){manifest.gaps.push({method,file,reason:/^RPC_[A-Z0-9_]+$/.test(e.message)?e.message:'NETWORK_OR_STORAGE_FAILURE',...(Number.isSafeInteger(e.rpcCode)?{rpcCode:e.rpcCode}:{}),...(Number.isSafeInteger(e.attempts)?{attempts:e.attempts}:{})});return null;}
  }
  let cursor=values.before;manifest.nextBefore=cursor??null;const seen=new Set(),slots=new Set();
  for(let i=0;i<pages;i++){

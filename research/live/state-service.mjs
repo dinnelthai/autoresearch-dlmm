@@ -8,6 +8,7 @@ import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
 import {mergeHistory,streamHealth,pendingStream,historyBatch} from './state-core.mjs';
 import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
+import {repairPlan,advanceRepair} from './history-repair.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url));
 const RAW=resolve(ROOT,'data/raw');
 const assert=(v,m)=>{if(!v)throw Error(m);};
@@ -118,8 +119,10 @@ try{
  async function history(address){
   const args=['--pool',pool,'--provider',provider,'--pages',String(historyPages),'--limit',String(historyLimit)];
   if(address!==pool)args.push('--position',address);
+  const previous=state.history[address],turn=(previous?.repairTurn??0)+1,plan=values.once?{repair:false,before:null}:repairPlan(previous,turn);if(plan.before)args.push('--before',plan.before);
+  if(previous)state.history[address]={...previous,repairTurn:turn};
   const r=await run('research/live/capture-swaps.mjs',args,historyTimeoutSeconds*1000),p=await capturePath(r.report.directory),m=await readManifest(p);
-  assert(m.pool===pool&&m.indexAddress===address&&m.position===(address===pool?null:address)&&m.commitment==='finalized'&&Array.isArray(m.signatures),'history identity mismatch');
+  assert(m.pool===pool&&m.indexAddress===address&&m.position===(address===pool?null:address)&&m.commitment==='finalized'&&Array.isArray(m.signatures)&&m.before===plan.before,'history identity mismatch');
   if(m.status==='EMPTY_PAGE_OBSERVED_UNVERIFIED'&&m.signatures.length===0&&!m.gaps?.length)return {capture:relative(ROOT,p),historyStatus:'EMPTY_OR_UNAVAILABLE',added:0,overlap:0};
   // Only merge fully captured windows. Partial windows remain archived for later repair.
   if(m.status!=='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'||m.gaps?.length)return {capture:relative(ROOT,p),historyStatus:'CAPTURE_PARTIAL',signatureCount:m.signatures.length,gapCount:m.gaps?.length??0,gapReasons:[...new Set((m.gaps??[]).map(g=>g.reason))].slice(0,20),added:0,overlap:0};
@@ -128,8 +131,9 @@ try{
   if(decoded.status!=='EVENTS_DECODED_UNVERIFIED'||decoded.gaps.length)return {capture:relative(ROOT,p),historyStatus:'DECODE_PARTIAL',added:0,overlap:0,decoded};
   // Keep evidence, never convert these aggregate events to per-bin fills.
   const merged=mergeHistory(state.history[address],m.signatures.map(s=>({signature:s.signature,slot:s.slot,capture:relative(ROOT,p)})),historyRetention);
-  state.history[address]=merged;
-  return {capture:relative(ROOT,p),historyStatus:merged.status,added:merged.added,overlap:merged.overlap,decoded};
+  const repair=advanceRepair(previous,m.signatures,m,plan);
+  state.history[address]={...merged,repair,repairTurn:turn};
+  return {capture:relative(ROOT,p),historyStatus:merged.status,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
  }
  async function reference(){
   assert(references.length>=2,'manual reference pools not configured');
