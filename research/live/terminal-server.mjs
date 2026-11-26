@@ -25,6 +25,7 @@ import {createReadRpc} from './rpc-read.mjs';
 import {chainTimeFact,assembleCandidate,reviewStructureRequired} from './evidence-builder.mjs';
 import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-snapshot.mjs';
 import {replayRequest,replayResult} from './research-replay.mjs';
+import {researchCatalog} from './research-catalog.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 import {positionObservation,ledgerProjection,windowLedger} from './position-observation-workflow.mjs';
 import {assembleLedger} from './position-ledger-core.mjs';
@@ -35,19 +36,22 @@ const assert=(x,m)=>{if(!x)throw Error(m)},sha=x=>createHash('sha256').update(x)
 assert(values.config,'CONFIG_REQUIRED');
 const cfg=JSON.parse(await readFile(values.config,'utf8')),pool=cfg.pool,port=Number(values.port),maxAgeMs=(cfg.maxAgeSeconds??180)*1000;
 assert(poolAddress(pool)&&Number.isInteger(port)&&port>=1024&&port<=65535&&Number.isSafeInteger(maxAgeMs)&&maxAgeMs>=15000&&maxAgeMs<=600000,'INVALID_CONFIG');
-const statePath=join(DATA,'live',pool,'state.json'),origin='http://127.0.0.1:'+port;
+const additionalPools=cfg.researchPools??[];assert(Array.isArray(additionalPools)&&additionalPools.length<=8&&additionalPools.every(p=>poolAddress(p)&&new PublicKey(p).toBase58()===p&&p!==pool)&&new Set(additionalPools).size===additionalPools.length,'INVALID_RESEARCH_POOLS');
+const configuredPools=new Set([pool,...additionalPools]);
+const origin='http://127.0.0.1:'+port;
 async function safeDataPath(path){const root=await realpath(DATA),p=await realpath(resolve(ROOT,path)),rel=relative(root,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'INVALID_DATA_PATH');return p}
 async function boundedRead(path,limit){const h=await open(path,'r');try{const st=await h.stat();assert(st.isFile()&&st.size<=limit,'EVIDENCE_SIZE_EXCEEDED');const bytes=Buffer.alloc(st.size+1);let n=0;while(n<bytes.length){const r=await h.read(bytes,n,bytes.length-n,n);if(!r.bytesRead)break;n+=r.bytesRead;}assert(n===st.size,'EVIDENCE_SIZE_CHANGED');return bytes.subarray(0,n)}finally{await h.close()}}
 async function loadState(scope=pool){
- const path=scope===pool?statePath:join(DATA,'live-preview',scope,'state.json');
+ const path=join(DATA,configuredPools.has(scope)?'live':'live-preview',scope,'state.json');
  return JSON.parse(await boundedRead(await safeDataPath(path),64*1024*1024));
 }
+const archives=researchCatalog(DATA,async(path,limit)=>boundedRead(await safeDataPath(path),limit));
 const previewCfg=cfg.dynamicCapture??{};
 const previewAttempts=new Map();
 let previewJob=null,previewChild=null;
 function validateScope(scope){assert(poolAddress(scope)&&new PublicKey(scope).toBase58()===scope,'INVALID_POOL_ADDRESS');return scope}
 function startPreviewCapture(scope){
- if(stopping||previewCfg.enabled===false)return 'DISABLED';
+ if(stopping||configuredPools.has(scope)||previewCfg.enabled===false)return 'DISABLED';
  if(previewJob)return previewJob.pool===scope?'COLLECTING':'COLLECTOR_BUSY';
  const now=Date.now(),last=previewAttempts.get(scope);
  if(last!==undefined&&now-last<30000)return 'RETRY_COOLDOWN';
@@ -77,9 +81,9 @@ async function scopedOverview(scope){
  if(scope===pool)return overview();
  validateScope(scope);
  let market=null,sequence=null,reason='POOL_CAPTURE_PENDING',collection='IDLE';
- try{const s=await loadState(scope),now=Date.now();sequence=s.sequence;const m=currentMarket(s,scope,now,maxAgeMs);market=marketSummary(m);if(now-m.receivedAt>=Math.min(60000,maxAgeMs/2))collection=startPreviewCapture(scope)}
- catch{collection=startPreviewCapture(scope);reason=collection==='DISABLED'?'DYNAMIC_CAPTURE_DISABLED':collection==='COLLECTOR_BUSY'?'POOL_COLLECTOR_BUSY':collection==='RETRY_COOLDOWN'?'POOL_CAPTURE_RETRY_COOLDOWN':'POOL_CAPTURE_PENDING'}
- return {pool:scope,sequence,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason:market?null:reason,market,collection,reviewGate:{status:'BLOCKED',reason:'POOL_RESEARCH_NOT_CONFIGURED'},positions:[],monitoring:[],streams:{},decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY',scope:'MARKET_PREVIEW_ONLY'};
+ try{const s=await loadState(scope),now=Date.now();sequence=s.sequence;const m=currentMarket(s,scope,now,maxAgeMs);market=marketSummary(m);if(!configuredPools.has(scope)&&now-m.receivedAt>=Math.min(60000,maxAgeMs/2))collection=startPreviewCapture(scope)}
+ catch{collection=startPreviewCapture(scope);reason=configuredPools.has(scope)?'RESEARCH_COLLECTOR_UNAVAILABLE':collection==='DISABLED'?'DYNAMIC_CAPTURE_DISABLED':collection==='COLLECTOR_BUSY'?'POOL_COLLECTOR_BUSY':collection==='RETRY_COOLDOWN'?'POOL_CAPTURE_RETRY_COOLDOWN':'POOL_CAPTURE_PENDING'}
+ return {pool:scope,sequence,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason:market?null:reason,market,collection,reviewGate:{status:'BLOCKED',reason:'POOL_RESEARCH_NOT_CONFIGURED'},positions:[],monitoring:[],streams:{},decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY',scope:configuredPools.has(scope)?'SCOPED_RESEARCH_ONLY':'MARKET_PREVIEW_ONLY'};
 }
 const html=await readFile(join(ROOT,'research/live/terminal.html'));
 const startup={apiVersion:'flow-data-v9',startedAt:Date.now(),htmlHash:sha(html),serverHash:sha(await readFile(fileURLToPath(import.meta.url)))};
@@ -323,6 +327,7 @@ async function saveResearchSnapshot(body,pinned=null){
  const out=snapshotManifest({pool:scope,market:m,createdAt:now,files:[...files].map(([name,b])=>({name,sha256:sha(b),bytes:b.length})),reviewStatus,diagnostic});
  const base=join(DATA,'research-snapshots');await mkdir(base,{recursive:true,mode:0o700});const tmp=await mkdtemp(join(base,'.pending-')),dir=join(base,out.snapshotId);
  try{for(const [name,b] of files)await writeFile(join(tmp,name),b,{mode:0o600,flag:'wx'});await writeFile(join(tmp,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(tmp,dir)}catch(e){await rm(tmp,{recursive:true,force:true});throw e}
+ await archives.add({kind:'snapshot',pool:scope,id:out.snapshotId,snapshotId:out.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:now,status:out.reviewStatus});
  return {...out,capture:relative(ROOT,dir)};
 }
 async function replayResearchSnapshot(body){
@@ -333,12 +338,14 @@ async function replayResearchSnapshot(body){
  assert(manifest.snapshotId===id&&manifest.pool===scope,'REPLAY_SCOPE_INVALID');
  const files=new Map();
  for(const f of snapshotFileList(manifest)){const b=await boundedRead(await safeDataPath(join(dir,f.name)),f.bytes);files.set(f.name,b)}
- const x=replayRequest(manifest,files,{pool:scope,snapshotId:id,draft:body.draft});
+ const mode=body.mode??'plans';assert(['plans','management'].includes(mode),'REPLAY_MODE_INVALID');let policyBytes=null,policy=null,position=null;
+ if(mode==='management'){position=validateScope(body.position);const entry=cfg.managementPolicies&&Object.hasOwn(cfg.managementPolicies,position)?cfg.managementPolicies[position]:null;assert(entry&&typeof entry.policy==='string','MANAGEMENT_POLICY_NOT_CONFIGURED');policyBytes=await boundedRead(await safeDataPath(entry.policy),32768);policy=JSON.parse(policyBytes)}
+ const x=replayRequest(manifest,files,{pool:scope,snapshotId:id,draft:body.draft,mode,position,policy});
  const source=await safeDataPath(x.market.capture);
  assert(sha(await boundedRead(await safeDataPath(join(source,'manifest.json')),16*1024*1024))===sha(files.get('capture-manifest.json')),'REPLAY_CAPTURE_MANIFEST_CHANGED');
  assert(sha(await boundedRead(await safeDataPath(join(source,'accounts.json')),32*1024*1024))===x.market.rawHash,'REPLAY_CAPTURE_HASH_MISMATCH');
  let budget=64*1024*1024;for(const r of x.evidence){const b=await boundedRead(await safeDataPath(r.path),Math.min(budget,8*1024*1024));assert(sha(b)===r.sha256,'REPLAY_EVIDENCE_CHANGED');budget-=b.length}
- const sourcePaths=['research/engine.mjs','research/integer.mjs','research/live/analyze-state.mjs','research/live/engine-input.mjs','research/live/preview-plans.mjs','research/live/research-replay.mjs','research/live/research-snapshot.mjs','research/live/terminal-core.mjs','research/live/quote-evidence.mjs','research/live/external-market.mjs','research/live/reference-math.mjs','research/live/research-input-status.mjs','research/live/market-features.mjs','research/live/evidence-builder.mjs'];
+ const sourcePaths=['research/engine.mjs','research/integer.mjs','research/live/analyze-state.mjs','research/live/engine-input.mjs','research/live/preview-plans.mjs','research/live/research-replay.mjs','research/live/research-snapshot.mjs','research/live/terminal-core.mjs','research/live/quote-evidence.mjs','research/live/external-market.mjs','research/live/reference-math.mjs','research/live/research-input-status.mjs','research/live/market-features.mjs','research/live/evidence-builder.mjs','research/live/preview-management.mjs','research/live/research-catalog.mjs'];
  const code=()=>Promise.all(sourcePaths.map(async path=>({path,sha256:sha(await readFile(join(ROOT,path)))})));
  const sourceHashes=await code(),base=join(DATA,'research-runs',scope);await mkdir(base,{recursive:true,mode:0o700});
  const tmp=await mkdtemp(join(base,'.pending-'));
@@ -347,12 +354,14 @@ async function replayResearchSnapshot(body){
   await writeFile(join(tmp,'state.json'),files.get('state.json'),{mode:0o600,flag:'wx'});
   await writeFile(join(tmp,'review.json'),files.get('review.json'),{mode:0o600,flag:'wx'});
   await writeFile(join(tmp,'request.json'),JSON.stringify(x.request),{mode:0o600,flag:'wx'});
-  const report=await run(['--state',join(tmp,'state.json'),'--request',join(tmp,'request.json'),'--review',join(tmp,'review.json'),'--plans']);
+  if(policyBytes)await writeFile(join(tmp,'policy.json'),policyBytes,{mode:0o600,flag:'wx'});
+  const report=await run(['--state',join(tmp,'state.json'),'--request',join(tmp,'request.json'),'--review',join(tmp,'review.json'),mode==='management'?'--management':'--plans']);
   assert(JSON.stringify(await code())===JSON.stringify(sourceHashes),'REPLAY_CODE_CHANGED');
-  const out=replayResult({manifest,request:x.request,report,sourceHashes,generatedAt:Date.now()});
+  const out=replayResult({manifest,request:x.request,report,sourceHashes,generatedAt:Date.now(),policyHash:policyBytes?sha(policyBytes):null,owner:x.owner});
   await writeFile(join(tmp,'report.json'),JSON.stringify(report),{mode:0o600,flag:'wx'});
   await writeFile(join(tmp,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});
   const resultDir=join(base,out.runId);await rename(tmp,resultDir);
+  await archives.add({kind:'run',pool:scope,id:out.runId,snapshotId:id,marketSlot:out.marketSlot,marketRawHash:out.marketRawHash,createdAt:out.generatedAt,status:out.status,mode,position:out.position??null});
   return {...out,report,capture:relative(ROOT,resultDir)};
  }catch(e){await rm(tmp,{recursive:true,force:true});throw e}
 }
@@ -394,6 +403,7 @@ async function buildResearchCandidate(body){
  const candidate=assembleCandidate({market:m,snapshot,diagnostic,clock,sourceErrors,createdAt:at});
  const base=join(DATA,'research-candidates',scope);await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'.pending-')),dest=join(base,candidate.candidateId);
  try{await writeFile(join(dir,'manifest.json'),JSON.stringify(candidate,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(dir,dest)}catch(e){await rm(dir,{recursive:true,force:true});throw e}
+ await archives.add({kind:'candidate',pool:scope,id:candidate.candidateId,snapshotId:snapshot.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:at,status:'RESEARCH_CANDIDATE_ONLY'});
  let replay=null,replayReason=null;
  if(body.draft&&candidate.replayEligible){try{replay=await replayResearchSnapshot({pool:scope,snapshotId:snapshot.snapshotId,draft:body.draft})}catch(e){replayReason=/^[A-Z0-9_]{1,100}$/.test(e.message)?e.message:'REPLAY_VALIDATION_FAILED'}}
  else replayReason=body.draft?'MATCHED_REVIEW_REQUIRED':'EXPLICIT_RESEARCH_BUDGET_REQUIRED';
@@ -493,6 +503,7 @@ const server=createServer(async(req,res)=>{
   const scope=validateScope(scoped.pool);
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
   if(req.method==='GET'&&req.url==='/health'){send(res,200,{status:'RUNNING',pool,...startup,decisionReady:false,executionReady:false});return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/research-catalog'){send(res,200,{pool:scope,scope:'HISTORICAL_ARCHIVE_INDEX_ONLY',entries:await archives.list(scope),decisionReady:false,executionReady:false});return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/input-status'){send(res,200,await researchInputs(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/monitor'){send(res,200,scope===pool?publicMonitor():{pool:scope,enabled:false,current:{},events:[],decisionReady:false,executionReady:false});return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/pool-info'){try{const m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);send(res,200,await indexedPool([m.pool,m.mintX,m.mintY,m.decimalsX,m.decimalsY].join(':'),m))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^INDEX_[A-Z_]+$/.test(e.message)?e.message:'POOL_INFO_UNAVAILABLE'})}return}
@@ -513,6 +524,17 @@ const server=createServer(async(req,res)=>{
    if(builderBusy||busy||replayBusy||snapshotBusy||holderBusy||externalBusy){send(res,409,blocked('RESEARCH_BUILD_BUSY'));return}
    builderBusy=true;replayBusy=true;snapshotBusy=true;holderBusy=true;externalBusy=true;
    try{send(res,200,await buildResearchCandidate(await jsonBody(req)))}finally{builderBusy=false;replayBusy=false;snapshotBusy=false;holderBusy=false;externalBusy=false}return
+  }
+  if(req.method==='POST'&&req.url==='/api/terminal/research-load'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   const body=await jsonBody(req),scope=validateScope(body.pool),id=body.runId;assert(typeof id==='string'&&/^[0-9a-f]{64}$/.test(id),'INVALID_RUN_ID');
+   const dir=await safeDataPath(join(DATA,'research-runs',scope,id)),m=JSON.parse(await boundedRead(await safeDataPath(join(dir,'manifest.json')),128*1024)),{runId,...rest}=m;
+   assert(runId===id&&sha(JSON.stringify(rest))===id&&m.pool===scope&&m.scope==='HISTORICAL_RESEARCH_ONLY'&&m.executionReady===false&&m.decisionReady===false&&m.pnlReady===false,'RUN_MANIFEST_INVALID');
+   const bytes=await boundedRead(await safeDataPath(join(dir,'report.json')),8*1024*1024),reqBytes=await boundedRead(await safeDataPath(join(dir,'request.json')),32768);
+   assert(sha(bytes)===m.reportHash&&sha(reqBytes)===m.requestHash,'RUN_ARTIFACT_HASH_MISMATCH');
+   if(m.mode==='management')assert(sha(await boundedRead(await safeDataPath(join(dir,'policy.json')),32768))===m.policyHash,'RUN_POLICY_HASH_MISMATCH');
+   const report=JSON.parse(bytes);assert(report.pool===scope&&!report.terminalBinding&&!report.reviewId&&report.decisionReady===false&&report.executionReady===false,'RUN_REPORT_SCOPE');
+   send(res,200,{...m,report});return
   }
   if(req.method==='POST'&&req.url==='/api/terminal/research-replay'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}

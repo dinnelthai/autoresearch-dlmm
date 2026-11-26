@@ -28,7 +28,7 @@ export function verifySnapshotManifest(m,files){
 }
 export function reviewEvidenceRefs(review){
  assert(Array.isArray(review?.observations)&&review.observations.length>=3&&review.observations.length<=100,'SNAPSHOT_REVIEW_BUDGET');
- const refs=[review.marketTimeEvidence];
+ const refs=[review.marketTimeEvidence];if(review.operations)refs.push(review.operations.evidence);
  for(const o of review.observations){assert(Array.isArray(o.references)&&o.references.length>=2&&o.references.length<=16,'SNAPSHOT_REFERENCE_BUDGET');refs.push(o.evidence,...o.references.map(r=>r.evidence))}
  const result=new Map();for(const r of refs){assert(typeof r?.path==='string'&&r.path.length<=1024&&hash(r.sha256),'SNAPSHOT_REVIEW_EVIDENCE_INVALID');assert(!result.has(r.path)||result.get(r.path)===r.sha256,'SNAPSHOT_EVIDENCE_CONFLICT');result.set(r.path,r.sha256)}
  assert(result.size<=256,'SNAPSHOT_REVIEW_BUDGET');return [...result].map(([path,sha256])=>({path,sha256}));

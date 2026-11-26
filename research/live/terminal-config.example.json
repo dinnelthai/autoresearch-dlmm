@@ -28,5 +28,6 @@
     "maxDiscountBps": 200
   },
   "researchReviews": {},
-  "performanceWindows": {}
+  "performanceWindows": {},
+  "researchPools": []
 }

@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {catalogEntry,addCatalog} from './research-catalog.mjs';
+const h='a'.repeat(64),pool='A'.repeat(32),e={pool,kind:'snapshot',id:h,snapshotId:h,marketSlot:1,marketRawHash:h,createdAt:10,status:'NOT_AVAILABLE'};
+test('catalog isolated, bounded and rejects conflicting identities',()=>{const x=catalogEntry(e,pool);assert.deepEqual(addCatalog([x],e),[x]);assert.throws(()=>addCatalog([x],{...e,createdAt:11}));assert.throws(()=>catalogEntry(e,'B'.repeat(32)));const r={...e,kind:'run',id:'b'.repeat(64),createdAt:20,mode:'management',position:'C'.repeat(32)};assert.equal(addCatalog([e],r,1)[0].id,r.id);assert.throws(()=>catalogEntry({...r,position:null},pool))});
