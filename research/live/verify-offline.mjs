@@ -1,6 +1,6 @@
 // T17: repeatable offline verification; does not contact RPC or authorize execution.
 import {readdir,readFile,mkdir,writeFile} from 'node:fs/promises';
-import {resolve,join,relative} from 'node:path';
+import {basename,join,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -20,7 +20,7 @@ async function main(){
  const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];let domError=null;
  try{if(!script)throw Error('inline script missing');new Function(script);const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(x=>x[1]);const refs=[...script.matchAll(/\$\('([^']+)'\)/g)].map(x=>x[1]);if(ids.length!==new Set(ids).size||refs.some(x=>!ids.includes(x)))throw Error('duplicate or missing DOM IDs')}catch(e){domError=e.message}
  records.push({id:'terminal-inline-structure',status:domError?'FAIL':'PASS',error:domError});
- for(const p of files.filter(p=>p.endsWith('.example.json')||p.endsWith('/package.json'))){try{const b=await readFile(p);sourceHashes[relative(root,p)]=sha(b);JSON.parse(b.toString('utf8'));records.push({id:'json:'+relative(root,p),status:'PASS'})}catch(e){records.push({id:'json:'+relative(root,p),status:'FAIL',error:e.message})}}
+ for(const p of files.filter(p=>p.endsWith('.example.json')||['package.json','package-lock.json'].includes(basename(p)))){try{const b=await readFile(p);sourceHashes[relative(root,p)]=sha(b);JSON.parse(b.toString('utf8'));records.push({id:'json:'+relative(root,p),status:'PASS'})}catch(e){records.push({id:'json:'+relative(root,p),status:'FAIL',error:e.message})}}
  if(records.every(r=>r.status==='PASS')){
   execute('node-test-suite',['--test',...tests],180000);
   execute('legacy-research-suite',[join(research,'test.mjs')],120000);
