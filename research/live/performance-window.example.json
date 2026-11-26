@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "scope": "EXISTING_POSITION_WINDOW_RETAIN_DISTRIBUTIONS",
+  "ledger": "data/window-ledger.json",
+  "opening": "data/opening-position.json",
+  "closing": "data/closing-position.json",
+  "marks": "data/window-marks.json",
+  "maxAgeSeconds": null,
+  "maxSpreadBps": null
+}
