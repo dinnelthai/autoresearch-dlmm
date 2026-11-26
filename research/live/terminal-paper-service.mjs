@@ -44,7 +44,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
   await verifyCode();await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};return get();
  })}
- async function pause(body){return exclusive(async()=>{const a=await active();assert(a&&body?.pool===pool&&body?.id===a.id,'PAPER_AUTO_EXPERIMENT_CHANGED');await atomic(pointer,{...a,running:false,finalStatus:'PAUSED',finishedAt:Date.now()});job={id:a.id,status:'PAUSED',running:false};return get()})}
+ async function pause(body){return exclusive(async()=>{const a=await active();assert(a?.running&&body?.pool===pool&&body?.id===a.id,'PAPER_AUTO_EXPERIMENT_CHANGED');await atomic(pointer,{...a,running:false,finalStatus:'PAUSED',finishedAt:Date.now()});job={id:a.id,status:'PAUSED',running:false};return get()})}
  async function tick(){
   if(closed||isStopping()||flight)return;
   try{await exclusive(async()=>{
@@ -58,7 +58,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     const load=await reader(),snapshot=await load(await io.safeDataPath(m.capture));
     assert(snapshot.identity.slot===m.slot&&snapshot.identity.rawHash===m.rawHash,'PAPER_AUTO_CAPTURE_CHANGED');
     // Ignore a collector request started before local experiment freeze. Never treat it as a later observation.
-    if(Date.parse(snapshot.proof.requestedAt)<=state.frozenAt){job={id:a.id,status:'WAITING_FOR_POST_FREEZE_CAPTURE',running:true};return}
+    if(Date.parse(snapshot.proof.requestedAt)<=state.frozenAt){if(paperWindowExpired(state.window,Date.now())){await atomic(pointer,{...a,running:false,finalStatus:'MISSED_ENDPOINT'});job={id:a.id,status:'MISSED_ENDPOINT',running:false};return}job={id:a.id,status:'WAITING_FOR_POST_FREEZE_CAPTURE',running:true};return}
     const windowCapture=paperWindowCapture(state.window,snapshot.proof);
     if(windowCapture==='MISSED_ENDPOINT'){await atomic(pointer,{...a,running:false,finalStatus:'MISSED_ENDPOINT'});job={id:a.id,status:'MISSED_ENDPOINT',running:false};return}
     const opening=await load(await io.safeDataPath(state.opening.proof.path)),previous=state.opening.slot===state.last.slot?opening:await load(await io.safeDataPath(state.last.proof.path));

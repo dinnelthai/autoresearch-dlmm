@@ -42,3 +42,27 @@ test('exit retains lifetime fee totals separately from current fee balance',()=>
 test('adaptive action cost cannot push a new open segment through frozen risk limit',()=>{const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);state.adaptiveRequest={goal:'balanced'};state.policy.maxLossSolRaw='1';const cfg={executionDelaySeconds:1,maxRebalances:8,maxTurnoverSol:30,minSolReserve:0,maxBinShare:.1},preview={status:'RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED',selected:{feasible:true,action:{type:'REPOSITION',spec:{width:1}},estimatedOperationCostSol:.001,allocation:{bins:[{binId:2,meme:.5,sol:0}]}}};let s2=advance(state,a,a,b);s2=updateAdaptiveSnapshot(s2,{snapshot:b,reviewed:{cfg,latest:{t:21}},preview,reviewHash:'e'.repeat(64),now:22000});let s3=advance(s2,a,b,c);s3=updateAdaptiveSnapshot(s3,{snapshot:c,reviewed:{cfg,latest:{t:31}},preview,reviewHash:'d'.repeat(64),now:32000});assert.equal(s3.rows[7].adaptiveReason,'PAPER_ADAPTIVE_POST_ACTION_RISK_LIMIT');assert.equal(s3.rows[7].mapping.rows[0].binId,1);assert.equal(s3.rows[7].points.at(-1).costYRaw,'0')});
 
 test('fee basis is frozen and opening cost alone cannot breach risk limit',()=>{const {a,state}=fixture();assert.equal(state.feeBasis,'FROZEN_FEE_FLOW_DILUTION_PROXY_V1');assert.throws(()=>advance({...state,feeBasis:'UNDILUTED'},a,a,snapshot(2)));const r=state.rows[1].mapping;const row={family:'spot',feasible:true,action:{type:'OPEN'},allocation:{lowerBinId:1,upperBinId:1,bins:[{binId:1,meme:1,sol:0}]}},report={schemaVersion:1,pool,status:'RESEARCH_DIAGNOSTIC_UNVERIFIED',executionReady:false,decisionReady:false,protocolExact:false,calibrated:false,market:{...a.identity,decimalsX:6,decimalsY:9},planPreview:{status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',scope:'NEW_POSITION_ONLY',executionReady:false,decisionReady:false,families:['NO_LP','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid'].map(family=>({family,best:family==='spot'?row:family==='NO_LP'?{family,feasible:true,action:{type:'NO_LP'}}:null})),selected:row}};const opened=openSnapshotExperiment({id:'risk',snapshot:a,report,budget:{memeRaw:'2000000',solRaw:'1000000000',allowDispose:false,minSolReserve:0,operationCostSol:.001},policy:{...state.policy,maxLossSolRaw:'1'},backendHash,frozenAt:12000});assert.equal(opened.rows[1].reason,'PAPER_SNAPSHOT_OPENING_RISK_LIMIT')});
+
+test('synthetic high/low marks and reversal preserve signed alpha and one exit cost',()=>{
+ const {a,state}=fixture(),b=snapshot(2,1n),c=snapshot(3,2n),d=snapshot(4,3n);
+ for(const x of [a,b,c,d]){x.bins.arrays[0].bins[2].priceQ64Raw=String(Q*10n);x.bins.arrays[0].bins[69].binId=-1;x.bins.arrays[0].bins[69].priceQ64Raw=String(Q/100n)}
+ b.identity.activeId=b.bins.activeId=2;c.identity.activeId=c.bins.activeId=-1;
+ b.bins.arrays[0].bins[1].amountXRaw='0';b.bins.arrays[0].bins[1].amountYRaw='10000000';
+ state.policy.maxDrawdownBps=1;state.rows[7].pendingAdaptive={action:'REPOSITION'};
+ const s2=advance(state,a,a,b),s3=advance(s2,a,b,c),s4=advance(s3,a,c,d);
+ assert.equal(s2.rows[1].points.at(-1).excessVsHoldYRaw,'-8999910');
+ assert.equal(s3.rows[1].status,'EXITED_PROXY');assert.equal(s3.rows[7].pendingAdaptive,null);
+ assert.equal(s4.rows[1].points.at(-1).costYRaw,'1');assert.equal(s4.rows[1].points.at(-1).feeXRaw,'0');
+ assert.equal(s4.rows[0].points.at(-1).pnlYRaw,'0');assert.equal(s4.pnlReady,false)
+});
+test('fee regression, missing bin, supply collapse and order state block rather than invent returns',()=>{
+ for(const kind of ['growth','missing','supply','orders']){
+  const {a,state}=fixture(),b=snapshot(2,2n),c=snapshot(3,3n);const s2=advance(state,a,a,b);s2.rows[7].pendingAdaptive={action:'REPOSITION'};
+  if(kind==='growth')c.bins.arrays[0].bins[1].feeXPerTokenRaw=String(Q);
+  if(kind==='missing')c.bins.arrays[0].bins[1].binId=100;
+  if(kind==='supply')c.bins.arrays[0].bins[1].liquiditySupplyRaw=String(Q);
+  if(kind==='orders')c.bins.arrays[0].bins[1].openOrderAmountRaw='1';
+  const s3=advance(s2,a,b,c);assert.equal(s3.rows[1].status,'BLOCKED');assert.equal(s3.rows[7].pendingAdaptive,null);assert.equal(s3.rows[1].points.length,2);assert.equal(s3.rows[0].points.length,3)
+ }
+});
+test('capture after service gap preserves blocked paths and HODL',()=>{const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);b.proof.requestedAt=new Date(300000).toISOString();b.proof.receivedAt=new Date(301000).toISOString();c.proof.requestedAt=new Date(310000).toISOString();c.proof.receivedAt=new Date(311000).toISOString();const s2=advance(state,a,a,b),s3=advance(s2,a,b,c);assert.equal(s3.gapCount,1);assert.equal(s3.rows[1].status,'BLOCKED');assert.equal(s3.rows[0].points.length,3)});

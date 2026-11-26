@@ -66,10 +66,10 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
  const initial=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),a.price),hold=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),c.price);
  const rows=state.rows.map(r=>{
   if(r.status==='BLOCKED')return r;
-  const last=r.points.at(-1),block=reason=>({...r,status:'BLOCKED',reason,blockedAtSlot:c.i.slot});
+  const last=r.points.at(-1),block=reason=>({...r,status:'BLOCKED',reason,blockedAtSlot:c.i.slot,pendingAdaptive:null});
   try{
    assert(last&&last.slot===b.i.slot,'PAPER_SNAPSHOT_ROW_STALE');
-   let wallet={x:raw(last.walletXRaw),y:raw(last.walletYRaw)},p=zero(),fees=zero(),cost=raw(last.costYRaw),status=r.status,reason=r.reason,claimedX=raw(r.claimedFeeXRaw??'0'),claimedY=raw(r.claimedFeeYRaw??'0');
+   let wallet={x:raw(last.walletXRaw),y:raw(last.walletYRaw)},p=zero(),fees=zero(),cost=raw(last.costYRaw),status=r.status,reason=r.reason,claimedX=raw(r.claimedFeeXRaw??'0'),claimedY=raw(r.claimedFeeYRaw??'0'),observedPeak=raw(last.peakYRaw);
    if(status==='OPEN_PROXY'){
     assert(!gap,'PAPER_SNAPSHOT_GAP');
     const anchor=r.segmentOpening?segmentOpenings[r.mode]:opening,segment=facts(anchor);scope(a,segment);
@@ -81,14 +81,15 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
     assert(fee.totals.dilutedXRaw!==null&&fee.totals.dilutedYRaw!==null,'PAPER_SNAPSHOT_DILUTION_UNAVAILABLE');
     fees={x:raw(fee.totals.dilutedXRaw),y:raw(fee.totals.dilutedYRaw)};
     const nav=mark(wallet.x+p.x+fees.x,wallet.y+p.y+fees.y,c.price),peak=raw(last.peakYRaw),high=nav>peak?nav:peak;
+    observedPeak=high;
     const loss=initial-nav,dd=high?(high-nav)*10000n/high:0n;
     if(exit||loss>=raw(state.policy.maxLossSolRaw)||dd>=BigInt(state.policy.maxDrawdownBps)){
      const feeCost=raw(state.policy.exitCostSolRaw);assert(wallet.y+p.y+fees.y>=feeCost,'PAPER_SNAPSHOT_EXIT_COST_UNFUNDED');
      claimedX+=fees.x;claimedY+=fees.y;wallet={x:wallet.x+p.x+fees.x,y:wallet.y+p.y+fees.y-feeCost};cost+=feeCost;p=zero();fees=zero();status='EXITED_PROXY';reason=exit?'MANUAL_VIRTUAL_EXIT':'RISK_VIRTUAL_EXIT';
     }
    }
-   const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet,principal:p,fees,initial,hold,peak:raw(last.peakYRaw),cost,status});
-   return {...r,status,reason,claimedFeeXRaw:s(claimedX),claimedFeeYRaw:s(claimedY),...appendPoint(r,point)};
+   const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet,principal:p,fees,initial,hold,peak:observedPeak,cost,status});
+   return {...r,status,reason,...(status==='EXITED_PROXY'?{pendingAdaptive:null}:{}),claimedFeeXRaw:s(claimedX),claimedFeeYRaw:s(claimedY),...appendPoint(r,point)};
   }catch(e){return block(errorCode(e,'PAPER_SNAPSHOT_UPDATE_FAILED'))}
  });
  return {...state,last:{slot:c.i.slot,proof:c.proof},snapshotCount:state.snapshotCount+1,gapCount:(state.gapCount??0)+(gap?1:0),rows};

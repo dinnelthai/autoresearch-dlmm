@@ -8,7 +8,14 @@ export function createPaperHistoryStore({read,atomic}){
  async function append(dir,state,previous){
   const prior=previous?.historyHead??null;
   assert(previous?previous.snapshotCount+1===state.snapshotCount&&prior?.sequence===previous.snapshotCount:state.snapshotCount===1,'PAPER_HISTORY_CHECKPOINT_LINK');
-  if(prior){const a=await shard(dir,prior.sequence),r=a[(prior.sequence-1)%HISTORY_SHARD_SIZE];assert(r?.recordHash===prior.recordHash,'PAPER_HISTORY_PRIOR_MISSING');validateHistoryRecord(r,{id:state.id,pool:state.pool,sequence:prior.sequence,previousHash:r.previousHash})}
+  if(prior){
+   const a=await shard(dir,prior.sequence),offset=(prior.sequence-1)%HISTORY_SHARD_SIZE,first=prior.sequence-offset;
+   assert(Array.isArray(a)&&a.length>=offset+1&&a.length<=Math.min(HISTORY_SHARD_SIZE,offset+2),'PAPER_HISTORY_PRIOR_MISSING');
+   let link=null;
+   if(first>1){const priorShard=await shard(dir,first-1),tail=priorShard[HISTORY_SHARD_SIZE-1];assert(priorShard.length===HISTORY_SHARD_SIZE,'PAPER_HISTORY_PRIOR_MISSING');link=validateHistoryRecord(tail,{id:state.id,pool:state.pool,sequence:first-1,previousHash:tail?.previousHash})}
+   for(let i=0;i<=offset;i++)link=validateHistoryRecord(a[i],{id:state.id,pool:state.pool,sequence:first+i,previousHash:link});
+   assert(link===prior.recordHash&&JSON.stringify(a[offset])===JSON.stringify(historyRecord(previous,a[offset].previousHash)),'PAPER_HISTORY_PRIOR_MISSING');
+  }
   const record=historyRecord(state,prior?.recordHash??null),records=await shard(dir,record.sequence),next=appendHistoryShard(records,record);
   if(next!==records){assert(Buffer.byteLength(JSON.stringify(next))<=HISTORY_SHARD_BYTES,'PAPER_HISTORY_SHARD_SIZE');await atomic(path(dir,record.sequence),next)}
   return {...state,historyHead:{sequence:record.sequence,recordHash:record.recordHash}};
