@@ -10,5 +10,7 @@
   "maxAgeSeconds": 180,
   "historyPages": 2,
   "historyLimit": 20,
-  "includeClock": false
+  "includeClock": false,
+  "historyRetention": 2000,
+  "historyTimeoutSeconds": 120
 }
