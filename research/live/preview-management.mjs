@@ -48,8 +48,8 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
    }
    const v=Engine.evaluate(s,cfg,action,scenarios);
    if(!v.feasible)throw Error(v.reason??'MODEL_INFEASIBLE');
-   if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
-   row.feasible=true;row.score=v.utility;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar};
+   if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
+   row.feasible=true;row.score=v.utility;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV'};
   }catch(e){row.reason=String(e.message).slice(0,180);}
   result.candidates.push(row);
  }
@@ -67,6 +67,6 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
   result.reason=result.selected===hold?'HOLD_BASELINE_OR_UNCERTAINTY_MARGIN':'RESEARCH_SCENARIO_IMPROVEMENT';
  }else result.reason='HOLD_BASELINE_UNAVAILABLE';
  result.status='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED';
- result.limitations=['Withdrawal retains token exposure; no disposal or implicit spot trades.','Counters are supplied reviewed metadata, not independently reconciled history.','Lock/fee rights, costs, realized PnL, Markout, protocol rounding and live feasibility not verified.','No live recommendations or transaction amounts.'];
+ result.limitations=['Path CVaR measures maximum loss from initial NAV on sampled scenarios; path breach diagnostics do not imply execution approval.','Withdrawal retains token exposure; no disposal or implicit spot trades.','Counters are supplied reviewed metadata, not independently reconciled history.','Lock/fee rights, costs, realized PnL, Markout, protocol rounding and live feasibility not verified.','No live recommendations or transaction amounts.'];
  return result;
 }
