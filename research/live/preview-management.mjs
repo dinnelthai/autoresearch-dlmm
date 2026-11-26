@@ -10,7 +10,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
  if(!model.market?.ref?.valid||!Number.isSafeInteger(asOf)||asOf<model.lastTime||asOf>model.market.ref.expiresAt||asOf-model.market.t>cfg.maxReferenceAge)return {...block('REFERENCE_UNAVAILABLE_OR_STALE'),alerts:['MANUAL_POSITION_REVIEW_REQUIRED']};
  const s=copy(model);
  const p=s.market.ref.price,g=Engine.classify(s,cfg),risk=Engine.risk(s,cfg,p);
- result.regime=g.regime;result.currentRisk=risk;result.alerts=[...new Set([...g.flags,...risk.violations])];
+ result.regime=g.regime;result.currentRisk=risk;result.currentExitDiagnostic=Engine.liquidation(s,cfg);result.alerts=[...new Set([...g.flags,...risk.violations])];
  result.position={address:position?.position??null,owner:position?.owner??null,lockReleasePointRaw:position?.lockReleasePointRaw??null,feeOwner:position?.feeOwner??null};
  result.alerts.push('WITHDRAWAL_PERMISSION_AND_LOCK_UNVERIFIED');
  // Counters must be independently reconciled for the same position lifecycle.
@@ -37,6 +37,11 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
   try{
    Engine.applyAction(trial,cfg,action,s.lastTime);
    row.postRisk=Engine.risk(trial,cfg,p);row.inventoryAfterAction=Engine.balances(trial);
+   row.exitDiagnostic=Engine.liquidation(trial,cfg);
+   if(['REDUCE','REMOVE_AND_HOLD'].includes(action.type)){
+    const b=risk.exitExposure,a=row.postRisk.exitExposure;
+    row.protectiveDiagnostic={status:'IMMEDIATE_MODEL_ONLY',remainingViolations:row.postRisk.violations,newViolations:row.postRisk.violations.filter(v=>!risk.violations.includes(v)),bidExposureReductionSol:risk.bid-row.postRisk.bid,currentMemeDelta:row.inventoryAfterAction.x-Engine.balances(s).x,prospectiveInventoryReductionMeme:risk.postX-row.postRisk.postX,prospectiveExitHeadroomImprovementSol:a.status==='PROXY_ONLY'&&b.status==='PROXY_ONLY'?a.prospectiveHeadroomSol-b.prospectiveHeadroomSol:null,walletSolDelta:trial.wallet.y-s.wallet.y,disposal:false,executionReady:false};
+   }
    row.estimatedOperationCostSol=trial.cost-s.cost;
    row.allocation={bidSol:sum(trial.bins,'y'),askMeme:sum(trial.bins,'x'),bins:trial.bins.map(b=>({binId:b.id,meme:b.x,sol:b.y,priceSolPerMeme:Engine.price(cfg,b.id)}))};
    if(action.type==='REPOSITION'){
@@ -64,6 +69,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
   result.alerts.push('MANUAL_RISK_REVIEW_REQUIRED');
   // Never say risk is resolved merely because liquidity has been removed.
   result.protectiveAlternatives=protective;
+  result.protectiveDiagnostics=result.candidates.filter(r=>r.protectiveDiagnostic).map(r=>({action:r.action.type,feasible:r.feasible,reason:r.reason,...r.protectiveDiagnostic}));
   result.reason='HARD_RISK_REVIEW_NO_AUTOMATIC_SELECTION';
  }else if(hold?.feasible){
   const best=result.candidates.filter(r=>r.feasible&&r.action.type!=='HOLD').sort((a,b)=>b.score-a.score)[0];
@@ -71,6 +77,6 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
   result.reason=result.selected===hold?'HOLD_BASELINE_OR_UNCERTAINTY_MARGIN':'RESEARCH_SCENARIO_IMPROVEMENT';
  }else result.reason='HOLD_BASELINE_UNAVAILABLE';
  result.status='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED';
- result.limitations=['Reposition must exceed matched HOLD net PnL and utility margin; modeled cost is a declared aggregate already subtracted from NAV, not verified per-instruction fees or migration costs.','Path CVaR measures maximum loss from initial NAV on sampled scenarios; path breach diagnostics do not imply execution approval.','Withdrawal retains token exposure; no disposal or implicit spot trades.','Counters are supplied reviewed metadata, not independently reconciled history.','Lock/fee rights, costs, realized PnL, Markout, protocol rounding and live feasibility not verified.','No live recommendations or transaction amounts.'];
+ result.limitations=['Gross hypothetical sale estimates are not net liquidation value or realized proceeds; protective diagnostics retain MEME and may leave residual risk.','Reposition must exceed matched HOLD net PnL and utility margin; modeled cost is a declared aggregate already subtracted from NAV, not verified per-instruction fees or migration costs.','Path CVaR measures maximum loss from initial NAV on sampled scenarios; path breach diagnostics do not imply execution approval.','Withdrawal retains token exposure; no disposal or implicit spot trades.','Counters are supplied reviewed metadata, not independently reconciled history.','Lock/fee rights, costs, realized PnL, Markout, protocol rounding and live feasibility not verified.','No live recommendations or transaction amounts.'];
  return result;
 }
