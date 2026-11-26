@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "scope": "EXISTING_POSITION_SERIES_RETAIN_DISTRIBUTIONS",
+  "maxIntervalSeconds": null,
+  "windows": [
+    "data/window-1.json",
+    "data/window-2.json"
+  ]
+}
