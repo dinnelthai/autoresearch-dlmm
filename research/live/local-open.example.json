@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_VALIDATOR_UNSIGNED_OPEN_ONLY",
+  "pool": "REPLACE_WITH_LOCAL_POOL",
+  "wallet": "REPLACE_WITH_TEST_WALLET_PUBLIC_KEY",
+  "position": "REPLACE_WITH_UNUSED_TEST_POSITION_PUBLIC_KEY",
+  "expectedGenesisHash": "REPLACE_WITH_LOCAL_GENESIS_HASH",
+  "state": "data/live/POOL/state.json",
+  "report": "data/local-research-report.json",
+  "review": "data/research-evidence.json",
+  "idl": "data/raw/dlmm-idl.json",
+  "rowIndex": null,
+  "maxDeviationBps": null,
+  "maxAmountErrorBps": null,
+  "slippageBps": null,
+  "feeCapRaw": null,
+  "rentCapRaw": null,
+  "positionRentReferenceBytes": null
+}
