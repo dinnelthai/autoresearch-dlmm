@@ -25,5 +25,14 @@ export function buildReview({report,mode,rowIndex,wallet,market,position=null,re
  const close=(x,y)=>Math.abs(x-y)<=1e-8*Math.max(1,Math.abs(x),Math.abs(y));
  assert(close(a.bins.reduce((n,x)=>n+x.sol,0),a.bidSol)&&close(a.bins.reduce((n,x)=>n+x.meme,0),a.askMeme),'RESEARCH_ALLOCATION_TOTAL_MISMATCH');
  if(action==='NO_LP')assert(a.bins.length===0&&a.bidSol===0&&a.askMeme===0,'RESEARCH_ALLOCATION_INVALID');
- return {schemaVersion:1,status:'RESEARCH_REVIEW_ONLY',decisionReady:false,executionReady:false,signingAvailable:false,mode,pool:report.pool,wallet,position:position?.position??null,action,strategy:row.family??row.action?.label??null,modelSelected:JSON.stringify(row)===JSON.stringify(p.selected),marketSlot:b.marketSlot,requestHash:b.requestHash,expiresAt:b.expiresAt,modelAllocation:{sol:a.bidSol,meme:a.askMeme,lowerBinId:a.bins.length?Math.min(...a.bins.map(x=>x.binId)):null,upperBinId:a.bins.length?Math.max(...a.bins.map(x=>x.binId)):null},scenarioEstimates:row.scenarioEstimates??null,blockers:['UPSTREAM_LIVE_ACCEPTANCE_REQUIRED','SDK_TRANSACTION_QUOTE_UNAVAILABLE','WALLET_BALANCE_AND_FEE_CHECK_UNAVAILABLE','TRANSACTION_SIMULATION_UNAVAILABLE','NO_SIGNING_OR_SUBMISSION_ENDPOINT']};
+ return {schemaVersion:1,status:'RESEARCH_REVIEW_ONLY',decisionReady:false,executionReady:false,signingAvailable:false,mode,pool:report.pool,wallet,position:position?.position??null,action,strategy:row.family??row.action?.label??null,modelSelected:JSON.stringify(row)===JSON.stringify(p.selected),marketSlot:b.marketSlot,marketRawHash:b.marketRawHash,reviewHash:b.reviewHash,policyHash:mode==='management'?b.policyHash:null,positionSlot:mode==='management'?b.positionSlot:null,positionRawHash:mode==='management'?b.positionRawHash:null,rowIndex,requestHash:b.requestHash,expiresAt:b.expiresAt,modelAllocation:{sol:a.bidSol,meme:a.askMeme,lowerBinId:a.bins.length?Math.min(...a.bins.map(x=>x.binId)):null,upperBinId:a.bins.length?Math.max(...a.bins.map(x=>x.binId)):null},scenarioEstimates:row.scenarioEstimates??null,blockers:['UPSTREAM_LIVE_ACCEPTANCE_REQUIRED','SDK_TRANSACTION_QUOTE_UNAVAILABLE','WALLET_BALANCE_AND_FEE_CHECK_UNAVAILABLE','TRANSACTION_SIMULATION_UNAVAILABLE','NO_SIGNING_OR_SUBMISSION_ENDPOINT']};
+}
+
+// Validate the same selected research context after an asynchronous read. No execution permission.
+export function assertSameReview(before,after,now){
+ assert(before?.status==='RESEARCH_REVIEW_ONLY'&&after?.status==='RESEARCH_REVIEW_ONLY'&&before.executionReady===false&&after.executionReady===false&&before.signingAvailable===false&&after.signingAvailable===false,'RESEARCH_CONTEXT_INVALID');
+ const keys=['mode','pool','wallet','position','action','rowIndex','requestHash','marketSlot','marketRawHash','reviewHash','policyHash','positionSlot','positionRawHash'];
+ assert(keys.every(k=>before[k]===after[k]),'RESEARCH_CONTEXT_CHANGED');
+ assert(Number.isSafeInteger(now)&&Number.isSafeInteger(before.expiresAt)&&Number.isSafeInteger(after.expiresAt)&&Math.min(before.expiresAt,after.expiresAt)>now,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
+ return Math.min(before.expiresAt,after.expiresAt);
 }
