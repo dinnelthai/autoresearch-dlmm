@@ -57,26 +57,48 @@ try{
  }
  async function inspect(script,p,extra=[]){return (await run('research/live/'+script,['--capture',p,'--idl',idl,...extra])).report;}
  async function market(){
-  let required=[];
-  for(let attempt=0;attempt<4;attempt++){
+  let required=positions.slice(),fallback=null;
+  for(let attempt=0;attempt<5;attempt++){
    const {p,m}=await accounts(required);
    const identity=await inspect('inspect-pool.mjs',p);
    const bins=await inspect('inspect-bins.mjs',p);
    assert(identity.slot===m.contextSlot&&bins.slot===m.contextSlot&&identity.rawHash===m.raw.sha256&&bins.rawHash===m.raw.sha256,'snapshot evidence mismatch');
    if(identity.status==='UNSUPPORTED_ENGINE_INPUT')throw Error('unsupported market identity');
-   if(identity.status==='IDENTITY_CHECKED_UNVERIFIED'&&bins.status==='BITMAP_COVERAGE_CHECKED_UNVERIFIED')return {capture:relative(ROOT,p),slot:m.contextSlot,identity,bins};
-   const next=[...new Set([...required,...(identity.requiredAccounts??[]),bins.bitmap,...(bins.expected??[]).map(x=>x.address)].filter(Boolean))];
-   assert(next.length>required.length,'snapshot remains partial or unsupported');required=next;
+   const base=[...new Set([...(identity.requiredAccounts??[]),bins.bitmap,...(bins.expected??[]).map(x=>x.address)].filter(Boolean))].filter(a=>a!==pool);
+   const marketReady=identity.status==='IDENTITY_CHECKED_UNVERIFIED'&&bins.status==='BITMAP_COVERAGE_CHECKED_UNVERIFIED';
+   const positionReports={},extra=[];
+   if(marketReady){
+    for(const address of positions){
+     try{
+      const report=await inspect('inspect-position.mjs',p,['--position',address]);
+      assert(report.slot===m.contextSlot&&report.rawHash===m.raw.sha256&&report.position===address,'position evidence mismatch');
+      if(report.status==='POSITION_CALCULATED_UNVERIFIED')positionReports[address]=report;
+      else extra.push(...(report.requiredAccounts??[]));
+     }catch{ /* independent position failure does not invent a common snapshot */ }
+    }
+    fallback={capture:relative(ROOT,p),slot:m.contextSlot,identity,bins,positionReports};
+    if(Object.keys(positionReports).length===positions.length)return fallback;
+   }
+   let next=[...new Set([...required,...base,...extra].filter(a=>a!==pool))];
+   if(next.length>99){if(marketReady)return fallback;next=base;}
+   if(next.length>99)throw Error('market snapshot exceeds one RPC request');
+   if(next.length===required.length&&next.every(a=>required.includes(a))){if(marketReady)return fallback;throw Error('snapshot remains partial or unsupported');}
+   if(marketReady&&attempt===4)return fallback;
+   required=next;
   }
+  if(fallback)return fallback;
   throw Error('snapshot discovery did not converge');
  }
  async function position(address){
+  const common=state.streams.market?.status==='CAPTURED_UNVERIFIED'?state.streams.market.evidence:null;
+  const shared=common?.positionReports?.[address];
+  if(shared?.status==='POSITION_CALCULATED_UNVERIFIED')return {capture:common.capture,slot:common.slot,report:shared,commonMarketCapture:true};
   let required=[address];
   for(let attempt=0;attempt<3;attempt++){
    const {p,m}=await accounts(required);
    const report=await inspect('inspect-position.mjs',p,['--position',address]);
    assert(report.slot===m.contextSlot&&report.rawHash===m.raw.sha256&&report.position===address,'position evidence mismatch');
-   if(report.status==='POSITION_CALCULATED_UNVERIFIED')return {capture:relative(ROOT,p),slot:m.contextSlot,report};
+   if(report.status==='POSITION_CALCULATED_UNVERIFIED')return {capture:relative(ROOT,p),slot:m.contextSlot,report,commonMarketCapture:false};
    const next=[...new Set([...required,...(report.requiredAccounts??[])])];
    assert(next.length>required.length,'position missing or unsupported');required=next;
   }
