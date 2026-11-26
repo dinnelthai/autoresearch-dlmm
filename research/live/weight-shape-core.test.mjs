@@ -6,3 +6,15 @@ const opts={maxDeviationBps:1,positionLimit:70,singleMessageExclusiveLimit:26,co
 test('test-only injected converter; exact normalized deviation',()=>{const r=inspectWeightShape(d,market,opts);assert.equal(r.status,'SDK_WEIGHT_SHAPE_DIAGNOSTIC_ONLY');assert.equal(r.totalVariationBps,0);assert.equal(r.executionReady,false);assert.equal(r.yResidualBps,0);assert.equal(shapeDeviation([1n,3n],[1n,1n]).totalVariationBps,2500)});
 test('distortion, dropped bins and bad weights rejected',()=>{for(const [weights,reason] of [[[{binId:-2,weight:1},{binId:-1,weight:1}],'SDK_SHAPE_DEVIATION_EXCEEDED'],[[{binId:-1,weight:1}],'SDK_DROPPED_BINS'],[[],'SDK_EMPTY_WEIGHT_SHAPE'],[[{binId:-2,weight:70000}],'SDK_WEIGHT_INVALID']])assert.equal(inspectWeightShape(d,market,{...opts,convert:()=>weights}).reason,reason)});
 test('missing tolerance, range, total and bin evidence fail closed',()=>{assert.equal(inspectWeightShape({...d,discontinuous:true},market,opts).status,'BLOCKED');assert.equal(inspectWeightShape(d,market,{...opts,maxDeviationBps:null}).status,'BLOCKED');assert.equal(inspectWeightShape(d,market,{...opts,singleMessageExclusiveLimit:2}).status,'BLOCKED');assert.equal(inspectWeightShape({...d,totalSolRaw:'1001'},market,opts).status,'BLOCKED');assert.equal(inspectWeightShape(d,{...market,bins:market.bins.slice(0,1)},opts).status,'BLOCKED');assert.equal(inspectWeightShape({status:'NO_OPERATION'},market,opts).status,'NO_OPERATION')});
+
+test('bind exact distribution and ordered SDK weights',()=>{
+ const r=inspectWeightShape(d,market,{...opts,convert:()=>[{binId:-1,weight:300},{binId:-2,weight:100}]});
+ assert.equal(r.status,'SDK_WEIGHT_SHAPE_DIAGNOSTIC_ONLY');
+ assert.deepEqual(r.distributionBps,[{binId:-2,xBps:0,yBps:2500},{binId:-1,xBps:0,yBps:7500}]);
+ assert.deepEqual(r.sdkWeights,[{binId:-2,weight:100},{binId:-1,weight:300}]);
+});
+test('reject inconsistent upper range, duplicate market rows and negative shape',()=>{
+ assert.equal(inspectWeightShape({...d,upperBinId:0},market,opts).reason,'MARKET_OR_RANGE_IDENTITY_INVALID');
+ assert.equal(inspectWeightShape(d,{...market,bins:[...market.bins,market.bins[0]]},opts).reason,'MARKET_OR_RANGE_IDENTITY_INVALID');
+ assert.throws(()=>shapeDeviation([-1n,3n],[1n,1n]),/INVALID_WEIGHT_SHAPE/);
+});
