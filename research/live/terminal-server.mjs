@@ -22,6 +22,8 @@ import {cohortChange} from './market-features.mjs';
 import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-snapshot.mjs';
 import {replayRequest,replayResult} from './research-replay.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
+import {positionObservation,ledgerProjection,windowLedger} from './position-observation-workflow.mjs';
+import {assembleLedger} from './position-ledger-core.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
 if(values.help){console.log('node research/live/terminal-server.mjs --config data/terminal-config.json [--port 8790]');process.exit(0)}
@@ -349,8 +351,8 @@ async function externalObservation(body){
  await writeFile(join(dir,'manifest.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600,flag:'wx'});
  externalLast={...result,capture:relative(ROOT,dir)};return externalLast;
 }
-let positionReadBusy=false;
-const indexes=new Map();
+let positionReadBusy=false,positionAccountingBusy=false,lastAccountingAttempt=0;
+const indexes=new Map(),positionObservations=new Map();
 async function readPositionIndex(body){
  const scope=validateScope(body?.pool),wallet=validateScope(body?.wallet),key=scope+':'+wallet,old=indexes.get(key);
  if(old&&old.expiresAt>Date.now()&&Date.now()-old.receivedAt<30000)return old;
@@ -371,11 +373,68 @@ async function readPositionDetail(body){
   assert(m.pool===scope&&m.commitment==='finalized'&&Number.isSafeInteger(m.contextSlot)&&m.contextSlot>=idx.slot&&m.contextSlot===r.contextSlot&&typeof m.raw?.sha256==='string','POSITION_CAPTURE_CONTEXT_INVALID');
   const report=await run(['--capture',path,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--position',position,'--owner',wallet,'--observe-v2'],'inspect-position.mjs',15000);
   assert(report.pool===scope&&report.position===position&&report.slot===m.contextSlot&&report.rawHash===m.raw.sha256,'POSITION_CAPTURE_MISMATCH');
-  if(['POSITION_CALCULATED_UNVERIFIED','V2_POSITION_OBSERVATION_UNVERIFIED'].includes(report.status)||report.reason==='POSITION_BIN_VERSION_UNSUPPORTED')return positionDetail(report,{pool:scope,wallet,position,slot:m.contextSlot,rawHash:m.raw.sha256});
+  if(['POSITION_CALCULATED_UNVERIFIED','V2_POSITION_OBSERVATION_UNVERIFIED'].includes(report.status)||report.reason==='POSITION_BIN_VERSION_UNSUPPORTED'){
+   const detail=positionDetail(report,{pool:scope,wallet,position,slot:m.contextSlot,rawHash:m.raw.sha256});
+   if(detail.snapshot){
+    const market=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),receivedAt=Date.parse(m.receivedAt);
+    assert(Number.isSafeInteger(receivedAt)&&receivedAt<=Date.now()&&Date.now()-receivedAt<180000,'POSITION_CAPTURE_RECEIPT_INVALID');
+    const observation=positionObservation(detail,market,receivedAt),key=scope+':'+wallet+':'+position;
+    const raw=await boundedRead(await safeDataPath(join(path,'accounts.json')),32*1024*1024);assert(sha(raw)===m.raw.sha256,'POSITION_RAW_HASH_MISMATCH');
+    const base=join(DATA,'position-observations',scope,position);await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'obs-'));
+    const bytes=JSON.stringify(report);await writeFile(join(dir,'position.json'),bytes,{mode:0o600,flag:'wx'});
+    const saved={...observation,reportHash:sha(bytes),capture:relative(ROOT,path),reportPath:relative(ROOT,join(dir,'position.json'))};
+    await writeFile(join(dir,'manifest.json'),JSON.stringify(saved,null,2)+'\n',{mode:0o600,flag:'wx'});
+    positionObservations.delete(key);positionObservations.set(key,saved);while(positionObservations.size>16)positionObservations.delete(positionObservations.keys().next().value);
+    return {...detail,observation:saved};
+   }
+   return detail;
+  }
   assert(Array.isArray(report.requiredAccounts),'POSITION_DETAIL_UNAVAILABLE');
   const next=[...new Set([...addresses,...report.requiredAccounts.map(validateScope)])].filter(a=>a!==scope);assert(next.length>addresses.length&&next.length<=99,'POSITION_DETAIL_INCOMPLETE');addresses=next;
  }
  throw Error('POSITION_CAPTURE_INCOMPLETE');
+}
+async function positionAccounting(body){
+ const scope=validateScope(body?.pool),wallet=validateScope(body?.wallet),position=validateScope(body?.position),key=scope+':'+wallet+':'+position,obs=positionObservations.get(key);
+ assert(obs&&obs.slot===body.slot&&obs.rawHash===body.rawHash&&Date.now()-obs.receivedAt<=180000,'POSITION_OBSERVATION_REFRESH_REQUIRED');
+ assert(Date.now()-lastAccountingAttempt>=60000,'POSITION_ACCOUNTING_COOLDOWN');lastAccountingAttempt=Date.now();
+ const market=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);
+ assert(obs.mintX===market.mintX&&obs.mintY===market.mintY&&obs.decimalsX===market.decimalsX,'ACCOUNTING_MARKET_MISMATCH');
+ const bytes=await boundedRead(await safeDataPath(obs.reportPath),8*1024*1024);assert(sha(bytes)===obs.reportHash,'POSITION_REPORT_CHANGED');
+ const closing=JSON.parse(bytes);
+ assert(sha(await boundedRead(await safeDataPath(join(obs.capture,'accounts.json')),32*1024*1024))===obs.rawHash,'POSITION_RAW_HASH_MISMATCH');
+ const raw=await run(['--pool',scope,'--position',position,'--provider',previewCfg.provider??'solana-rpc','--pages','1','--limit','10'],'capture-swaps.mjs',120000);
+ const capture=await safeDataPath(raw.directory),mb=await boundedRead(await safeDataPath(join(capture,'manifest.json')),8*1024*1024),cm=JSON.parse(mb);
+ assert(cm.pool===scope&&cm.position===position&&cm.indexAddress===position&&cm.commitment==='finalized'&&cm.before===null&&Array.isArray(cm.signatures)&&cm.signatures.length<=10,'POSITION_HISTORY_SCOPE_INVALID');
+ const poolCapture=await safeDataPath(market.capture);
+ const ledger=await run(['--capture',capture,'--pool-capture',poolCapture,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--owner',wallet,'--position',position],'reconcile-position.mjs',120000);
+ const summary=ledgerProjection(ledger,obs),base=join(DATA,'position-accounting',scope,position);await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'run-'));
+ const ledgerBytes=JSON.stringify(ledger);await writeFile(join(dir,'ledger.json'),ledgerBytes,{mode:0o600,flag:'wx'});await writeFile(join(dir,'closing.json'),bytes,{mode:0o600,flag:'wx'});
+ let performance={status:'BLOCKED',reason:'WINDOW_OPENING_AND_REVIEWED_MARKS_REQUIRED',decisionReady:false,executionReady:false,pnlReady:false};
+ const map=cfg.performanceWindows,policy=map&&Object.hasOwn(map,position)?map[position]:null;
+ if(policy&&typeof policy==='object'){
+  try{
+   assert(policy.pool===scope&&policy.owner===wallet&&policy.position===position&&obs.positionStatus==='POSITION_CALCULATED_UNVERIFIED','WINDOW_POLICY_SCOPE_OR_VERSION');
+   const openingPath=await safeDataPath(policy.opening),marksPath=await safeDataPath(policy.marks);
+   const openingBytes=await boundedRead(openingPath,8*1024*1024),marksBytes=await boundedRead(marksPath,8*1024*1024);
+   assert(sha(openingBytes)===policy.openingHash&&sha(marksBytes)===policy.marksHash,'WINDOW_CONFIG_EVIDENCE_CHANGED');
+   const opening=JSON.parse(openingBytes),openingCapture=await safeDataPath(policy.openingCapture);
+   assert(sha(await boundedRead(await safeDataPath(join(openingCapture,'accounts.json')),32*1024*1024))===opening.rawHash,'WINDOW_OPENING_RAW_HASH_MISMATCH');
+   const om=JSON.parse(await boundedRead(await safeDataPath(join(openingCapture,'manifest.json')),16*1024*1024));
+   assert(om.pool===scope&&om.contextSlot===opening.slot&&om.raw?.sha256===opening.rawHash,'WINDOW_OPENING_CAPTURE_MISMATCH');
+   const wl=windowLedger(ledger,opening.slot,closing.slot,assembleLedger),lp=join(dir,'window-ledger.json'),op=join(dir,'opening.json'),mp=join(dir,'marks.json');
+   await writeFile(lp,JSON.stringify(wl),{mode:0o600,flag:'wx'});await writeFile(op,openingBytes,{mode:0o600,flag:'wx'});await writeFile(mp,marksBytes,{mode:0o600,flag:'wx'});
+   const cfgPath=join(dir,'window.json'),config={schemaVersion:1,scope:'EXISTING_POSITION_WINDOW_RETAIN_DISTRIBUTIONS',ledger:lp,opening:op,closing:join(dir,'closing.json'),marks:mp,maxAgeSeconds:policy.maxAgeSeconds,maxSpreadBps:policy.maxSpreadBps};
+   await writeFile(cfgPath,JSON.stringify(config),{mode:0o600,flag:'wx'});
+   performance=await run(['--input',cfgPath],'calculate-performance.mjs',30000);
+   assert(performance.pnlReady===false&&performance.executionReady===false&&performance.decisionReady===false&&['BLOCKED','BOUNDED_WINDOW_ACCOUNTING_DIAGNOSTIC'].includes(performance.status),'WINDOW_RESULT_INVALID');
+   if(performance.status!=='BLOCKED')assert(performance.pool===scope&&performance.owner===wallet&&performance.position===position&&performance.closingRawHash===obs.rawHash&&performance.historyComplete===false,'WINDOW_RESULT_SCOPE');
+  }catch(e){performance={status:'BLOCKED',reason:/^[A-Z0-9_]+$/.test(e.message)?e.message:'WINDOW_EVIDENCE_OR_CALCULATION_FAILED',decisionReady:false,executionReady:false,pnlReady:false}}
+ }
+ const perfBytes=JSON.stringify(performance);await writeFile(join(dir,'performance.json'),perfBytes,{mode:0o600,flag:'wx'});
+ const out={scope:'POSITION_ACCOUNTING_DIAGNOSTIC_ONLY',pool:scope,owner:wallet,position,observation:obs,historyCapture:relative(ROOT,capture),historyManifestHash:sha(mb),ledgerHash:sha(ledgerBytes),performanceHash:sha(perfBytes),ledger:summary,performance,createdAt:Date.now(),historyComplete:false,pnlReady:false,decisionReady:false,executionReady:false};
+ await writeFile(join(dir,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});
+ return {...out,capture:relative(ROOT,dir)};
 }
 const server=createServer(async(req,res)=>{
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
@@ -391,6 +450,11 @@ const server=createServer(async(req,res)=>{
   if(req.method==='GET'&&scoped.path==='/api/terminal/pool-info'){try{const m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);send(res,200,await indexedPool([m.pool,m.mintX,m.mintY,m.decimalsX,m.decimalsY].join(':'),m))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^INDEX_[A-Z_]+$/.test(e.message)?e.message:'POOL_INFO_UNAVAILABLE'})}return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/price-history'){try{send(res,200,await indexedHistory(scope,scope))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^(INDEX|HISTORY|INVALID)_[A-Z_]+$/.test(e.message)?e.message:'HISTORY_UNAVAILABLE'})}return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/state'){if(overviewBusy){send(res,409,{...blocked('STATE_READ_BUSY'),pool:scope});return}overviewBusy=true;try{send(res,200,await scopedOverview(scope))}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),pool:scope,market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}finally{overviewBusy=false}return}
+  if(req.method==='POST'&&req.url==='/api/terminal/position-accounting'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   if(positionAccountingBusy){send(res,409,blocked('POSITION_ACCOUNTING_BUSY'));return}positionAccountingBusy=true;
+   try{send(res,200,await positionAccounting(await jsonBody(req)))}finally{positionAccountingBusy=false}return
+  }
   if(req.method==='POST'&&['/api/terminal/wallet-positions','/api/terminal/wallet-position-detail'].includes(req.url)){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(positionReadBusy){send(res,409,blocked('POSITION_CAPTURE_BUSY'));return}positionReadBusy=true;

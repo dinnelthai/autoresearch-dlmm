@@ -27,5 +27,6 @@
     "slippageBps": 50,
     "maxDiscountBps": 200
   },
-  "researchReviews": {}
+  "researchReviews": {},
+  "performanceWindows": {}
 }
