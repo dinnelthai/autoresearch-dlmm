@@ -1,6 +1,7 @@
 // Fixed opening allocation, observed-share proxy. Independent of swap replay.
 import {IntegerKernel as K} from '../integer.mjs';
 import {mapPaperPlans} from './paper-share-core.mjs';
+import {adaptiveIntent,remapAdaptive} from './paper-adaptive-core.mjs';
 import {snapshotRows,estimateFeeGrowth} from './paper-fee-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits)),'PAPER_SNAPSHOT_RAW_INVALID');return BigInt(v)};
@@ -51,7 +52,7 @@ export function openSnapshotExperiment({id,snapshot,report,budget,policy,backend
  });
  return {schemaVersion:1,scope:'PAPER_SNAPSHOT_FIXED_SHARE_ONLY',status:'SNAPSHOT_RESEARCH_UNVERIFIED',id,pool:a.i.pool,mintX:a.i.mintX,mintY:a.i.mintY,decimalsX:a.i.sides[0].decimals,decimalsY:9,frozenAt,backendHash,policy:{...policy,exitCostSolRaw:s(exitCost),maxLossSolRaw:s(maxLoss)},capital:{xRaw:s(capital.x),yRaw:s(capital.y)},opening:{slot:a.i.slot,proof:a.proof},last:{slot:a.i.slot,proof:a.proof},snapshotCount:1,rows,decisionReady:false,executionReady:false,pnlReady:false,protocolExact:false,coverageVerified:false,calibrated:false,limitations:['Observed-share principal and cumulative observed fee entitlement on the external market path; not an added-liquidity counterfactual. No dilution fees or swap replay fees added.','Constant supply at each observed endpoint only; intervening changes, trade paths and execution prices unknown.','Active Bin Q64 mark in raw Y units; not independent reference or executable exit value.','Virtual exits are same-snapshot accounting marks minus declared cost; no actual realized PnL, liquidation guarantee or strategy rebalance.','Initial plan frozen locally; capture timestamps and local archive integrity do not prove independent causal provenance.']};
 }
-export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,exit=false}){
+export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,exit=false,segmentOpenings={}}){
  assert(state?.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.status==='SNAPSHOT_RESEARCH_UNVERIFIED'&&state.backendHash===backendHash&&state.executionReady===false&&state.pnlReady===false&&Number.isSafeInteger(state.snapshotCount)&&state.snapshotCount<1000&&Array.isArray(state.rows)&&state.rows.length===8&&state.rows.every((r,i)=>r.mode===modes[i]),'PAPER_SNAPSHOT_CHECKPOINT_SCOPE');
  const a=facts(opening),b=facts(previous),c=facts(snapshot);scope(a,b);scope(b,c);
  assert(state.opening.slot===a.i.slot&&state.opening.proof.manifestHash===a.proof.manifestHash&&state.opening.proof.accountsHash===a.proof.accountsHash&&state.last.slot===b.i.slot&&state.last.proof.manifestHash===b.proof.manifestHash&&state.last.proof.accountsHash===b.proof.accountsHash&&state.pool===c.i.pool&&state.mintX===c.i.mintX&&state.mintY===c.i.mintY,'PAPER_SNAPSHOT_CHECKPOINT_BINDING');
@@ -66,10 +67,12 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
    let wallet={x:raw(last.walletXRaw),y:raw(last.walletYRaw)},p=zero(),fees=zero(),cost=raw(last.costYRaw),status=r.status,reason=r.reason;
    if(status==='OPEN_PROXY'){
     assert(!gap,'PAPER_SNAPSHOT_GAP');
-    for(const v of r.mapping.rows){const x=a.map.get(v.binId),y=b.map.get(v.binId),z=c.map.get(v.binId);
+    const anchor=r.segmentOpening?segmentOpenings[r.mode]:opening,segment=facts(anchor);scope(a,segment);
+    if(r.segmentOpening)assert(segment.i.slot===r.segmentOpening.slot&&segment.proof.manifestHash===r.segmentOpening.proof.manifestHash&&segment.proof.accountsHash===r.segmentOpening.proof.accountsHash,'PAPER_ADAPTIVE_SEGMENT_CHANGED');
+    for(const v of r.mapping.rows){const x=segment.map.get(v.binId),y=b.map.get(v.binId),z=c.map.get(v.binId);
      assert(x&&y&&z&&x.version===y.version&&y.version===z.version&&x.priceQ64Raw===z.priceQ64Raw&&x.liquiditySupplyRaw===y.liquiditySupplyRaw&&y.liquiditySupplyRaw===z.liquiditySupplyRaw&&raw(z.feeXPerTokenRaw)>=raw(y.feeXPerTokenRaw)&&raw(z.feeYPerTokenRaw)>=raw(y.feeYPerTokenRaw),'PAPER_SNAPSHOT_SUPPLY_OR_GROWTH_CHANGED')}
     p=principal(c.map,r.mapping.rows);
-    const fee=estimateFeeGrowth({before:opening,after:snapshot,allocation:r.mapping.allocation});assert(fee.status==='PAPER_FEE_ESTIMATES_UNVERIFIED','PAPER_SNAPSHOT_FEE_BLOCKED');
+    const fee=estimateFeeGrowth({before:anchor,after:snapshot,allocation:r.mapping.allocation});assert(fee.status==='PAPER_FEE_ESTIMATES_UNVERIFIED','PAPER_SNAPSHOT_FEE_BLOCKED');
     fees={x:raw(fee.totals.observedXRaw),y:raw(fee.totals.observedYRaw)};
     const nav=mark(wallet.x+p.x+fees.x,wallet.y+p.y+fees.y,c.price),peak=raw(last.peakYRaw),high=nav>peak?nav:peak;
     const loss=initial-nav,dd=high?(high-nav)*10000n/high:0n;
@@ -83,4 +86,24 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
   }catch(e){return block(errorCode(e,'PAPER_SNAPSHOT_UPDATE_FAILED'))}
  });
  return {...state,last:{slot:c.i.slot,proof:c.proof},snapshotCount:state.snapshotCount+1,rows};
+}
+
+// Apply a reviewed virtual management intent to the current accounting point only.
+// The original capital baseline is retained; closed-segment fees move into wallet once.
+export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHash,now}){
+ const row=state.rows.find(r=>r.mode==='adaptive');
+ if(!state.adaptiveRequest||row?.status!=='OPEN_PROXY')return state;
+ const c=facts(snapshot);assert(state.last.slot===c.i.slot&&state.last.proof.accountsHash===c.proof.accountsHash,'PAPER_ADAPTIVE_POINT_SCOPE');
+ const intent=adaptiveIntent({row,preview,slot:c.i.slot,requestedAt:c.requested,now,reviewHash,delaySeconds:Math.max(1,reviewed.cfg.executionDelaySeconds)});
+ let next={...row,pendingAdaptive:intent.pending,adaptiveReason:intent.reason,adaptiveDecisions:(row.adaptiveDecisions??0)+1};
+ if(intent.apply){
+  try{
+   const r=remapAdaptive({row:{...row,rebalances:row.rebalances??0},selected:intent.apply,snapshot,state,cfg:reviewed.cfg}),last=row.points.at(-1);
+   const initial=raw(row.initialNavYRaw),hold=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),c.price);
+   const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet:{x:r.walletX,y:r.walletY},principal:{x:r.principalX,y:r.principalY},fees:zero(),initial,hold,peak:raw(last.peakYRaw),cost:raw(last.costYRaw)+r.cost,status:r.status});
+   assert(BigInt(point.navYRaw)<=BigInt(last.navYRaw),'PAPER_ADAPTIVE_NAV_INCREASE_ON_ACTION');
+   next={...next,mapping:r.mapping,status:r.status,reason:r.status==='EXITED_PROXY'?'VIRTUAL_T10_REMOVE':null,pendingAdaptive:null,segmentOpening:{slot:c.i.slot,proof:c.proof},lastActionTime:reviewed.latest.t,rebalances:(row.rebalances??0)+(r.status==='OPEN_PROXY'?1:0),turnoverYRaw:s(r.turnover),claimedFeeXRaw:s(raw(row.claimedFeeXRaw??'0')+raw(last.feeXRaw)),claimedFeeYRaw:s(raw(row.claimedFeeYRaw??'0')+raw(last.feeYRaw)),points:[...row.points.slice(0,-1),point],adaptiveReason:'VIRTUAL_T10_'+intent.apply.action.type};
+  }catch(e){next={...next,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REMAP_BLOCKED')}}
+ }
+ return {...state,rows:state.rows.map(r=>r===row?next:r)};
 }

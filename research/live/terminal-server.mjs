@@ -48,7 +48,7 @@ const marketObservations=createMarketObservationService({ROOT,DATA,cfg,maxAgeMs,
 const {holderObservation,externalObservation}=marketObservations;
 const {researchInputs,saveResearchSnapshot,replayResearchSnapshot,buildResearchCandidate,loadResearchRun}=createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,run,marketObservations});
 const {readPositionIndex,readPositionDetail,positionAccounting}=createPositionService({ROOT,DATA,cfg,previewCfg,maxAgeMs,validateScope,loadState,safeDataPath,boundedRead,run});
-const paperService=createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io:{safeDataPath,boundedRead,run},loadState,preview,isStopping});
+const paperService=createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io:{safeDataPath,boundedRead,run},loadState,preview,loadReview,isStopping});
 const server=createServer(createTerminalHandler({paperService,pool,port,origin,html,assets,startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor:monitor.publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}));
 server.requestTimeout=45000;server.headersTimeout=10000;server.keepAliveTimeout=2000;server.maxConnections=16;
 await new Promise((ok,fail)=>{server.once('error',fail);server.listen(port,'127.0.0.1',ok)});

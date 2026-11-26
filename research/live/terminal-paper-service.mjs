@@ -3,13 +3,15 @@ import {mkdir,open,writeFile,rename,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createPaperSnapshotReader} from './paper-snapshot.mjs';
-import {openSnapshotExperiment,advanceSnapshotExperiment} from './paper-snapshot-run-core.mjs';
+import {openSnapshotExperiment,advanceSnapshotExperiment,updateAdaptiveSnapshot} from './paper-snapshot-run-core.mjs';
 import {nextPaperCapture,paperPublic} from './paper-auto-core.mjs';
-import {currentMarket} from './terminal-core.mjs';
+import {currentMarket,requestFromDraft} from './terminal-core.mjs';
+import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
+import {reviewedObservations} from './review-observations.mjs';
 import {sourceInventory} from './source-inventory.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
-export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,isStopping,idlPath='data/raw/dlmm-idl.json',intervalMs=15000}){
+export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,isStopping,idlPath='data/raw/dlmm-idl.json',intervalMs=15000}){
  const dir=join(DATA,'paper-auto',pool),pointer=join(dir,'active.json');
  const read=async(p,n)=>io.boundedRead(await io.safeDataPath(p),n);
  let job=null,timer=null,flight=null,closed=false;
@@ -33,6 +35,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   const capture=await (await reader())(await io.safeDataPath(m.capture));
   assert(capture.identity.slot===m.slot&&capture.identity.rawHash===m.rawHash&&b.expiresAt>Date.now(),'PAPER_AUTO_OPENING_CHANGED');
   const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,report:r,budget:b.researchBudget,policy:body.policy,backendHash,frozenAt:Date.now()});
+  if(body.policy.adaptive){const request=requestFromDraft(body.draft,m);state.adaptiveRequest={...request,riskConfig:{...request.riskConfig,...adaptivePolicy(body.policy.adaptive)}}}
   assert(state.rows[0].status==='HOLD_ONLY'&&state.rows.some(x=>x.status==='OPEN_PROXY'),'PAPER_AUTO_NO_MAPPED_LP_PLAN');
   await verifyCode();await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};return get();
  })}
@@ -50,7 +53,20 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     // Ignore a collector request started before local experiment freeze. Never treat it as a later observation.
     if(Date.parse(snapshot.proof.requestedAt)<=state.frozenAt){job={id:a.id,status:'WAITING_FOR_POST_FREEZE_CAPTURE',running:true};return}
     const opening=await load(await io.safeDataPath(state.opening.proof.path)),previous=state.opening.slot===state.last.slot?opening:await load(await io.safeDataPath(state.last.proof.path));
-    const next=advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now:Date.now()});
+    const segmentOpenings={};const adaptive=state.rows.find(r=>r.mode==='adaptive');
+    if(adaptive?.status==='OPEN_PROXY'&&adaptive.segmentOpening)segmentOpenings.adaptive=await load(await io.safeDataPath(adaptive.segmentOpening.proof.path));
+    let next=advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now:Date.now(),segmentOpenings});
+    const row=next.rows.find(r=>r.mode==='adaptive');
+    if(next.adaptiveRequest&&row?.status==='OPEN_PROXY'){
+     try{
+      const review=await loadReview(m,Date.now());
+      const evidence=async(path,digest)=>{assert(hash(digest),'PAPER_ADAPTIVE_EVIDENCE_HASH');const bytes=await read(path,8*1024*1024);assert(sha(bytes)===digest,'PAPER_ADAPTIVE_EVIDENCE_CHANGED');return bytes};
+      const reviewed=await reviewedObservations({m,req:next.adaptiveRequest,review:review.review,evidence});
+      const management=virtualManagement({state:next,row,snapshot,reviewed});
+      assert(review.expiresAt>Date.now(),'PAPER_ADAPTIVE_REVIEW_EXPIRED');
+      next=updateAdaptiveSnapshot(next,{snapshot,reviewed,preview:management,reviewHash:review.reviewHash,now:Date.now()});
+     }catch(e){next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}:r)}}
+    }
     await verifyCode();await save(next);
     if(!next.rows.some(r=>r.status==='OPEN_PROXY')){await atomic(pointer,{...a,running:false,finalStatus:'FINISHED_OR_BLOCKED'});job={id:a.id,status:'FINISHED_OR_BLOCKED',running:false};return}
     job={id:a.id,status:'UPDATED_UNVERIFIED',running:true};
