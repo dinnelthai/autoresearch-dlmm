@@ -56,3 +56,20 @@ export function managementRequest(policy,m,p){
  assert(Number.isSafeInteger(riskConfig.cooldownSeconds)&&Number.isSafeInteger(riskConfig.maxRebalances),'INVALID_MANAGEMENT_COUNTER_LIMIT');
  return {pool:m.pool,position:p.position,entry:'position',goal:policy.goal,horizonSeconds:policy.horizonSeconds,capitalScope:'USER_DECLARED_ALLOCATION',allowDispose:false,solRaw,memeRaw,riskConfig};
 }
+
+/** Display-only projection, never a reference price or executable quote. */
+export function marketDisplay(m,limit=1500){
+ assert(Number.isInteger(limit)&&limit>0&&limit<=1500,'INVALID_DISPLAY_LIMIT');
+ const raw=(v,bits)=>typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits));
+ assert(Number.isInteger(m.decimalsX)&&m.decimalsX>=0&&m.decimalsX<=18&&m.decimalsY===9&&Number.isInteger(m.activeId)&&Array.isArray(m.bins),'INVALID_DISPLAY_MARKET');
+ let x=0n,y=0n;
+ const bins=m.bins.map(b=>{
+  assert(Number.isInteger(b.binId)&&raw(b.amountXRaw,64)&&raw(b.amountYRaw,64)&&raw(b.priceQ64Raw,128),'INVALID_DISPLAY_BIN');
+  x+=BigInt(b.amountXRaw);y+=BigInt(b.amountYRaw);
+  const p=Number(b.priceQ64Raw)/2**64*10**(m.decimalsX-m.decimalsY);
+  return {binId:b.binId,amountXRaw:b.amountXRaw,amountYRaw:b.amountYRaw,priceSolPerMeme:Number.isFinite(p)&&p>0?p:null};
+ });
+ const active=bins.find(b=>b.binId===m.activeId);
+ const rows=bins.sort((a,b)=>Math.abs(a.binId-m.activeId)-Math.abs(b.binId-m.activeId)||a.binId-b.binId).slice(0,limit).sort((a,b)=>a.binId-b.binId);
+ return {kind:'POOL_OBSERVATION_ONLY',activeBinPriceSolPerMeme:active?.priceSolPerMeme??null,totalXRaw:x.toString(),totalYRaw:y.toString(),totalBins:bins.length,rows};
+}
