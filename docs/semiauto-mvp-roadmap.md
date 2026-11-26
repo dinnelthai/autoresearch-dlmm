@@ -43,3 +43,6 @@ First obtain a real read-only finalized Pool snapshot, then derive and validate 
 - Before modifying business UI (T12–T13), produce a separate prototype, review it, and keep the official research interface unchanged until the business layout is accepted.
 
 T17 entry point: [acceptance runbook](t17-acceptance-runbook.md). Stop feature expansion; run offline verification and resolve local evidence blockers in order.
+
+## CR-15 review closure
+Mathematical review 7/7 topics, engineering review CR-10–CR-15 6/6 topics completed at source-review scope. Implementation is not full acceptance. Stop feature expansion; next work is [Codex final integration handoff](codex-final-handoff.md). 0/17 live gates accepted, T14 C and production management execution not implemented. Full offline Node, SDK, validator, RPC, browser and evidence-backed accounting/research acceptance still pending.
