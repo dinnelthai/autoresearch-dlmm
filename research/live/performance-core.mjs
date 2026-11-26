@@ -17,7 +17,8 @@ function snapshot(p,l){
 export function mark(m,l,time,slot,policy){
  assert(m?.pool===l.pool&&m.mintX===l.mintX&&m.mintY===l.mintY&&m.slot===slot&&m.asOf===time&&hash(m.evidenceHash)&&Array.isArray(m.references)&&m.references.length===2,'PERF_MARK_IDENTITY');
  const [a,b]=m.references;
- assert([a,b].every(r=>r.pool!==l.pool&&typeof r.pool==='string'&&typeof r.source==='string'&&r.source&&typeof r.venue==='string'&&r.venue&&hash(r.evidenceHash)&&Number.isSafeInteger(r.observedAt)&&Number.isSafeInteger(r.availableAt)&&r.observedAt<=r.availableAt&&r.availableAt<=time&&time-r.observedAt<=policy.maxAgeSeconds),'PERF_MARK_TIME');
+ assert([a,b].every(r=>r?.mintX===l.mintX&&r?.mintY===l.mintY&&r.priceUnit==='SOL_PER_HUMAN_MEME_E18'),'PERF_REFERENCE_ASSET_OR_UNIT_MISMATCH');
+ assert([a,b].every(r=>r.pool!==l.pool&&typeof r.pool==='string'&&r.pool.length>0&&typeof r.source==='string'&&r.source&&typeof r.venue==='string'&&r.venue&&hash(r.evidenceHash)&&Number.isSafeInteger(r.observedAt)&&Number.isSafeInteger(r.availableAt)&&r.observedAt<=r.availableAt&&r.availableAt<=time&&time-r.observedAt<=policy.maxAgeSeconds),'PERF_MARK_TIME');
  assert(a.pool!==b.pool&&a.source!==b.source&&a.venue!==b.venue&&a.evidenceHash!==b.evidenceHash,'PERF_MARK_INDEPENDENCE');
  const x=raw(a.priceE18),y=raw(b.priceE18),lo=x<y?x:y,hi=x>y?x:y;
  assert(lo>0n&&(hi-lo)*10000n<=lo*BigInt(policy.maxSpreadBps),'PERF_MARK_SPREAD');
