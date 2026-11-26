@@ -4,7 +4,8 @@ import {readFile,mkdir,mkdtemp,writeFile,rm,realpath,rename,open,unlink} from 'n
 import {resolve,join,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
+import {buildReview} from './review-core.mjs';
 import {parseArgs} from 'node:util';
 import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest} from './terminal-core.mjs';
 import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObservation} from './monitor-core.mjs';
@@ -143,6 +144,22 @@ async function startMonitor(){
  const tick=()=>{if(stopping||monitorJob)return;monitorJob=monitorCycle().finally(()=>{monitorJob=null})};
  monitorTimer=setInterval(tick,monitorSeconds*1000);tick();
 }
+// Short-lived server-owned research reports; no signing material, no persistence.
+const reviewReports=new Map();
+function rememberReport(r,mode){
+ const now=Date.now();for(const [id,v] of reviewReports)if(v.report.terminalBinding.expiresAt<=now)reviewReports.delete(id);
+ if(r.status!=='RESEARCH_DIAGNOSTIC_UNVERIFIED'||!r.terminalBinding||r.terminalBinding.expiresAt<=now)return r;
+ const id=randomUUID();while(reviewReports.size>=16)reviewReports.delete(reviewReports.keys().next().value);
+ reviewReports.set(id,{report:r,mode});return {...r,reviewId:id};
+}
+async function inspectReview(body){
+ const saved=reviewReports.get(body?.reviewId);assert(saved&&saved.mode===body.mode,'RESEARCH_REPORT_UNAVAILABLE');
+ const r=saved.report,b=r.terminalBinding,now=Date.now(),s=await loadState(),m=currentMarket(s,pool,now,maxAgeMs);
+ let ctx=null,review;
+ if(saved.mode==='management'){ctx=await managementContext(s,m,b.position,now);review=ctx}else review=await loadReview(m,now);
+ assert(b.expiresAt>now&&m.receivedAt+maxAgeMs>now,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
+ return buildReview({report:r,mode:saved.mode,rowIndex:body.rowIndex,wallet:body.wallet,market:m,position:ctx?.p.report,reviewHash:review.reviewHash,policyHash:ctx?.policyHash,now:Date.now()});
+}
 const server=createServer(async(req,res)=>{
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
@@ -150,10 +167,14 @@ const server=createServer(async(req,res)=>{
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
   if(req.method==='GET'&&req.url==='/api/terminal/monitor'){send(res,200,publicMonitor());return}
   if(req.method==='GET'&&req.url==='/api/terminal/state'){try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}return}
+  if(req.method==='POST'&&req.url==='/api/terminal/review'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   send(res,200,await inspectReview(await jsonBody(req)));return
+  }
   if(req.method==='POST'&&['/api/terminal/plans','/api/terminal/management'].includes(req.url)){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(busy){send(res,409,blocked('ANALYSIS_BUSY'));return}busy=true;
-   try{send(res,200,await preview(await jsonBody(req),req.url.endsWith('/management')?'management':'plans'))}finally{busy=false}return
+   try{const mode=req.url.endsWith('/management')?'management':'plans';send(res,200,rememberReport(await preview(await jsonBody(req),mode),mode))}finally{busy=false}return
   }
   send(res,404,blocked('NOT_FOUND'));
  }catch(e){const m=String(e.message);send(res,400,blocked(/^[A-Z0-9_]+$/.test(m)?m:'INPUT_OR_EVIDENCE_VALIDATION_FAILED'))}
