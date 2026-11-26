@@ -47,12 +47,12 @@ export function reviewShape(review,m,now){
 export function inputStatus({pool,market=null,history=null,external=null,holder=null,review=null,reviewReason=null,now=Date.now(),maxAgeMs=180000}){
  const m=market?.pool===pool&&fresh(market.receivedAt,now,maxAgeMs)?market:null;
  const sample=m?boundedSwapObservation(history,pool,now,maxAgeMs):null;
- const quote=m&&external?.pool===pool&&external.mintX===m.mintX&&external.mintY===m.mintY&&external.marketRawHash===m.rawHash&&external.marketSlot===m.slot&&external.scope==='EXTERNAL_DISPLAY_ONLY'&&external.expiresAt>now&&fresh(external.fetchedAt,now,30000)&&finite(external.raydium?.midSolPerMeme,Number.MIN_VALUE)?external.raydium:null;
+ const quote=m&&external?.pool===pool&&external.mintX===m.mintX&&external.mintY===m.mintY&&external.marketRawHash===m.rawHash&&external.marketSlot===m.slot&&external.scope==='EXTERNAL_DISPLAY_ONLY'&&external.expiresAt>now&&fresh(external.fetchedAt,now,30000)&&(finite(external.raydium?.midSolPerMeme,Number.MIN_VALUE)||finite(external.orca?.midSolPerMeme,Number.MIN_VALUE))?(external.raydium?.midSolPerMeme>0?external.raydium:external.orca):null;
  const shape=reviewShape(review,m,now),features=featureProjection(holder,m,now,Math.min(maxAgeMs,180000));
  const tasks=[
   {id:'market',state:m?'OBSERVED':'MISSING',reason:m?'MARKET_CAPTURE_UNVERIFIED':'MARKET_CAPTURE_REQUIRED'},
   {id:'history',state:sample?'OBSERVED':'MISSING',reason:sample?'BOUNDED_SAMPLE_NOT_WINDOW_COVERAGE':'COMPLETE_DECODED_SAMPLE_REQUIRED'},
-  {id:'external',state:quote?'OBSERVED':'MISSING',reason:quote?'ONE_DIRECT_QUOTE_SOURCE_ONLY':'DIRECT_TWO_SIDED_QUOTE_REQUIRED'},
+  {id:'external',state:quote?'OBSERVED':'MISSING',reason:quote?(external.comparison?.status==='TWO_VENUES_OBSERVED_UNVERIFIED'?'TWO_VENUES_OBSERVED_NOT_INDEPENDENTLY_REVIEWED':'ONE_DIRECT_QUOTE_SOURCE_ONLY'):'DIRECT_TWO_SIDED_QUOTE_REQUIRED'},
   {id:'holder',state:features?.distribution?.supplyConserved?'OBSERVED':'REVIEW_REQUIRED',reason:features?.distribution?.supplyConserved?'OWNER_DISTRIBUTION_INCLUDES_VAULTS_NOT_REVIEWED_OUTFLOW':features?.gaps?.[0]??'HOLDER_CONCENTRATION_AND_OUTFLOW_EVIDENCE_REQUIRED'},
   {id:'flow',state:'REVIEW_REQUIRED',reason:'TIME_WINDOW_AND_COVERAGE_EVIDENCE_REQUIRED'},
   {id:'token',state:features?.safety?'OBSERVED':'REVIEW_REQUIRED',reason:features?.safety?'MINT_AUTHORITY_FACTS_NOT_TOKEN_SAFETY':'TOKEN_SAFETY_EVIDENCE_REQUIRED'},

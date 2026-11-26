@@ -19,6 +19,7 @@ import {observeExternalMarket} from './external-market.mjs';
 import {inputStatus} from './research-input-status.mjs';
 import {captureHolderFeatures} from './capture-holder-features.mjs';
 import {cohortChange} from './market-features.mjs';
+import {snapshotManifest,reviewEvidenceRefs} from './research-snapshot.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
@@ -259,7 +260,7 @@ async function observeWallet(body){
  return {pool:scope,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
-let externalBusy=false,externalLast=null,holderBusy=false,holderLastAttempt=0;
+let externalBusy=false,externalLast=null,holderBusy=false,holderLastAttempt=0,snapshotBusy=false;
 const holderCache=new Map();
 async function holderObservation(body){
  const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),key=scope+':'+m.mintX,now=Date.now(),old=holderCache.get(key);
@@ -279,6 +280,31 @@ async function researchInputs(scope){
  if(m&&scope===pool){try{review=(await loadReview(m,now)).review}catch(e){reason=e.message}}
  else if(m)reason='POOL_RESEARCH_NOT_CONFIGURED';
  return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:externalLast,holder:m?holderCache.get(scope+':'+m.mintX)?.public:null,review,reviewReason:reason,now,maxAgeMs});
+}
+async function saveResearchSnapshot(body){
+ const scope=validateScope(body?.pool),now=Date.now(),state=await loadState(scope),m=currentMarket(state,scope,now,maxAgeMs);
+ assert(body.marketSlot===m.slot&&body.marketRawHash===m.rawHash,'MARKET_CHANGED_REFRESH_REQUIRED');
+ const source=await safeDataPath(m.capture),mb=await boundedRead(await safeDataPath(join(source,'manifest.json')),16*1024*1024),manifest=JSON.parse(mb);
+ assert(manifest.pool===scope&&manifest.contextSlot===m.slot&&manifest.commitment==='finalized'&&manifest.raw?.file==='accounts.json'&&manifest.raw.sha256===m.rawHash,'SNAPSHOT_RAW_IDENTITY_MISMATCH');
+ assert(sha(await boundedRead(await safeDataPath(join(source,'accounts.json')),32*1024*1024))===m.rawHash,'SNAPSHOT_RAW_HASH_MISMATCH');
+ let reviewed=null,reviewStatus='NOT_AVAILABLE';
+ if(scope===pool&&cfg.review){try{
+  const candidate=await loadReview(m,now);let budget=64*1024*1024;
+  for(const ref of reviewEvidenceRefs(candidate.review)){const b=await boundedRead(await safeDataPath(ref.path),Math.min(budget,8*1024*1024));assert(sha(b)===ref.sha256,'SNAPSHOT_REVIEW_HASH_MISMATCH');budget-=b.length}
+  reviewed=candidate;reviewStatus='MATCHED_HASHES_UNVERIFIED';
+ }catch{reviewStatus='REVIEW_MISSING_STALE_OR_UNVERIFIED'}}
+ const external=externalLast?.pool===scope&&externalLast.marketSlot===m.slot&&externalLast.marketRawHash===m.rawHash&&externalLast.expiresAt>now?externalLast:null,holder=holderCache.get(scope+':'+m.mintX)?.public??null;
+ const diagnostic=inputStatus({pool:scope,market:m,history:state.streams?.['history:'+scope],external,holder,review:reviewed?.review,reviewReason:reviewStatus,now,maxAgeMs});
+ const frozen={...state,streams:{market:state.streams.market},history:{}};
+ for(const [k,x] of Object.entries(state.streams??{}))if(k.startsWith('position:')&&x.status==='CAPTURED_UNVERIFIED'&&x.evidence?.slot===m.slot&&x.evidence?.report?.rawHash===m.rawHash)frozen.streams[k]=x;
+ const files=new Map([['state.json',Buffer.from(JSON.stringify(frozen))],['diagnostic.json',Buffer.from(JSON.stringify(diagnostic))],['capture-manifest.json',mb]]);
+ if(reviewed)files.set('review.json',reviewed.reviewBytes);
+ if(external)files.set('external.json',Buffer.from(JSON.stringify(external)));
+ if(diagnostic.holderFeatures&&holder)files.set('holder.json',Buffer.from(JSON.stringify(holder)));
+ const out=snapshotManifest({pool:scope,market:m,createdAt:now,files:[...files].map(([name,b])=>({name,sha256:sha(b),bytes:b.length})),reviewStatus,diagnostic});
+ const base=join(DATA,'research-snapshots');await mkdir(base,{recursive:true,mode:0o700});const tmp=await mkdtemp(join(base,'.pending-')),dir=join(base,out.snapshotId);
+ try{for(const [name,b] of files)await writeFile(join(tmp,name),b,{mode:0o600,flag:'wx'});await writeFile(join(tmp,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(tmp,dir)}catch(e){await rm(tmp,{recursive:true,force:true});throw e}
+ return {...out,capture:relative(ROOT,dir)};
 }
 async function externalObservation(body){
  const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),now=Date.now();
@@ -335,6 +361,11 @@ const server=createServer(async(req,res)=>{
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(positionReadBusy){send(res,409,blocked('POSITION_CAPTURE_BUSY'));return}positionReadBusy=true;
    try{const body=await jsonBody(req);send(res,200,await (req.url.endsWith('-detail')?readPositionDetail(body):readPositionIndex(body)))}finally{positionReadBusy=false}return
+  }
+  if(req.method==='POST'&&req.url==='/api/terminal/research-snapshot'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   if(snapshotBusy){send(res,409,blocked('SNAPSHOT_BUSY'));return}snapshotBusy=true;
+   try{send(res,200,await saveResearchSnapshot(await jsonBody(req)))}finally{snapshotBusy=false}return
   }
   if(req.method==='POST'&&req.url==='/api/terminal/holder-features'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
