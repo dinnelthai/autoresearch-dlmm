@@ -594,7 +594,7 @@ async function readPositionAccounting(id,d){
   if(perf?.status==='BOUNDED_WINDOW_ACCOUNTING_DIAGNOSTIC'&&perf.pool===p&&perf.owner===w&&perf.position===id&&perf.pnlReady===false&&perf.historyComplete===false&&perf.closingRawHash===obs.rawHash&&Object.keys(perfMetricLabels).every(k=>perfDecimal(perf.metrics?.[k])))for(const [k,label] of Object.entries(perfMetricLabels))fields[label]=perf.metrics[k]+' SOL（条件性）';
   else fields['窗口估值']=perf?.reason??'未验收';
   for(const [k,v] of Object.entries(fields)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=String(v);$('positionAccountingFields').append(dt,dd)}
-  put('positionAccountingStatus',x.ledger.status+' · '+x.ledger.acceptedCount+' 笔有限对账 · 历史完整性未验证 · 不填实际收益主指标');
+  put('positionAccountingStatus','Position '+id.slice(0,8)+'…'+id.slice(-5)+' · Slot '+obs.slot+' · '+x.ledger.status+' · '+x.ledger.acceptedCount+' 笔有限对账 · 历史完整性未验证 · 不填实际收益主指标');
  }catch(e){if(g===accountingGeneration)put('positionAccountingStatus','复盘阻塞：'+e.message)}finally{accountingBusy=false;renderWalletPositions()}
 }
 async function refreshWalletPositions(force=false){

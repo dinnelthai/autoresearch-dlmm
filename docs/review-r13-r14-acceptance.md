@@ -1,0 +1,11 @@
+# R13/R14 acceptance
+Status: code and offline HTTP test added; actual local RPC acceptance BLOCKED. The browser at 127.0.0.1:8790 showed the old page and Failed to fetch. No control of the user's local terminal is available. Do not report a live pass.
+
+## Order
+1. Sync main without discarding local changes. Confirm git rev-parse HEAD, Node 22, pinned IDL and original SDK tarball. Use the existing RPC environment; do not log credentials.
+2. Run node --test research/live/terminal-http.test.mjs; node research/live/verify-offline.mjs; uv run python -m unittest discover -s tests -p 'test_legacy_fee_units.py'. The HTTP test starts the actual server in an isolated temporary directory with synthetic test fixtures, external capture disabled, and no real funds. It is not real-chain evidence. Report counts and errors; do not silently skip missing SDK.
+3. Identify project-owned listeners on ports 8788 and 8790 with lsof. Restart using the actual config paths and existing private environment; do not kill unrelated services or remove active locks. See docs/codex-live-integration-handoff.md. Expected terminal health version flow-data-v9.
+4. Run node research/live/check-local.mjs, verify market and diagnostic slot/hash match. A local read pass is not complete model/PNL acceptance. Check logs for gaps and source time, not merely HTTP success.
+5. Verify real pool/bin, OHLCV, metadata, wallet observations, A-B-A switching, V1 history, V2 accounting versus pinned SDK, Holder and two reference venues (optional Jupiter key) independently. Review raw evidence and freshness. If no matching markets or RPC unsupported, report blocked.
+6. Archive a matched reviewed snapshot and replay existing strategies only if independently reviewed observation inputs exist. Verify no replay output enters the live review path. Test bounded position cashflow reconciliation against actual finalized receipts; actual PnL requires full coverage, valuation and correct protocol semantics. Do not generate or submit transactions.
+7. Record each gate with exact commit, test output, slots, hashes, pass/fail/blocked. Preserve source archives and reports. Remaining R03–R12 gaps are listed in individual review documents.
