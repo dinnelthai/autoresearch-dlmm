@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "scope": "LOCAL_UNSIGNED_MESSAGE_DIAGNOSTIC",
+  "sdkVersion": "1.9.15",
+  "wallet": "REPLACE_WITH_PUBLIC_WALLET",
+  "position": "REPLACE_WITH_NEW_POSITION_PUBLIC_KEY",
+  "pool": "REPLACE_WITH_POOL",
+  "requestHash": "REPLACE_WITH_RESEARCH_REQUEST_HASH",
+  "marketRawHash": "REPLACE_WITH_MARKET_CAPTURE_HASH",
+  "marketSlot": null,
+  "expectedGenesisHash": "REPLACE_WITH_VERIFIED_GENESIS_HASH",
+  "messageBase64": null,
+  "messageHash": null,
+  "feeCapRaw": null,
+  "minReserveRaw": null
+}
