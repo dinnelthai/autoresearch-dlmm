@@ -283,9 +283,10 @@ $('clearShadow').addEventListener('click',()=>{shadowGeneration++;shadow=null;$(
 let previousTarget=target;
 function handleTargetChange(){if(target!==previousTarget){clearIndexedPool();clearWalletObservation();previousTarget=target;poolEpoch++;put('priceHistoryChart','等待真实价格序列');put('priceHistoryLabel','等待历史行情');resetPositions();applyServiceMarket(null);servicePositions.clear();autoMonitor=null;autoRenderSignature='';renderAutoMonitor();closeResearchReview();if(page==='performance')put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择')}}
 function clearIndexedPool(){put('indexedPairName','MEME / SOL');for(const id of ['indexedTvl','indexedVolume','indexedFees','indexedDynamicFee'])put(id,'—');put('indexedPoolStatus','等待行情')}
+function scopedEndpoint(path,scope){return scope?path+'?pool='+encodeURIComponent(scope):path}
 async function refreshIndexedPool(scope,epoch,m){
  if(!m){clearIndexedPool();return}
- try{const res=await fetch('/api/terminal/pool-info',{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await res.json();
+ try{const res=await fetch(scopedEndpoint('/api/terminal/pool-info',scope),{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await res.json();
   if(!sameScope(epoch,scope,poolEpoch,target))return;
   if(!res.ok)throw Error(a.reason??'POOL_INFO_UNAVAILABLE');
   if(a.pool!==scope||a.scope!=='INDEXED_DISPLAY_ONLY'||a.tokenX?.mint!==m.mintX||a.tokenY?.mint!==m.mintY||!Number.isSafeInteger(a.fetchedAt)||a.fetchedAt>Date.now()||Date.now()-a.fetchedAt>60000)throw Error('索引身份或时效不符');
@@ -295,7 +296,7 @@ async function refreshIndexedPool(scope,epoch,m){
  }catch(e){if(sameScope(epoch,scope,poolEpoch,target)){clearIndexedPool();put('indexedPoolStatus','不可用：'+e.message)}}
 }
 async function refreshPriceHistory(scope,epoch){
- try{const r=await fetch('/api/terminal/price-history',{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await r.json();if(!sameScope(epoch,scope,poolEpoch,target))return;if(!r.ok)throw Error(a.reason??'HISTORY_UNAVAILABLE');
+ try{const r=await fetch(scopedEndpoint('/api/terminal/price-history',scope),{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await r.json();if(!sameScope(epoch,scope,poolEpoch,target))return;if(!r.ok)throw Error(a.reason??'HISTORY_UNAVAILABLE');
   if(a.pool!==scope||a.scope!=='INDEXED_DISPLAY_ONLY'||a.timeframe!=='1h'||a.priceUnit!=='PROVIDER_UNIT_UNVERIFIED'||!Array.isArray(a.candles)||a.candles.length>200||!Number.isSafeInteger(a.fetchedAt)||a.fetchedAt>Date.now()||Date.now()-a.fetchedAt>120000||!a.candles.every(c=>Number.isSafeInteger(c.timestamp)&&[c.open,c.high,c.low,c.close].every(x=>Number.isFinite(x)&&x>0)&&c.low<=Math.min(c.open,c.close)&&c.high>=Math.max(c.open,c.close)))throw Error('行情格式或时效不符');
   if(!a.candles.length){put('priceHistoryChart','该窗口无索引行情记录');put('priceHistoryLabel','Meteora · 1h · 空窗口（不代表零交易）');return}
   const chart=$('priceHistoryChart'),v=a.candles,min=Math.min(...v.map(c=>c.low)),max=Math.max(...v.map(c=>c.high)),span=max-min||max*.001;chart.replaceChildren();
@@ -325,7 +326,7 @@ function renderReport(r,source){
 let serviceMarket=null,servicePool=null,serviceReview=null,refreshing=false,planBusy=false,refreshGeneration=0;
 const servicePositions=new Set();
 function canAnalyze(now=Date.now()){return !!serviceMarket&&serviceMarket.expiresAt>now&&serviceReview?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&serviceReview.expiresAt>now&&target===servicePool}
-function updatePlanButton(){const b=$('generatePlan');b.disabled=planBusy||managementBusy||!canAnalyze();b.setAttribute('aria-busy',String(planBusy));b.textContent=planBusy?'正在分析…':'✦ 生成研究方案';put('generateGate',planBusy?'正在检查请求、快照和研究证据。':canAnalyze()?'证据预检查通过。生成结果仅供研究。':!target?'请先选择目标 Pool。':target!==servicePool?'当前 Pool 尚未匹配本地服务。':!serviceMarket?'等待有效市场快照。':reasonText(serviceReview?.reason??'REVIEW_STALE_OR_INVALID'));}
+function updatePlanButton(){const b=$('generatePlan');b.disabled=planBusy||managementBusy||!canAnalyze();b.setAttribute('aria-busy',String(planBusy));b.textContent=planBusy?'正在分析…':'✦ 生成研究方案';put('generateGate',planBusy?'正在检查请求、快照和研究证据。':canAnalyze()?'证据预检查通过。生成结果仅供研究。':!target?'请先选择目标 Pool。':target!==servicePool?'当前 Pool 尚未匹配本地服务。':!serviceMarket?'等待有效市场快照。':serviceReview?.reason==='POOL_RESEARCH_NOT_CONFIGURED'?'当前池仅支持实时数据观察，尚未配置独立研究证据':reasonText(serviceReview?.reason??'REVIEW_STALE_OR_INVALID'));}
 function renderActualMarket(m){
  const d=m?.display,body=$('actualBinRows');body.replaceChildren();
  put('observedPrice','—');put('actualBinTotals','—');put('actualBinStatus','等待链上快照');
@@ -350,7 +351,7 @@ function clearServicePositions(){for(const id of servicePositions)if(positions.g
 async function refreshService({initial=false}={}){
  if(refreshing)return;refreshing=true;$('refreshState').disabled=true;$('refreshState').setAttribute('aria-busy','true');const g=++refreshGeneration,scope=target,epoch=poolEpoch;
  try{
-  const res=await fetch('/api/terminal/state',{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!res.ok)throw Error('STATE_HTTP_'+res.status);const x=await res.json();
+  const res=await fetch(scopedEndpoint('/api/terminal/state',scope),{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!res.ok)throw Error('STATE_HTTP_'+res.status);const x=await res.json();
   if(g!==refreshGeneration||!sameScope(epoch,scope,poolEpoch,target))return;
   if(!addr(x.pool)||x.decisionReady!==false||x.executionReady!==false)throw Error('状态接口契约不符');
   servicePool=x.pool;
@@ -358,8 +359,8 @@ async function refreshService({initial=false}={}){
   put('serviceStatus',x.market?'本地采集 · 未验收':'本地服务 · 数据阻塞');
   if(target!==x.pool){clearIndexedPool();applyServiceMarket(null);applyMonitoring([]);clearServicePositions();put('captureStatus','此服务配置的 Pool 与当前选择不一致；请修改本地配置或选择该池。');return}
   const m=x.status==='CAPTURED_UNVERIFIED'&&x.market&&hash(x.market.rawHash)&&Number.isSafeInteger(x.market.slot)&&Number.isSafeInteger(x.market.expiresAt)&&x.market.expiresAt>Date.now()?x.market:null;
-  const gate=x.reviewGate?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&hash(x.reviewGate.reviewHash)&&Number.isSafeInteger(x.reviewGate.expiresAt)?x.reviewGate:{status:'BLOCKED',reason:x.reviewGate?.reason??'REVIEW_NOT_CONFIGURED'};applyServiceMarket(m,gate);put('captureStatus',m?'Slot '+m.slot+' · '+m.binCount+' 个 Bin · 本地采集开始时间 '+new Date(m.receivedAt).toLocaleTimeString():'采集不可用：'+reasonText(x.reason??x.gaps?.[0]));
-  put('poolStatus',m?'目标池已匹配本地采集 · 未验收':'目标池已匹配服务配置 · 等待采集');refreshPriceHistory(target,poolEpoch);refreshIndexedPool(target,poolEpoch,m);
+  const gate=x.reviewGate?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&hash(x.reviewGate.reviewHash)&&Number.isSafeInteger(x.reviewGate.expiresAt)?x.reviewGate:{status:'BLOCKED',reason:x.reviewGate?.reason??'REVIEW_NOT_CONFIGURED'};applyServiceMarket(m,gate);put('captureStatus',m?'Slot '+m.slot+' · '+m.binCount+' 个 Bin · 本地采集开始时间 '+new Date(m.receivedAt).toLocaleTimeString():x.reason==='POOL_CAPTURE_PENDING'?'新 Pool 正在采集链上数据':x.reason==='POOL_COLLECTOR_BUSY'?'采集器正在处理另一 Pool，稍后刷新':x.reason==='POOL_CAPTURE_RETRY_COOLDOWN'?'采集暂不可用，等待下一次重试':'采集不可用：'+reasonText(x.reason??x.gaps?.[0]));
+  put('poolStatus',m?(x.scope==='MARKET_PREVIEW_ONLY'?'已切换 Pool · 只读观察':'目标池已匹配本地采集 · 未验收'):'目标池已选择 · 等待采集');refreshPriceHistory(target,poolEpoch);refreshIndexedPool(target,poolEpoch,m);
   const incoming=new Map();let invalidPositions=0;for(const p of x.positions??[]){try{validatePosition(p,target);incoming.set(p.position,p)}catch{invalidPositions++}}
   let changed=false;for(const id of servicePositions)if(!incoming.has(id)&&positions.get(id)?.source==='service'){positions.delete(id);changed=true;}
   servicePositions.clear();
@@ -459,7 +460,7 @@ function renderAutoMonitor(){
 }
 async function refreshAutoMonitor(){
  if(autoMonitorReading)return;autoMonitorReading=true;const scope=target,epoch=poolEpoch;
- try{const res=await fetch('/api/terminal/monitor',{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await res.json();if(!sameScope(epoch,scope,poolEpoch,target))return;if(!res.ok||a.pool!==scope||a.decisionReady!==false||a.executionReady!==false||!Array.isArray(a.events)||!a.current)throw Error('MONITOR_UNAVAILABLE');autoMonitor=a}
+ try{const res=await fetch(scopedEndpoint('/api/terminal/monitor',scope),{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await res.json();if(!sameScope(epoch,scope,poolEpoch,target))return;if(!res.ok||a.pool!==scope||a.decisionReady!==false||a.executionReady!==false||!Array.isArray(a.events)||!a.current)throw Error('MONITOR_UNAVAILABLE');autoMonitor=a}
  catch{if(sameScope(epoch,scope,poolEpoch,target))autoMonitor=null}finally{autoMonitorReading=false;renderAutoMonitor()}
 }
 

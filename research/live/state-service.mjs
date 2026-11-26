@@ -11,9 +11,10 @@ const ROOT=fileURLToPath(new URL('../../',import.meta.url));
 const RAW=resolve(ROOT,'data/raw');
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const key=v=>new PublicKey(v).toBase58();
-const {values}=parseArgs({options:{config:{type:'string'},once:{type:'boolean'},port:{type:'string',default:'8788'},help:{type:'boolean'}}});
-if(values.help){console.log('node research/live/state-service.mjs --config data/live-config.json [--once | --port 8788]');process.exit(0);}
+const {values}=parseArgs({options:{config:{type:'string'},once:{type:'boolean'},'market-only':{type:'boolean'},port:{type:'string',default:'8788'},help:{type:'boolean'}}});
+if(values.help){console.log('node research/live/state-service.mjs --config data/live-config.json [--once [--market-only] | --port 8788]');process.exit(0);}
 assert(values.config,'config required');
+const marketOnly=values['market-only']===true;assert(!marketOnly||values.once===true,'market-only requires --once');
 assert((await stat(values.config)).size<=32768,'config too large');
 const cfg=JSON.parse(await readFile(values.config,'utf8'));
 const pool=key(cfg.pool),positions=(cfg.positions??[]).map(key),references=(cfg.references??[]).map(key);
@@ -27,7 +28,7 @@ const historyRetention=cfg.historyRetention??2000,historyTimeoutSeconds=cfg.hist
 assert(Number.isSafeInteger(historyRetention)&&historyRetention>=historyPages*historyLimit&&historyRetention<=20000,'invalid history retention');
 assert(Number.isSafeInteger(historyTimeoutSeconds)&&historyTimeoutSeconds>=30&&historyTimeoutSeconds<=900,'invalid history timeout');
 const idl=resolve(ROOT,cfg.idl??'data/raw/dlmm-idl.json');
-const dir=join(ROOT,'data','live',pool);await mkdir(dir,{recursive:true,mode:0o700});
+const dir=join(ROOT,'data',marketOnly?'live-preview':'live',pool);await mkdir(dir,{recursive:true,mode:0o700});
 const stateFile=join(dir,'state.json'),lockPath=join(dir,'writer.lock');
 const lock=await open(lockPath,'wx',0o600);
 let state={schemaVersion:1,pool,sequence:0,streams:{},history:{},decisionReady:false,limitations:['Unverified chain observations only; upstream live acceptance not completed.','Separate stream slots are not a common market snapshot.','Polling is not a websocket subscription or proof of continuous history.']};
@@ -144,6 +145,7 @@ try{
  }
  async function cycle(){
   state.sequence++;state.cycleStartedAt=Date.now();state.cycleCompletedAt=null;
+  if(marketOnly){state.streams={market:pendingStream(state.streams.market,Date.now())};state.history={};await persist();await collect('market',market);state.cycleCompletedAt=Date.now();await persist();return;}
   const wanted=new Set(['market',...positions.map(a=>'position:'+a),'history:'+pool,...positions.map(a=>'history:'+a),'references']);for(const k of Object.keys(state.streams))if(!wanted.has(k))delete state.streams[k];
   const batch=historyBatch([pool,...positions],historyCursor,values.once===true);historyCursor=batch.nextCursor;state.historyCursor=historyCursor;
   for(const address of Object.keys(state.history))if(![pool,...positions].includes(address))delete state.history[address];

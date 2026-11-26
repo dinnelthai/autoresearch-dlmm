@@ -16,5 +16,10 @@
     "maxDeviationBps": null,
     "inverseEnabled": false,
     "maxAmountErrorBps": null
+  },
+  "dynamicCapture": {
+    "enabled": true,
+    "provider": "solana-rpc",
+    "idl": "data/raw/dlmm-idl.json"
   }
 }

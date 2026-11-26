@@ -73,3 +73,13 @@ export function marketDisplay(m,limit=1500){
  const rows=bins.sort((a,b)=>Math.abs(a.binId-m.activeId)-Math.abs(b.binId-m.activeId)||a.binId-b.binId).slice(0,limit).sort((a,b)=>a.binId-b.binId);
  return {kind:'POOL_OBSERVATION_ONLY',activeBinPriceSolPerMeme:active?.priceSolPerMeme??null,totalXRaw:x.toString(),totalYRaw:y.toString(),totalBins:bins.length,rows};
 }
+
+/** Only these read-only endpoints accept an explicit pool scope. */
+export function scopedTerminalRequest(raw,defaultPool){
+ assert(typeof raw==='string'&&raw.startsWith('/')&&!raw.startsWith('//'),'INVALID_TERMINAL_PATH');
+ const url=new URL(raw,'http://127.0.0.1'),allowed=new Set(['/api/terminal/state','/api/terminal/pool-info','/api/terminal/price-history','/api/terminal/monitor']);
+ if(!url.search)return {path:url.pathname,pool:defaultPool};
+ assert(allowed.has(url.pathname)&&[...url.searchParams].length===1&&url.searchParams.has('pool'),'INVALID_TERMINAL_SCOPE');
+ const pool=url.searchParams.get('pool');assert(poolAddress(pool),'INVALID_POOL_ADDRESS');
+ return {path:url.pathname,pool};
+}

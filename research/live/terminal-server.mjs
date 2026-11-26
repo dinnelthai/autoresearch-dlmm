@@ -10,7 +10,8 @@ import {allocationDiagnostic} from './allocation-diagnostic.mjs';
 import {sdkWeightDiagnostic} from './sdk-weight-diagnostic.mjs';
 import {validateWalletEvidence,walletReview} from './wallet-evidence-core.mjs';
 import {parseArgs} from 'node:util';
-import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest,marketDisplay} from './terminal-core.mjs';
+import {PublicKey} from '@solana/web3.js';
+import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest,marketDisplay,scopedTerminalRequest} from './terminal-core.mjs';
 import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObservation} from './monitor-core.mjs';
 import {getPriceHistory} from './price-history.mjs';
 import {getPoolInfo,cachedLoader} from './market-api.mjs';
@@ -24,7 +25,49 @@ assert(poolAddress(pool)&&Number.isInteger(port)&&port>=1024&&port<=65535&&Numbe
 const statePath=join(DATA,'live',pool,'state.json'),origin='http://127.0.0.1:'+port;
 async function safeDataPath(path){const root=await realpath(DATA),p=await realpath(resolve(ROOT,path)),rel=relative(root,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'INVALID_DATA_PATH');return p}
 async function boundedRead(path,limit){const h=await open(path,'r');try{const st=await h.stat();assert(st.isFile()&&st.size<=limit,'EVIDENCE_SIZE_EXCEEDED');const bytes=Buffer.alloc(st.size+1);let n=0;while(n<bytes.length){const r=await h.read(bytes,n,bytes.length-n,n);if(!r.bytesRead)break;n+=r.bytesRead;}assert(n===st.size,'EVIDENCE_SIZE_CHANGED');return bytes.subarray(0,n)}finally{await h.close()}}
-async function loadState(){return JSON.parse(await boundedRead(await safeDataPath(statePath),64*1024*1024))}
+async function loadState(scope=pool){
+ const path=scope===pool?statePath:join(DATA,'live-preview',scope,'state.json');
+ return JSON.parse(await boundedRead(await safeDataPath(path),64*1024*1024));
+}
+const previewCfg=cfg.dynamicCapture??{};
+const previewAttempts=new Map();
+let previewJob=null,previewChild=null;
+function validateScope(scope){assert(poolAddress(scope)&&new PublicKey(scope).toBase58()===scope,'INVALID_POOL_ADDRESS');return scope}
+function startPreviewCapture(scope){
+ if(stopping||previewCfg.enabled===false)return 'DISABLED';
+ if(previewJob)return previewJob.pool===scope?'COLLECTING':'COLLECTOR_BUSY';
+ const now=Date.now(),last=previewAttempts.get(scope);
+ if(last!==undefined&&now-last<30000)return 'RETRY_COOLDOWN';
+ previewAttempts.delete(scope);previewAttempts.set(scope,now);while(previewAttempts.size>8)previewAttempts.delete(previewAttempts.keys().next().value);
+ const job={pool:scope};previewJob=job;
+ job.done=(async()=>{
+  const base=join(DATA,'terminal');await mkdir(base,{recursive:true,mode:0o700});
+  const dir=await mkdtemp(join(base,'preview-'));
+  try{
+   const path=join(dir,'config.json');
+   await writeFile(path,JSON.stringify({pool:scope,positions:[],references:[],provider:previewCfg.provider??'solana-rpc',idl:previewCfg.idl??'data/raw/dlmm-idl.json',pollSeconds:60,maxAgeSeconds:180,historyPages:1,historyLimit:1}),{mode:0o600});
+   if(stopping)return;
+   await new Promise((ok,fail)=>{
+    const child=spawn(process.execPath,[join(ROOT,'research/live/state-service.mjs'),'--config',path,'--once','--market-only'],{cwd:ROOT,env:process.env,stdio:'ignore'});
+    previewChild=child;let hard=null;
+    const terminate=()=>{child.kill('SIGTERM');hard=setTimeout(()=>child.kill('SIGKILL'),10000)};
+    const timer=setTimeout(terminate,180000);
+    const cleanup=()=>{clearTimeout(timer);if(hard)clearTimeout(hard);if(previewChild===child)previewChild=null};
+    child.once('error',e=>{cleanup();fail(e)});child.once('close',()=>{cleanup();ok()});
+   });
+  }finally{await rm(dir,{recursive:true,force:true})}
+ })().catch(()=>{}).finally(()=>{if(previewJob===job)previewJob=null});
+ return 'COLLECTING';
+}
+function marketSummary(m){return {slot:m.slot,rawHash:m.rawHash,activeId:m.activeId,binStep:m.binStep,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,decimalsY:m.decimalsY,receivedAt:m.receivedAt,binCount:m.bins.length,expiresAt:m.receivedAt+maxAgeMs,display:marketDisplay(m)}}
+async function scopedOverview(scope){
+ if(scope===pool)return overview();
+ validateScope(scope);
+ let market=null,sequence=null,reason='POOL_CAPTURE_PENDING',collection='IDLE';
+ try{const s=await loadState(scope),now=Date.now();sequence=s.sequence;const m=currentMarket(s,scope,now,maxAgeMs);market=marketSummary(m);if(now-m.receivedAt>=Math.min(60000,maxAgeMs/2))collection=startPreviewCapture(scope)}
+ catch{collection=startPreviewCapture(scope);reason=collection==='DISABLED'?'DYNAMIC_CAPTURE_DISABLED':collection==='COLLECTOR_BUSY'?'POOL_COLLECTOR_BUSY':collection==='RETRY_COOLDOWN'?'POOL_CAPTURE_RETRY_COOLDOWN':'POOL_CAPTURE_PENDING'}
+ return {pool:scope,sequence,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason:market?null:reason,market,collection,reviewGate:{status:'BLOCKED',reason:'POOL_RESEARCH_NOT_CONFIGURED'},positions:[],monitoring:[],streams:{},decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY',scope:'MARKET_PREVIEW_ONLY'};
+}
 const html=await readFile(join(ROOT,'research/live/terminal.html'));
 let busy=false,monitorTimer=null,monitorJob=null,stopping=false,monitorLock=null,monitorLockPath=null,monitorFile=null,monitorCursor=0,monitorError=null,monitorLastCycle=null;
 const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitoring?.intervalSeconds??30;
@@ -59,7 +102,7 @@ async function managementContext(s,m,address,now){
 async function overview(){
  const s=await loadState(),now=Date.now();assert(s.pool===pool&&s.schemaVersion===1&&s.decisionReady===false&&Number.isSafeInteger(s.sequence),'STATE_IDENTITY_MISMATCH');const streams=Object.fromEntries(Object.entries(s.streams??{}).map(([k,v])=>[k,{status:v.status,receivedAt:v.receivedAt??null,locallyFresh:Number.isSafeInteger(v.receivedAt)&&v.receivedAt<=now&&now-v.receivedAt<=maxAgeMs}]));
  const positions=[];for(const [k,v] of Object.entries(s.streams??{})){const p=v.evidence?.report;if(k.startsWith('position:')&&v.status==='CAPTURED_UNVERIFIED'&&streams[k].locallyFresh&&p?.pool===pool&&p.position===k.slice(9)&&p.status==='POSITION_CALCULATED_UNVERIFIED')positions.push(p)}
- let market=null,marketModel=null,reason=null,reviewGate={status:'BLOCKED',reason:'MARKET_UNAVAILABLE'};try{const m=currentMarket(s,pool,now,maxAgeMs);marketModel=m;market={slot:m.slot,rawHash:m.rawHash,activeId:m.activeId,binStep:m.binStep,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,decimalsY:m.decimalsY,receivedAt:m.receivedAt,binCount:m.bins.length,expiresAt:m.receivedAt+maxAgeMs,display:marketDisplay(m)};try{const r=await loadReview(m,now);reviewGate={status:'PREFLIGHT_MATCHED_UNVERIFIED',reviewHash:r.reviewHash,expiresAt:r.expiresAt}}catch(e){reviewGate={status:'BLOCKED',reason:e.message}}}catch(e){reason=e.message}
+ let market=null,marketModel=null,reason=null,reviewGate={status:'BLOCKED',reason:'MARKET_UNAVAILABLE'};try{const m=currentMarket(s,pool,now,maxAgeMs);marketModel=m;market=marketSummary(m);try{const r=await loadReview(m,now);reviewGate={status:'PREFLIGHT_MATCHED_UNVERIFIED',reviewHash:r.reviewHash,expiresAt:r.expiresAt}}catch(e){reviewGate={status:'BLOCKED',reason:e.message}}}catch(e){reason=e.message}
  const monitoring=[];
  const addresses=new Set([...Object.keys(s.streams??{}).filter(k=>k.startsWith('position:')).map(k=>k.slice(9)),...Object.keys(cfg.managementPolicies??{})]);
  for(const address of addresses){
@@ -197,8 +240,8 @@ async function inspectWalletEvidence(body){
 }
 // Public wallet observation is separate from strategy review; no authorization or spendability claim.
 async function observeWallet(body){
- assert(body?.pool===pool&&poolAddress(body.wallet),'WALLET_CAPTURE_ARGUMENTS_INVALID');
- const m=currentMarket(await loadState(),pool,Date.now(),maxAgeMs);
+ assert(poolAddress(body?.pool)&&poolAddress(body.wallet),'WALLET_CAPTURE_ARGUMENTS_INVALID');
+ const scope=validateScope(body.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);
  const genesis='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
  const args=['--wallet',body.wallet,'--mint-x',m.mintX,'--mint-y',m.mintY,'--decimals-x',String(m.decimalsX),'--min-slot',String(m.slot),'--genesis',genesis];
  const e=await run(args,'capture-wallet.mjs');
@@ -207,7 +250,7 @@ async function observeWallet(body){
  const raw=await boundedRead(await safeDataPath(join(e.directory,'rpc.json')),8*1024*1024);
  assert(sha(raw)===e.rawHash,'WALLET_EVIDENCE_HASH_MISMATCH');
  validateWalletEvidence(e,{wallet:body.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now:Date.now()});
- return {pool,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
+ return {pool:scope,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
 const server=createServer(async(req,res)=>{
@@ -215,11 +258,13 @@ const server=createServer(async(req,res)=>{
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
  try{
   if(stopping){send(res,503,blocked('SERVICE_STOPPING'));return}
+  const scoped=req.method==='GET'?scopedTerminalRequest(req.url,pool):{path:req.url,pool};
+  const scope=validateScope(scoped.pool);
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
-  if(req.method==='GET'&&req.url==='/api/terminal/monitor'){send(res,200,publicMonitor());return}
-  if(req.method==='GET'&&req.url==='/api/terminal/pool-info'){try{const m=currentMarket(await loadState(),pool,Date.now(),maxAgeMs);send(res,200,await indexedPool([m.pool,m.mintX,m.mintY,m.decimalsX,m.decimalsY].join(':'),m))}catch(e){send(res,503,{pool,status:'UNAVAILABLE',reason:/^INDEX_[A-Z_]+$/.test(e.message)?e.message:'POOL_INFO_UNAVAILABLE'})}return}
-  if(req.method==='GET'&&req.url==='/api/terminal/price-history'){try{send(res,200,await indexedHistory(pool,pool))}catch(e){send(res,503,{pool,status:'UNAVAILABLE',reason:/^(INDEX|HISTORY|INVALID)_[A-Z_]+$/.test(e.message)?e.message:'HISTORY_UNAVAILABLE'})}return}
-  if(req.method==='GET'&&req.url==='/api/terminal/state'){if(overviewBusy){send(res,409,blocked('STATE_READ_BUSY'));return}overviewBusy=true;try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}finally{overviewBusy=false}return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/monitor'){send(res,200,scope===pool?publicMonitor():{pool:scope,enabled:false,current:{},events:[],decisionReady:false,executionReady:false});return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/pool-info'){try{const m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);send(res,200,await indexedPool([m.pool,m.mintX,m.mintY,m.decimalsX,m.decimalsY].join(':'),m))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^INDEX_[A-Z_]+$/.test(e.message)?e.message:'POOL_INFO_UNAVAILABLE'})}return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/price-history'){try{send(res,200,await indexedHistory(scope,scope))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^(INDEX|HISTORY|INVALID)_[A-Z_]+$/.test(e.message)?e.message:'HISTORY_UNAVAILABLE'})}return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/state'){if(overviewBusy){send(res,409,{...blocked('STATE_READ_BUSY'),pool:scope});return}overviewBusy=true;try{send(res,200,await scopedOverview(scope))}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),pool:scope,market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}finally{overviewBusy=false}return}
   if(req.method==='POST'&&req.url==='/api/terminal/wallet-observation'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(walletEvidenceBusy||reviewBusy){send(res,409,blocked('WALLET_EVIDENCE_BUSY'));return}walletEvidenceBusy=true;
@@ -246,5 +291,5 @@ server.requestTimeout=45000;server.headersTimeout=10000;server.keepAliveTimeout=
 await new Promise((ok,fail)=>{server.once('error',fail);server.listen(port,'127.0.0.1',ok)});
 try{await startMonitor()}catch{monitorError='MONITOR_RECOVERY_OR_LOCK_FAILED'}
 console.log('Read-only Flow Terminal: '+origin);
-async function stop(){if(stopping)return;stopping=true;clearInterval(monitorTimer);server.close();await monitorJob;if(monitorLock){await monitorLock.close();await unlink(monitorLockPath)}}
+async function stop(){if(stopping)return;stopping=true;clearInterval(monitorTimer);server.close();previewChild?.kill('SIGTERM');await previewJob?.done;await monitorJob;if(monitorLock){await monitorLock.close();await unlink(monitorLockPath)}}
 process.once('SIGINT',()=>{stop().catch(()=>{process.exitCode=1})});process.once('SIGTERM',()=>{stop().catch(()=>{process.exitCode=1})});
