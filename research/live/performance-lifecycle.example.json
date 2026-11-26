@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "scope": "CLOSED_POSITION_RETAIN_DISTRIBUTIONS",
+  "ledger": "data/closed-position-ledger.json",
+  "marks": "data/closed-position-marks.json",
+  "maxAgeSeconds": null,
+  "maxSpreadBps": null
+}
