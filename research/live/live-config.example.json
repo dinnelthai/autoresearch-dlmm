@@ -9,5 +9,6 @@
   "pollSeconds": 60,
   "maxAgeSeconds": 180,
   "historyPages": 2,
-  "historyLimit": 20
+  "historyLimit": 20,
+  "includeClock": false
 }
