@@ -18,7 +18,8 @@ export function boundedSwapObservation(stream,pool,now,maxAgeMs){
   else if(e.direction==='X_TO_Y'&&e.swapForY===true){sell+=BigInt(e.amountOutRaw);sellCount++}
   else return null;
  }
- return {scope:'BOUNDED_SAMPLE_ONLY',buyLamports:buy.toString(),sellLamports:sell.toString(),grossLamports:(buy+sell).toString(),buyCount,sellCount,firstEventTime:minTime,lastEventTime:maxTime,eventCount:ids.size,coverageVerified:false,modelFlowEligible:false};
+ const recent=minTime>=Math.floor((now-maxAgeMs)/1000),sampleKind=stream.evidence.repairCapture===true?'HISTORICAL_BACKFILL':recent?'RECENT_EVENT_SAMPLE':'OLDER_EVENT_SAMPLE';
+ return {scope:'BOUNDED_SAMPLE_ONLY',sampleKind,collectionReceivedAt:stream.receivedAt,eventAgeSeconds:Math.floor(now/1000)-maxTime,buyLamports:buy.toString(),sellLamports:sell.toString(),grossLamports:(buy+sell).toString(),buyCount,sellCount,firstEventTime:minTime,lastEventTime:maxTime,eventCount:ids.size,coverageVerified:false,modelFlowEligible:false};
 }
 export function reviewShape(review,m,now){
  if(!review||!m)return {status:'MISSING',observations:0,missing:['REVIEW_ARTIFACT_REQUIRED']};
@@ -51,7 +52,7 @@ export function inputStatus({pool,market=null,history=null,external=null,holder=
  const shape=reviewShape(review,m,now),features=featureProjection(holder,m,now,Math.min(maxAgeMs,180000));
  const tasks=[
   {id:'market',state:m?'OBSERVED':'MISSING',reason:m?'MARKET_CAPTURE_UNVERIFIED':'MARKET_CAPTURE_REQUIRED'},
-  {id:'history',state:sample?'OBSERVED':'MISSING',reason:sample?'BOUNDED_SAMPLE_NOT_WINDOW_COVERAGE':'COMPLETE_DECODED_SAMPLE_REQUIRED'},
+  {id:'history',state:sample?.sampleKind==='RECENT_EVENT_SAMPLE'?'OBSERVED':sample?'HISTORICAL_ONLY':'MISSING',reason:sample?.sampleKind==='HISTORICAL_BACKFILL'?'HISTORY_BACKFILL_NOT_CURRENT_FLOW':sample?.sampleKind==='OLDER_EVENT_SAMPLE'?'EVENT_TIME_OUTSIDE_RECENT_WINDOW':sample?'BOUNDED_SAMPLE_NOT_WINDOW_COVERAGE':'COMPLETE_DECODED_SAMPLE_REQUIRED'},
   {id:'external',state:quote?'OBSERVED':'MISSING',reason:quote?(external.comparison?.status==='TWO_VENUES_OBSERVED_UNVERIFIED'?'TWO_VENUES_OBSERVED_NOT_INDEPENDENTLY_REVIEWED':'ONE_DIRECT_QUOTE_SOURCE_ONLY'):'DIRECT_TWO_SIDED_QUOTE_REQUIRED'},
   {id:'holder',state:features?.distribution?.supplyConserved?'OBSERVED':'REVIEW_REQUIRED',reason:features?.distribution?.supplyConserved?'OWNER_DISTRIBUTION_INCLUDES_VAULTS_NOT_REVIEWED_OUTFLOW':features?.gaps?.[0]??'HOLDER_CONCENTRATION_AND_OUTFLOW_EVIDENCE_REQUIRED'},
   {id:'flow',state:'REVIEW_REQUIRED',reason:'TIME_WINDOW_AND_COVERAGE_EVIDENCE_REQUIRED'},

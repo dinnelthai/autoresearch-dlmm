@@ -8,7 +8,8 @@ import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
 import {mergeHistory,streamHealth,pendingStream,historyBatch} from './state-core.mjs';
 import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
-import {repairPlan,advanceRepair} from './history-repair.mjs';
+import {repairPlan,advanceRepair,failedRepair,historyCoverage} from './history-repair.mjs';
+import {dependencyPlan,sameAccounts} from './account-dependency-plan.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url));
 const RAW=resolve(ROOT,'data/raw');
 const assert=(v,m)=>{if(!v)throw Error(m);};
@@ -36,7 +37,7 @@ const dir=join(ROOT,'data',marketOnly?'live-preview':'live',pool);await mkdir(di
 const stateFile=join(dir,'state.json'),lockPath=join(dir,'writer.lock');
 const lock=await open(lockPath,'wx',0o600);
 let state={schemaVersion:1,pool,sequence:0,streams:{},history:{},decisionReady:false,limitations:['Unverified chain observations only; upstream live acceptance not completed.','Separate stream slots are not a common market snapshot.','Polling is not a websocket subscription or proof of continuous history.']};
-let stopping=false,server=null,historyCursor=0;const children=new Set(),controller=new AbortController();
+let stopping=false,server=null,historyCursor=0,marketHints=[];const positionHints=new Map();const children=new Set(),controller=new AbortController();
 try{
  await lock.writeFile(String(process.pid));
  try{assert((await stat(stateFile)).size<=64*1024*1024,'persisted state exceeds size cap');const old=JSON.parse(await readFile(stateFile,'utf8'));assert(old.pool===pool&&old.schemaVersion===1&&Number.isSafeInteger(old.sequence)&&old.streams&&old.history,'invalid persisted state');state={...old,decisionReady:false};historyCursor=Number.isSafeInteger(old.historyCursor)&&old.historyCursor>=0?old.historyCursor:0;
@@ -69,7 +70,8 @@ try{
  async function inspect(script,p,extra=[]){return (await run('research/live/'+script,['--capture',p,'--idl',idl,...extra])).report;}
  async function market(){
   const clock='SysvarC1ock11111111111111111111111111111111';
-  let required=[...new Set([...positions,...(cfg.includeClock===true?[clock]:[])])],fallback=null;
+  const plan=()=>dependencyPlan({pool,market:marketHints,positions,positionHints,clock:cfg.includeClock===true?clock:null});
+  let required=plan().accounts,fallback=null;
   for(let attempt=0;attempt<5;attempt++){
    const {p,m}=await accounts(required);
    const identity=await inspect('inspect-pool.mjs',p);
@@ -78,23 +80,24 @@ try{
    if(identity.status==='UNSUPPORTED_ENGINE_INPUT')throw Error('unsupported market identity');
    const base=[...new Set([...(identity.requiredAccounts??[]),bins.bitmap,...(bins.expected??[]).map(x=>x.address)].filter(Boolean))].filter(a=>a!==pool);
    const marketReady=identity.status==='IDENTITY_CHECKED_UNVERIFIED'&&bins.status==='BITMAP_COVERAGE_CHECKED_UNVERIFIED';
-   const positionReports={},extra=[];
+   // Refresh discovered addresses, not account contents; old hints may be evicted.
+   if(base.length<=99)marketHints=base;
+   const positionReports={};
    if(marketReady){
     for(const address of positions){
      try{
       const report=await inspect('inspect-position.mjs',p,['--position',address]);
       assert(report.slot===m.contextSlot&&report.rawHash===m.raw.sha256&&report.position===address,'position evidence mismatch');
+      if(Array.isArray(report.requiredAccounts))positionHints.set(address,report.requiredAccounts);
       if(report.status==='POSITION_CALCULATED_UNVERIFIED')positionReports[address]=report;
-      else extra.push(...(report.requiredAccounts??[]));
      }catch{ /* independent position failure does not invent a common snapshot */ }
     }
-    fallback={capture:relative(ROOT,p),slot:m.contextSlot,identity,bins,positionReports};
+    fallback={capture:relative(ROOT,p),slot:m.contextSlot,identity,bins,positionReports,dependencyPlan:{requested:required.length,marketAccounts:marketHints.length,deferred:plan().deferred,positionsMatched:Object.keys(positionReports).length}};
     if(Object.keys(positionReports).length===positions.length||!values.once)return fallback;
    }
-   let next=[...new Set([...required,...base,...extra].filter(a=>a!==pool))];
-   if(next.length>99){if(marketReady)return fallback;next=[...new Set([...base,...(cfg.includeClock===true&&base.length<99?[clock]:[])])];}
-   if(next.length>99)throw Error('market snapshot exceeds one RPC request');
-   if(next.length===required.length&&next.every(a=>required.includes(a))){if(marketReady)return fallback;throw Error('snapshot remains partial or unsupported');}
+   if(base.length>99)throw Error('market snapshot exceeds one RPC request');
+   const next=plan().accounts;
+   if(sameAccounts(next,required)){if(marketReady)return fallback;throw Error('snapshot remains partial or unsupported');}
    if(marketReady&&attempt===4)return fallback;
    required=next;
   }
@@ -105,11 +108,12 @@ try{
   const commonStream=state.streams.market,common=streamHealth(commonStream,Date.now(),maxAge*1000)==='RECENT_UNVERIFIED'?commonStream.evidence:null;
   const shared=common?.positionReports?.[address];
   if(shared?.status==='POSITION_CALCULATED_UNVERIFIED')return {capture:common.capture,slot:common.slot,report:shared,commonMarketCapture:true,commonReceivedAt:commonStream.receivedAt};
-  let required=[address];
+  let required=[...new Set([address,...(positionHints.get(address)??[])])].filter(a=>a!==pool);if(required.length>99)required=[address];
   for(let attempt=0;attempt<3;attempt++){
    const {p,m}=await accounts(required);
    const report=await inspect('inspect-position.mjs',p,['--position',address]);
    assert(report.slot===m.contextSlot&&report.rawHash===m.raw.sha256&&report.position===address,'position evidence mismatch');
+   if(Array.isArray(report.requiredAccounts))positionHints.set(address,report.requiredAccounts);
    if(report.status==='POSITION_CALCULATED_UNVERIFIED')return {capture:relative(ROOT,p),slot:m.contextSlot,report,commonMarketCapture:false};
    const next=[...new Set([...required,...(report.requiredAccounts??[])])];
    assert(next.length>required.length,'position missing or unsupported');required=next;
@@ -121,19 +125,24 @@ try{
   if(address!==pool)args.push('--position',address);
   const previous=state.history[address],turn=(previous?.repairTurn??0)+1,plan=values.once?{repair:false,before:null}:repairPlan(previous,turn);if(plan.before)args.push('--before',plan.before);
   if(previous)state.history[address]={...previous,repairTurn:turn};
-  const r=await run('research/live/capture-swaps.mjs',args,historyTimeoutSeconds*1000),p=await capturePath(r.report.directory),m=await readManifest(p);
+  const failRepair=reason=>{if(plan.repair&&previous)state.history[address]={...state.history[address],repair:failedRepair(previous,plan,reason),repairTurn:turn}};
+  let r,p,m;try{r=await run('research/live/capture-swaps.mjs',args,historyTimeoutSeconds*1000);p=await capturePath(r.report.directory);m=await readManifest(p)}catch(e){failRepair('CAPTURE_FAILED');throw e}
   assert(m.pool===pool&&m.indexAddress===address&&m.position===(address===pool?null:address)&&m.commitment==='finalized'&&Array.isArray(m.signatures)&&m.before===plan.before,'history identity mismatch');
-  if(m.status==='EMPTY_PAGE_OBSERVED_UNVERIFIED'&&m.signatures.length===0&&!m.gaps?.length)return {capture:relative(ROOT,p),historyStatus:'EMPTY_OR_UNAVAILABLE',added:0,overlap:0};
+  if(m.status==='EMPTY_PAGE_OBSERVED_UNVERIFIED'&&m.signatures.length===0&&!m.gaps?.length){failRepair('EMPTY_PAGE');return {capture:relative(ROOT,p),historyStatus:'EMPTY_OR_UNAVAILABLE',repairCapture:plan.repair,repair:state.history[address]?.repair??null,added:0,overlap:0}}
   // Only merge fully captured windows. Partial windows remain archived for later repair.
-  if(m.status!=='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'||m.gaps?.length)return {capture:relative(ROOT,p),historyStatus:'CAPTURE_PARTIAL',signatureCount:m.signatures.length,gapCount:m.gaps?.length??0,gapReasons:[...new Set((m.gaps??[]).map(g=>g.reason))].slice(0,20),added:0,overlap:0};
-  const decoded=await inspect('inspect-swaps.mjs',p);
+  if(m.status!=='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'||m.gaps?.length){failRepair('CAPTURE_PARTIAL');return {capture:relative(ROOT,p),historyStatus:'CAPTURE_PARTIAL',repairCapture:plan.repair,repair:state.history[address]?.repair??null,signatureCount:m.signatures.length,gapCount:m.gaps?.length??0,gapReasons:[...new Set((m.gaps??[]).map(g=>g.reason))].slice(0,20),added:0,overlap:0}}
+  let decoded;try{decoded=await inspect('inspect-swaps.mjs',p)}catch(e){failRepair('DECODE_FAILED');throw e}
   assert(decoded.pool===pool&&decoded.position===(address===pool?null:address)&&Array.isArray(decoded.transactions)&&Array.isArray(decoded.gaps),'history report mismatch');
-  if(decoded.status!=='EVENTS_DECODED_UNVERIFIED'||decoded.gaps.length)return {capture:relative(ROOT,p),historyStatus:'DECODE_PARTIAL',added:0,overlap:0,decoded};
+  if(decoded.status!=='EVENTS_DECODED_UNVERIFIED'||decoded.gaps.length){failRepair('DECODE_PARTIAL');return {capture:relative(ROOT,p),historyStatus:'DECODE_PARTIAL',repairCapture:plan.repair,repair:state.history[address]?.repair??null,added:0,overlap:0,decoded}}
   // Keep evidence, never convert these aggregate events to per-bin fills.
   const merged=mergeHistory(state.history[address],m.signatures.map(s=>({signature:s.signature,slot:s.slot,capture:relative(ROOT,p)})),historyRetention);
   const repair=advanceRepair(previous,m.signatures,m,plan);
-  state.history[address]={...merged,repair,repairTurn:turn};
-  return {capture:relative(ROOT,p),historyStatus:merged.status,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
+  // Keep provider head order separately from slot-sorted retained rows.
+  const headSignatures=plan.repair?previous?.headSignatures??null:m.signatures.map(x=>({signature:x.signature,slot:x.slot}));
+  if(!plan.repair&&previous?.headSignatures?.length&&!previous.headSignatures.some(o=>m.signatures.some(n=>n.signature===o.signature))){merged.gapObserved=true;merged.status='OVERLAP_MISSING'}
+  const coverage=historyCoverage(merged,repair);
+  state.history[address]={...merged,repair,repairTurn:turn,headSignatures,coverage};
+  return {capture:relative(ROOT,p),historyStatus:coverage,historyGapObserved:merged.gapObserved,historyComplete:false,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
  }
  async function reference(){
   assert(references.length>=2,'manual reference pools not configured');
@@ -148,7 +157,7 @@ try{
  async function collect(name,fn){
   const startedAt=Date.now(),before=state.streams[name];
   const superseded=()=>name.startsWith('position:')&&state.streams[name]!==before&&state.streams[name]?.status==='CAPTURED_UNVERIFIED'&&state.streams[name].evidence?.commonMarketCapture===true;
-  try{const evidence=await fn();if(superseded())return;const partial=['OVERLAP_MISSING','DECODE_PARTIAL','EMPTY_OR_UNAVAILABLE','CAPTURE_PARTIAL'].includes(evidence.historyStatus)||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:evidence.commonMarketCapture===true?Math.min(startedAt,evidence.commonReceivedAt):startedAt,completedAt:Date.now(),evidence};}
+  try{const evidence=await fn();if(superseded())return;const partial=['OVERLAP_MISSING','BACKFILL_PENDING','UNRESOLVED_GAP','DECODE_PARTIAL','EMPTY_OR_UNAVAILABLE','CAPTURE_PARTIAL'].includes(evidence.historyStatus)||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:evidence.commonMarketCapture===true?Math.min(startedAt,evidence.commonReceivedAt):startedAt,completedAt:Date.now(),evidence};}
   catch{if(superseded())return;state.streams[name]={status:'BLOCKED',startedAt,receivedAt:Date.now(),reason:'CAPTURE_OR_VALIDATION_FAILED',previousEvidence:state.streams[name]?.evidence??state.streams[name]?.previousEvidence??null};}
   if(name==='market'&&state.streams.market.status==='CAPTURED_UNVERIFIED'){
    const m=state.streams.market;for(const [address,report] of Object.entries(m.evidence.positionReports??{})){

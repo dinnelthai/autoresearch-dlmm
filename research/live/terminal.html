@@ -286,16 +286,19 @@ $('clearShadow').addEventListener('click',()=>{shadowGeneration++;shadow=null;$(
 let previousTarget=target;
 function handleTargetChange(){if(target!==previousTarget){put('historyStreamStatus','等待采集');put('holderFeatureStatus','Holder 未读取');put('researchSnapshotStatus','尚未保存研究快照');$('replaySnapshotId').value='';$('replayRows').replaceChildren();put('replayStatus','先检查当前 Pool 的研究预算及风险参数。');clearModelInputs();clearExternalMarket();clearIndexedPool();clearWalletObservation();clearWalletPositions();previousTarget=target;poolEpoch++;put('priceHistoryChart','等待真实价格序列');put('priceHistoryLabel','等待历史行情');resetPositions();applyServiceMarket(null);servicePositions.clear();autoMonitor=null;autoRenderSignature='';renderAutoMonitor();closeResearchReview();if(page==='performance')put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择')}}
 let holderRequestBusy=false,snapshotRequestBusy=false,replayRequestBusy=false;
-function clearModelInputs(){$('modelInputRows').replaceChildren();put('modelInputStatus','等待当前 Pool 数据');put('modelInputFlow','—');put('holderFeatureFacts','—')}
+let modelInputGeneration=0;
+function clearModelInputs(){modelInputGeneration++;$('modelInputRows').replaceChildren();put('modelInputStatus','等待当前 Pool 数据');put('modelInputFlow','—');put('holderFeatureFacts','—')}
 async function refreshModelInputs(scope,epoch){
- try{const res=await fetch(scopedEndpoint('/api/terminal/input-status',scope),{cache:'no-store',signal:AbortSignal.timeout(10000)}),r=await res.json();if(!sameScope(epoch,scope,poolEpoch,target))return;
+ const g=++modelInputGeneration,m=serviceMarket;
+ try{const res=await fetch(scopedEndpoint('/api/terminal/input-status',scope),{cache:'no-store',signal:AbortSignal.timeout(10000)}),r=await res.json();if(g!==modelInputGeneration||!sameScope(epoch,scope,poolEpoch,target))return;
+ if(serviceMarket!==m||r.marketSlot!==(m?.slot??null)||r.marketRawHash!==(m?.rawHash??null)){clearModelInputs();put('modelInputStatus','行情快照已变化，等待下一轮诊断');return}
  if(!res.ok||r.pool!==scope||r.status!=='DIAGNOSTIC_ONLY'||r.decisionReady!==false||r.executionReady!==false||r.modelInputReady!==false||!Array.isArray(r.tasks)||r.tasks.length>20)throw Error('模型输入诊断不可用');
- const rows=$('modelInputRows'),labels={market:'链上 Pool/Bin',history:'链上 Swap 样本',external:'外部直接报价',holder:'Holder 集中度与流出',flow:'完整窗口资金流',token:'Token 安全证据',review:'独立研究观察'},states={OBSERVED:'已观察 · 未验收',MISSING:'缺失',REVIEW_REQUIRED:'待证据',PREFLIGHT:'结构预检查'};rows.replaceChildren();
+ const rows=$('modelInputRows'),labels={market:'链上 Pool/Bin',history:'链上 Swap 样本',external:'外部直接报价',holder:'Holder 集中度与流出',flow:'完整窗口资金流',token:'Token 安全证据',review:'独立研究观察'},states={OBSERVED:'已观察 · 未验收',HISTORICAL_ONLY:'历史样本 · 非实时',MISSING:'缺失',REVIEW_REQUIRED:'待证据',PREFLIGHT:'结构预检查'};rows.replaceChildren();
  for(const a of r.tasks){const tr=document.createElement('tr');cell(tr,labels[a.id]??a.id);cell(tr,states[a.state]??a.state);cell(tr,a.reason);rows.append(tr)}
  const holder=r.holderFeatures;const dist=holder?.distribution;const pct=n=>Number.isFinite(n)?(n*100).toFixed(2)+'%':'—';put('holderFeatureFacts',holder?'Slot '+holder.slot+' · 账户 '+dist.accountCount+' · 正余额 Owner '+dist.positiveOwnerCount+' · Top '+dist.topN+' '+pct(dist.topShare)+'（含池/托管账户） · 前序 Top 群体净减持 '+pct(holder.cohort?.netDecreaseShare)+'（非卖出量） · Mint/Freeze 权限 '+(holder.safety?.mintAuthorityRevoked?'已撤销':'未撤销')+' / '+(holder.safety?.freezeAuthorityRevoked?'已撤销':'未撤销')+' · '+(holder.gaps?.join('；')||'未独立验收'):'无有效 Holder 观察');
-  const sample=r.swapSample;put('modelInputFlow',sample?'有界样本 '+sample.eventCount+' 个 Swap · 买入 '+exactAmount(sample.buyLamports,9)+' SOL · 卖出 '+exactAmount(sample.sellLamports,9)+' SOL · 非完整窗口':'尚无可展示的完整解码样本');
+  const sample=r.swapSample;put('modelInputFlow',sample?(sample.sampleKind==='HISTORICAL_BACKFILL'?'历史补采':sample.sampleKind==='OLDER_EVENT_SAMPLE'?'旧交易样本':'近期交易样本')+' · '+new Date(sample.firstEventTime*1000).toLocaleString()+' – '+new Date(sample.lastEventTime*1000).toLocaleString()+' · '+sample.eventCount+' 个 Swap · 买入 '+exactAmount(sample.buyLamports,9)+' SOL · 卖出 '+exactAmount(sample.sellLamports,9)+' SOL · 非完整窗口':'尚无可展示的完整解码样本');
  put('modelInputStatus','诊断 · '+r.review.observations+' 条审阅观察 · '+(r.review.missing.length?'缺少证据':'仍需引擎校验'));
- }catch(e){if(sameScope(epoch,scope,poolEpoch,target)){clearModelInputs();put('modelInputStatus','诊断读取失败')}}
+ }catch(e){if(g===modelInputGeneration&&sameScope(epoch,scope,poolEpoch,target)){clearModelInputs();put('modelInputStatus','诊断读取失败')}}
 }
 $('saveResearchSnapshot').addEventListener('click',async()=>{
  if(snapshotRequestBusy||!target||!serviceMarket||serviceMarket.expiresAt<=Date.now()){put('researchSnapshotStatus','需要有效市场快照');return}
@@ -388,7 +391,7 @@ function renderActualMarket(m){
  for(const b of d.rows){const tr=document.createElement('tr');cell(tr,String(b.binId)+(b.binId===m.activeId?' · Active':''));cell(tr,Number.isFinite(b.priceSolPerMeme)&&b.priceSolPerMeme>0?b.priceSolPerMeme.toPrecision(8):'—');cell(tr,exactAmount(b.amountYRaw,9));cell(tr,exactAmount(b.amountXRaw,m.decimalsX));body.append(tr)}
 }
 function applyServiceMarket(m,gate=null){
- if(!m||serviceMarket?.rawHash!==m.rawHash||serviceMarket?.slot!==m.slot)clearExternalMarket();
+ if(!m||serviceMarket?.rawHash!==m.rawHash||serviceMarket?.slot!==m.slot){clearExternalMarket();clearModelInputs()}
  renderActualMarket(m);
  serviceReview=gate;
  if(report?.terminalBinding&&(!m||report.terminalBinding.marketSlot!==m.slot||report.terminalBinding.marketRawHash!==m.rawHash||gate?.reviewHash!==report.terminalBinding.reviewHash||report.terminalBinding.expiresAt<=Date.now())){clearReport();put('generateStatus','市场快照或研究证据已变化，需重新生成。')}
@@ -408,7 +411,7 @@ async function refreshService({initial=false}={}){
   if(initial&&!target&&!$('pool').value){$('pool').value=x.pool;$('poolForm').requestSubmit()}
   put('serviceStatus',x.market?'本地采集 · 未验收':'本地服务 · 数据阻塞');
   if(target!==x.pool){clearIndexedPool();applyServiceMarket(null);applyMonitoring([]);clearServicePositions();put('captureStatus','此服务配置的 Pool 与当前选择不一致；请修改本地配置或选择该池。');return}
-  const hs=x.streams?.['history:'+target];put('historyStreamStatus',hs?hs.status+(hs.historyStatus?' · '+hs.historyStatus:'')+(Number.isSafeInteger(hs.signatureCount)?' · '+hs.signatureCount+' 签名':'')+(Number.isSafeInteger(hs.gapCount)?' · '+hs.gapCount+' 缺口记录':'')+(hs.gapReasons?.length?' · '+hs.gapReasons.join(', '):'')+(hs.locallyFresh?'':' · 已过期或未刷新'):'未配置历史采集');
+  const hs=x.streams?.['history:'+target];put('historyStreamStatus',hs?hs.status+(hs.historyStatus?' · '+hs.historyStatus:'')+(hs.repairStatus?' · '+hs.repairStatus:'')+(hs.repairCapture?' · 历史补采':'')+(Number.isSafeInteger(hs.signatureCount)?' · '+hs.signatureCount+' 签名':'')+(Number.isSafeInteger(hs.gapCount)?' · '+hs.gapCount+' 缺口记录':'')+(hs.gapReasons?.length?' · '+hs.gapReasons.join(', '):'')+(hs.locallyFresh?'':' · 已过期或未刷新'):'未配置历史采集');
   const m=x.status==='CAPTURED_UNVERIFIED'&&x.market&&hash(x.market.rawHash)&&Number.isSafeInteger(x.market.slot)&&Number.isSafeInteger(x.market.expiresAt)&&x.market.expiresAt>Date.now()?x.market:null;
   const gate=x.reviewGate?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&hash(x.reviewGate.reviewHash)&&Number.isSafeInteger(x.reviewGate.expiresAt)?x.reviewGate:{status:'BLOCKED',reason:x.reviewGate?.reason??'REVIEW_NOT_CONFIGURED'};applyServiceMarket(m,gate);put('captureStatus',m?'Slot '+m.slot+' · '+m.binCount+' 个 Bin · 本地采集开始时间 '+new Date(m.receivedAt).toLocaleTimeString():x.reason==='POOL_CAPTURE_PENDING'?'新 Pool 正在采集链上数据':x.reason==='POOL_COLLECTOR_BUSY'?'采集器正在处理另一 Pool，稍后刷新':x.reason==='POOL_CAPTURE_RETRY_COOLDOWN'?'采集暂不可用，等待下一次重试':'采集不可用：'+reasonText(x.reason??x.gaps?.[0]));
   put('poolStatus',m?(x.scope==='MARKET_PREVIEW_ONLY'?'已切换 Pool · 只读观察':'目标池已匹配本地采集 · 未验收'):'目标池已选择 · 等待采集');refreshPriceHistory(target,poolEpoch);refreshIndexedPool(target,poolEpoch,m);refreshModelInputs(target,poolEpoch);if(walletAddress&&target)refreshWalletPositions();
