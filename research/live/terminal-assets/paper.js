@@ -1,0 +1,16 @@
+'use strict';
+// Historical file import only. No live binding, wallet or transaction route.
+const paperModes=['hodl','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid','adaptive'];
+let paperCheckpoint=null,paperGeneration=0;
+function validatePaperCheckpoint(cp){
+ const r=cp?.report;
+ if(cp?.schemaVersion!==1||cp.scope!=='PAPER_RESEARCH_CHECKPOINT'||!hash(cp.checkpointHash)||!hash(cp.configHash)||!hash(cp.backendHash)||!Array.isArray(cp.eventHashes)||!cp.eventHashes.length||cp.eventHashes.length>5000||!cp.eventHashes.every(hash)||r?.schemaVersion!==1||r.scope!=='VIRTUAL_CAPITAL_ONLY'||r.status!=='PAPER_REPLAY_UNVERIFIED'||!addr(r.pool)||!addr(r.mintX)||!addr(r.mintY)||!Number.isSafeInteger(r.start)||!Number.isSafeInteger(r.end)||r.end<=r.start||r.end!==cp.end||!Number.isFinite(r.generatedAt)||!['modelInputReady','decisionReady','executionReady','protocolExact','calibrated','pnlReady','coverageIndependentlyVerified'].every(k=>r[k]===false)||!Array.isArray(r.rows)||r.rows.length!==8||r.rows.some((v,i)=>v.mode!==paperModes[i]||v.actualPnl!==false||!['HYPOTHETICAL_REPLAY','VIRTUAL_INTENT_PENDING','INCONCLUSIVE_MODEL_PATH'].includes(v.status)||!Number.isFinite(v.initialNavSol)||v.initialNavSol<=0||v.initialNavSol!==r.rows[0].initialNavSol||!['virtualNavSol','pnlSol','excessVsHoldSol','feesSol','costSol','maxDrawdown'].every(k=>v[k]===null||Number.isFinite(v[k]))||v.status==='INCONCLUSIVE_MODEL_PATH'&&['virtualNavSol','pnlSol','excessVsHoldSol','feesSol','costSol'].some(k=>v[k]!==null)))throw Error('模拟检查点结构或研究范围不符');
+ return cp;
+}
+function renderPaper(){
+ const r=paperCheckpoint?.report,body=$('paperRows');body.replaceChildren();
+ put('paperPool',r?r.pool.slice(0,8)+'…'+r.pool.slice(-6):'—');put('paperEvents',paperCheckpoint?.eventHashes.length);put('paperEnd',r?new Date(r.end*1000).toLocaleString():'—');put('paperReportState',r?'历史 · 未验证':'未导入');
+ for(const mode of paperModes){const row=r?.rows.find(v=>v.mode===mode),tr=document.createElement('tr');cell(tr,mode==='hodl'?'No LP / HODL':mode==='adaptive'?'Adaptive':names[mode]??mode);cell(tr,row?.status??'—');for(const k of ['initialNavSol','virtualNavSol','pnlSol','excessVsHoldSol','feesSol','costSol'])cell(tr,fmt(row?.[k]));cell(tr,Number.isFinite(row?.maxDrawdown)?fmt(row.maxDrawdown*100)+'%':'—');body.append(tr)}
+}
+$('paperFile').addEventListener('change',async()=>{const g=++paperGeneration;paperCheckpoint=null;renderPaper();try{const file=$('paperFile').files[0];if(!file||file.size>64*1024*1024)throw Error('检查点文件缺失或过大');const cp=validatePaperCheckpoint(JSON.parse(await file.text()));const {checkpointHash,...payload}=cp;const bytes=new TextEncoder().encode(JSON.stringify(payload));const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),n=>n.toString(16).padStart(2,'0')).join('');if(digest!==checkpointHash)throw Error('检查点哈希不匹配');if(g!==paperGeneration)return;paperCheckpoint=cp;renderPaper();put('paperStatus','已导入历史模拟报告，哈希一致；不代表当前行情或独立验证。')}catch(e){if(g===paperGeneration)put('paperStatus','导入失败：'+e.message)}});
+$('clearPaper').addEventListener('click',()=>{paperGeneration++;paperCheckpoint=null;$('paperFile').value='';renderPaper();put('paperStatus','请导入已生成的模拟检查点。')});

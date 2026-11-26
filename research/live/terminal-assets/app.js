@@ -2,7 +2,7 @@
 // Bootstrap only after every controller has loaded and registered its handlers.
 rows();
 syncShape();
-renderPosition();renderShadow();
+renderPosition();renderShadow();renderPaper();
 renderMonitorRows();renderMonitorSelection();renderAutoMonitor();
 setInterval(()=>{if(monitoring.size)applyMonitoring([...monitoring.values()]);if(page==='positions')renderAutoMonitor();},1000);
 refreshService({initial:true}).then(()=>refreshAutoMonitor());setInterval(()=>{refreshService().then(()=>refreshAutoMonitor())},15000);setInterval(()=>{if(report?.terminalBinding&&report.terminalBinding.expiresAt<=Date.now()){clearReport();put('generateStatus','研究证据已过期，请刷新后重新评估。')}if(serviceMarket&&!canAnalyze()){updatePlanButton();$('reviewDot').dataset.ready='false';if(serviceReview?.status==='PREFLIGHT_MATCHED_UNVERIFIED')put('reviewStatus','研究证据或市场快照已过期，请刷新。')}},1000);

@@ -3,7 +3,7 @@ import {opendir,lstat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const DATA=fileURLToPath(new URL('../../data/',import.meta.url));
-const roots=['raw','research-snapshots','research-candidates','research-runs','position-observations','position-accounting','feature-series','research-catalog','position-ledger-index','paper','paper-captures','live','live-preview'];
+const roots=['raw','research-snapshots','research-candidates','research-runs','position-observations','position-accounting','feature-series','research-catalog','position-ledger-index','paper','paper-captures','paper-intervals','live','live-preview'];
 export async function archiveInventory(data=DATA,{maxEntries=50000,maxMs=10000,warningBytes=5*1024**3}={}){
  const start=Date.now();let scanned=0,bytes=0,truncated=false;const groups=[];
  for(const name of roots){
