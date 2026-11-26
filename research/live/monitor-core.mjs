@@ -20,15 +20,18 @@ export function summarizeRisk(report,body,now){
 export function emptyLedger(pool){return {schemaVersion:1,pool,nextId:1,current:{},events:[]}}
 export function recoverLedger(raw,pool){
  assert(raw?.schemaVersion===1&&raw.pool===pool&&Number.isSafeInteger(raw.nextId)&&raw.nextId>0&&Array.isArray(raw.events)&&raw.events.length<=500,'MONITOR_LEDGER_INVALID');
- let prev=0;for(const e of raw.events){assert(Number.isSafeInteger(e.id)&&e.id>prev&&e.id<raw.nextId&&typeof e.position==='string'&&typeof e.status==='string'&&Number.isSafeInteger(e.at),'MONITOR_LEDGER_INVALID');prev=e.id}
+ let prev=0;for(const e of raw.events){assert(Number.isSafeInteger(e.id)&&e.id>prev&&e.id<raw.nextId&&typeof e.position==='string'&&typeof e.status==='string'&&Array.isArray(e.flags)&&e.flags.every(x=>typeof x==='string')&&Number.isSafeInteger(e.at),'MONITOR_LEDGER_INVALID');prev=e.id}
  // Never restore an old observation as current. Historical transitions only.
  return {...emptyLedger(pool),nextId:raw.nextId,events:raw.events};
 }
 export function record(ledger,position,obs,now){
  const previous=ledger.current[position],current={...obs,observedAt:now};
+ // Pending is transient, not a new risk transition. Compare against last settled event.
+ if(obs.status==='PENDING')return {...ledger,current:{...ledger.current,[position]:current}};
+ const settled=previous?.status==='PENDING'?ledger.events.findLast(e=>e.position===position):previous;
  const signature=o=>JSON.stringify([o?.status,o?.reason??null,o?.flags??[]]);
- const changed=signature(previous)!==signature(current);
- const event=changed?{id:ledger.nextId,position,at:now,status:current.status,reason:current.reason??null,flags:current.flags??[],previousStatus:previous?.status??'UNKNOWN',slot:current.slot??null}:null;
+ const changed=signature(settled)!==signature(current);
+ const event=changed?{id:ledger.nextId,position,at:now,status:current.status,reason:current.reason??null,flags:current.flags??[],previousStatus:settled?.status??'UNKNOWN',slot:current.slot??null}:null;
  return {...ledger,nextId:ledger.nextId+(event?1:0),current:{...ledger.current,[position]:current},events:event?[...ledger.events,event].slice(-500):ledger.events};
 }
 export function visibleObservation(o,now){
