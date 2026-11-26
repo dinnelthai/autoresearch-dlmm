@@ -6,9 +6,9 @@ import {PublicKey} from '@solana/web3.js';
 import {deriveBinArray,deriveBinArrayBitmapExtension,getBinArrayLowerUpperBinId} from './sdk-runtime.mjs';
 import {readCapture,PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 import {bitmapIndexes} from './bitmap.mjs';
+import {decodeMarketBin} from './bin-version.mjs';
 const assert=(v,msg)=>{if(!v)throw Error(msg);};
 const key=v=>new PublicKey(v).toBase58();
-const uint=(v,bits)=>{const n=BigInt(v.toString());assert(n>=0n&&n<(1n<<BigInt(bits)),'invalid unsigned raw integer');return n.toString();};
 const int=(v)=>{const n=Number(v.toString());assert(Number.isSafeInteger(n),'invalid integer');return n;};
 async function main(){
  const {values}=parseArgs({options:{capture:{type:'string'},idl:{type:'string'},help:{type:'boolean'}}});
@@ -41,18 +41,18 @@ async function main(){
   if(!accounts.get(e.address))continue;
   const ba=decode(e.address,'BinArray');assert(key(ba.lb_pair)===m.pool,'BinArray pool mismatch');assert(int(ba.index)===e.index,'BinArray index mismatch');assert(Array.isArray(ba.bins)&&ba.bins.length===70,'BinArray layout mismatch');
   const version=int(ba.version);
-  if(version!==3){report.unsupported.push({address:e.address,index:e.index,version,reason:'Bin layout semantics require version-specific validation'});continue;}
+  if(version!==2&&version!==3){report.unsupported.push({address:e.address,index:e.index,version,reason:'Bin layout semantics require version-specific validation'});continue;}
   const [lo,hi]=getBinArrayLowerUpperBinId(new anchor.BN(e.index)).map(int);
   assert(hi-lo===69,'SDK bin bounds mismatch');
   const bins=ba.bins.map((b,i)=>{
-   const row={binId:lo+i,amountXRaw:uint(b.amount_x,64),amountYRaw:uint(b.amount_y,64),priceQ64Raw:uint(b.price,128),liquiditySupplyRaw:uint(b.liquidity_supply,128),feeXPerTokenRaw:uint(b.fee_amount_x_per_token_stored,128),feeYPerTokenRaw:uint(b.fee_amount_y_per_token_stored,128),openOrderAmountRaw:uint(b.open_order_amount,64),totalProcessingOrderAmountRaw:uint(b.total_processing_order_amount,64),processedOrderRemainingAmountRaw:uint(b.processed_order_remaining_amount,64)};
+   const row=decodeMarketBin(b,lo+i,version);
    totalX+=BigInt(row.amountXRaw);totalY+=BigInt(row.amountYRaw);return row;
   });
   report.arrays.push({...e,version,lowerBinId:lo,upperBinId:hi,bins});
  }
  report.coverage={expected:indexes.length,decoded:report.arrays.length,missing:report.missing.length,unsupported:report.unsupported.length};
  report.decodedMmAmountsRaw={x:totalX.toString(),y:totalY.toString()};
- report.limitations.push('Totals sum only decoded MM bin principal, not vault balances, total TVL or executable depth. Limit-order/reward fields must be interpreted by pair function type in later tasks.');
+ report.limitations.push('Totals sum only decoded MM bin principal, not vault balances, total TVL or executable depth. V2 order fields are unknown and not interpreted; reward and order semantics require separate validation.');
  if(!report.missing.length&&!report.unsupported.length)report.status='BITMAP_COVERAGE_CHECKED_UNVERIFIED';
  if(!report.singleCapturePossible)report.limitations.push('More than 98 arrays: current capture CLI cannot archive all in one request; retain partial coverage until an independently validated common-slot reconstruction is available.');
  print();

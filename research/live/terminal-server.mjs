@@ -12,6 +12,7 @@ import {validateWalletEvidence,walletReview} from './wallet-evidence-core.mjs';
 import {parseArgs} from 'node:util';
 import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest} from './terminal-core.mjs';
 import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObservation} from './monitor-core.mjs';
+import {getPriceHistory} from './price-history.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
 if(values.help){console.log('node research/live/terminal-server.mjs --config data/terminal-config.json [--port 8790]');process.exit(0)}
@@ -200,6 +201,7 @@ const server=createServer(async(req,res)=>{
   if(stopping){send(res,503,blocked('SERVICE_STOPPING'));return}
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
   if(req.method==='GET'&&req.url==='/api/terminal/monitor'){send(res,200,publicMonitor());return}
+  if(req.method==='GET'&&req.url==='/api/terminal/price-history'){try{send(res,200,await getPriceHistory(pool))}catch{send(res,503,{pool,status:'UNAVAILABLE',reason:'HISTORY_UNAVAILABLE'})}return}
   if(req.method==='GET'&&req.url==='/api/terminal/state'){if(overviewBusy){send(res,409,blocked('STATE_READ_BUSY'));return}overviewBusy=true;try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}finally{overviewBusy=false}return}
   if(req.method==='POST'&&req.url==='/api/terminal/wallet-evidence'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}

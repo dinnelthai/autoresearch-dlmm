@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {decodeMarketBin} from './bin-version.mjs';
+const b={amount_x:1n,amount_y:2n,price:3n,liquidity_supply:4n,fee_amount_x_per_token_stored:5n,fee_amount_y_per_token_stored:6n,open_order_amount:99n,total_processing_order_amount:98n,processed_order_remaining_amount:97n};
+const legacy=decodeMarketBin(b,-1,2);
+assert.deepEqual([legacy.amountXRaw,legacy.amountYRaw,legacy.priceQ64Raw,legacy.liquiditySupplyRaw,legacy.feeXPerTokenRaw,legacy.feeYPerTokenRaw],['1','2','3','4','5','6']);
+assert.equal(legacy.openOrderAmountRaw,null);
+assert.equal(legacy.totalProcessingOrderAmountRaw,null);
+assert.equal(legacy.processedOrderRemainingAmountRaw,null);
+assert.equal(decodeMarketBin(b,0,3).openOrderAmountRaw,'99');
+assert.throws(()=>decodeMarketBin(b,0,1));
+assert.throws(()=>decodeMarketBin({...b,amount_x:-1n},0,2));

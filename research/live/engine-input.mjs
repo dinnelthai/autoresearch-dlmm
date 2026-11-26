@@ -13,7 +13,7 @@ function extractMarket(state){
  const e=m.evidence,a=e?.identity,b=e?.bins;
  if(!e||!a||!b||a.status!=="IDENTITY_CHECKED_UNVERIFIED"||b.status!=="BITMAP_COVERAGE_CHECKED_UNVERIFIED"||a.pool!==state.pool||b.pool!==state.pool||a.slot!==e.slot||b.slot!==e.slot||a.rawHash!==b.rawHash||! /^[0-9a-f]{64}$/.test(a.rawHash)||a.mintX!==b.mintX||a.mintY!==b.mintY||a.activeId!==b.activeId||a.binStep!==b.binStep||a.orientation!=="MEME_X_SOL_Y"||a.sides?.length!==2||a.sides[0].mint!==a.mintX||a.sides[1].mint!==a.mintY||a.sides[1].decimals!==9)throw Error("market identity or capture mismatch");
  if(!Number.isSafeInteger(e.slot)||e.slot<0||!Number.isInteger(a.binStep)||a.binStep<=0||!Number.isInteger(a.activeId)||!Array.isArray(b.arrays)||b.coverage?.missing!==0||b.coverage?.unsupported!==0||b.coverage?.expected!==b.arrays.length||b.coverage?.decoded!==b.arrays.length)throw Error("incomplete market coverage");
- const bins=b.arrays.flatMap(x=>{if(x.version!==3||x.bins?.length!==70)throw Error("unsupported array");return x.bins;});
+ const bins=b.arrays.flatMap(x=>{if((x.version!==2&&x.version!==3)||x.bins?.length!==70)throw Error("unsupported array");if(x.version===2&&x.bins.some(r=>r.openOrderAmountRaw!==null||r.totalProcessingOrderAmountRaw!==null||r.processedOrderRemainingAmountRaw!==null))throw Error("v2 order semantics unknown");return x.bins;});
  if(new Set(bins.map(x=>x.binId)).size!==bins.length||!bins.every(x=>Number.isInteger(x.binId)))throw Error("invalid bin ids");
  return {capture:e.capture,slot:e.slot,rawHash:a.rawHash,pool:state.pool,mintX:a.mintX,mintY:a.mintY,decimalsX:a.sides[0].decimals,decimalsY:9,binStep:a.binStep,activeId:a.activeId,bins,receivedAt:m.receivedAt};
 }
