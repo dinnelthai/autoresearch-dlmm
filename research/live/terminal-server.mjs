@@ -15,6 +15,7 @@ import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture
 import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObservation} from './monitor-core.mjs';
 import {getPriceHistory} from './price-history.mjs';
 import {getPoolInfo,cachedLoader} from './market-api.mjs';
+import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
 if(values.help){console.log('node research/live/terminal-server.mjs --config data/terminal-config.json [--port 8790]');process.exit(0)}
@@ -74,7 +75,7 @@ const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitorin
 assert(Number.isInteger(monitorSeconds)&&monitorSeconds>=15&&monitorSeconds<=600,'INVALID_MONITOR_INTERVAL');
 let ledger=emptyLedger(pool);
 async function jsonBody(req){assert(req.headers['content-type']?.split(';')[0]==='application/json','JSON_REQUIRED');let size=0,parts=[];for await(const b of req){size+=b.length;assert(size<=32768,'BODY_TOO_LARGE');parts.push(b)}return JSON.parse(Buffer.concat(parts).toString('utf8'))}
-function run(args,script='analyze-state.mjs'){return new Promise((ok,fail)=>{const p=spawn(process.execPath,[join(ROOT,'research/live',script),...args],{cwd:ROOT,stdio:['ignore','pipe','ignore']});let parts=[],size=0,failed=false;const timer=setTimeout(()=>{failed=true;p.kill('SIGKILL')},30000);p.stdout.on('data',b=>{size+=b.length;if(size>8*1024*1024){failed=true;p.kill('SIGKILL')}else parts.push(b)});p.once('error',e=>{clearTimeout(timer);fail(e)});p.once('close',()=>{clearTimeout(timer);try{assert(!failed,'ANALYSIS_TIMEOUT_OR_SIZE');ok(JSON.parse(Buffer.concat(parts).toString('utf8')))}catch(e){fail(e)}})})}
+function run(args,script='analyze-state.mjs',timeout=30000){return new Promise((ok,fail)=>{const p=spawn(process.execPath,[join(ROOT,'research/live',script),...args],{cwd:ROOT,stdio:['ignore','pipe','ignore']});let parts=[],size=0,failed=false;const timer=setTimeout(()=>{failed=true;p.kill('SIGKILL')},timeout);p.stdout.on('data',b=>{size+=b.length;if(size>8*1024*1024){failed=true;p.kill('SIGKILL')}else parts.push(b)});p.once('error',e=>{clearTimeout(timer);fail(e)});p.once('close',()=>{clearTimeout(timer);try{assert(!failed,'ANALYSIS_TIMEOUT_OR_SIZE');ok(JSON.parse(Buffer.concat(parts).toString('utf8')))}catch(e){fail(e)}})})}
 function send(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value))}
 function blocked(reason){return {schemaVersion:1,pool,status:'BLOCKED',decisionReady:false,executionReady:false,gaps:[reason]}}
 // Review availability is a preflight, not verification of its underlying evidence.
@@ -253,6 +254,34 @@ async function observeWallet(body){
  return {pool:scope,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
+let positionReadBusy=false;
+const indexes=new Map();
+async function readPositionIndex(body){
+ const scope=validateScope(body?.pool),wallet=validateScope(body?.wallet),key=scope+':'+wallet,old=indexes.get(key);
+ if(old&&old.expiresAt>Date.now()&&Date.now()-old.receivedAt<30000)return old;
+ const r=await run(['--pool',scope,'--owner',wallet,'--provider',previewCfg.provider??'solana-rpc'],'discover-positions.mjs',40000);
+ assert(r.status==='INDEX_CAPTURED_UNVERIFIED','POSITION_INDEX_RPC_FAILED');
+ const path=await safeDataPath(r.directory),m=JSON.parse(await boundedRead(await safeDataPath(join(path,'manifest.json')),4*1024*1024));
+ const bytes=await boundedRead(await safeDataPath(join(path,'accounts.json')),4*1024*1024);
+ assert(sha(bytes)===m.rawHash&&r.slot===m.slot&&r.count===m.positions?.length,'POSITION_INDEX_HASH_MISMATCH');
+ const x=positionIndex(m,scope,wallet);indexes.delete(key);indexes.set(key,x);while(indexes.size>8)indexes.delete(indexes.keys().next().value);return x;
+}
+async function readPositionDetail(body){
+ const scope=validateScope(body?.pool),wallet=validateScope(body?.wallet),position=validateScope(body?.position),idx=indexes.get(scope+':'+wallet);
+ assert(idx&&idx.expiresAt>Date.now()&&idx.positions.some(p=>p.address===position),'POSITION_INDEX_REFRESH_REQUIRED');
+ let addresses=[position];
+ for(let attempt=0;attempt<3;attempt++){
+  const r=await run(['--pool',scope,'--provider',previewCfg.provider??'solana-rpc',...addresses.flatMap(a=>['--account',a])],'../capture-accounts.mjs',40000);
+  const path=await safeDataPath(r.directory),m=JSON.parse(await boundedRead(await safeDataPath(join(path,'manifest.json')),16*1024*1024));
+  assert(m.pool===scope&&m.commitment==='finalized'&&Number.isSafeInteger(m.contextSlot)&&m.contextSlot>=idx.slot&&m.contextSlot===r.contextSlot&&typeof m.raw?.sha256==='string','POSITION_CAPTURE_CONTEXT_INVALID');
+  const report=await run(['--capture',path,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--position',position,'--owner',wallet],'inspect-position.mjs',15000);
+  assert(report.pool===scope&&report.position===position&&report.slot===m.contextSlot&&report.rawHash===m.raw.sha256,'POSITION_CAPTURE_MISMATCH');
+  if(report.status==='POSITION_CALCULATED_UNVERIFIED'||report.reason==='POSITION_BIN_VERSION_UNSUPPORTED')return positionDetail(report,{pool:scope,wallet,position,slot:m.contextSlot,rawHash:m.raw.sha256});
+  assert(Array.isArray(report.requiredAccounts),'POSITION_DETAIL_UNAVAILABLE');
+  const next=[...new Set([...addresses,...report.requiredAccounts.map(validateScope)])].filter(a=>a!==scope);assert(next.length>addresses.length&&next.length<=99,'POSITION_DETAIL_INCOMPLETE');addresses=next;
+ }
+ throw Error('POSITION_CAPTURE_INCOMPLETE');
+}
 const server=createServer(async(req,res)=>{
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
@@ -265,6 +294,11 @@ const server=createServer(async(req,res)=>{
   if(req.method==='GET'&&scoped.path==='/api/terminal/pool-info'){try{const m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);send(res,200,await indexedPool([m.pool,m.mintX,m.mintY,m.decimalsX,m.decimalsY].join(':'),m))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^INDEX_[A-Z_]+$/.test(e.message)?e.message:'POOL_INFO_UNAVAILABLE'})}return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/price-history'){try{send(res,200,await indexedHistory(scope,scope))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^(INDEX|HISTORY|INVALID)_[A-Z_]+$/.test(e.message)?e.message:'HISTORY_UNAVAILABLE'})}return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/state'){if(overviewBusy){send(res,409,{...blocked('STATE_READ_BUSY'),pool:scope});return}overviewBusy=true;try{send(res,200,await scopedOverview(scope))}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),pool:scope,market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}finally{overviewBusy=false}return}
+  if(req.method==='POST'&&['/api/terminal/wallet-positions','/api/terminal/wallet-position-detail'].includes(req.url)){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   if(positionReadBusy){send(res,409,blocked('POSITION_CAPTURE_BUSY'));return}positionReadBusy=true;
+   try{const body=await jsonBody(req);send(res,200,await (req.url.endsWith('-detail')?readPositionDetail(body):readPositionIndex(body)))}finally{positionReadBusy=false}return
+  }
   if(req.method==='POST'&&req.url==='/api/terminal/wallet-observation'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(walletEvidenceBusy||reviewBusy){send(res,409,blocked('WALLET_EVIDENCE_BUSY'));return}walletEvidenceBusy=true;

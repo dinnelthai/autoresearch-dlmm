@@ -21,8 +21,10 @@ async function main(){
   const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'getProgramAccounts',params}),signal:AbortSignal.timeout(30000),redirect:'error'});
   report.httpStatus=response.status;
   if(!response.ok)throw Error('RPC HTTP failure');
-  const raw=await response.text(),p=JSON.parse(raw);
-  if(p.id!==1||p.jsonrpc!=='2.0'||p.error||!Number.isSafeInteger(p.result?.context?.slot)||!Array.isArray(p.result.value))throw Error('invalid context or response');
+  const reader=response.body?.getReader();if(!reader)throw Error('missing body');let size=0,parts=[];
+  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>4*1024*1024)throw Error('index response cap');parts.push(Buffer.from(value))}}catch(e){await reader.cancel().catch(()=>{});throw e}finally{reader.releaseLock()}
+  const raw=Buffer.concat(parts).toString('utf8'),p=JSON.parse(raw);
+  if(p.id!==1||p.jsonrpc!=='2.0'||p.error||!Number.isSafeInteger(p.result?.context?.slot)||!Array.isArray(p.result.value)||p.result.value.length>5000)throw Error('invalid context or response');
   const seen=new Set();
   for(const v of p.result.value){
    const address=new PublicKey(v.pubkey).toBase58(),a=v.account;

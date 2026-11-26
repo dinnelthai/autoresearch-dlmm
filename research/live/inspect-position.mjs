@@ -49,7 +49,8 @@ async function main(){
  const bins=new Map();
  for(const e of arrayEntries){
   const arr=coder.decode('BinArray',programAccount(e.address).data);
-  assert(key(arr.lb_pair)===m.pool&&Number(arr.index.toString())===e.index&&arr.version===3&&arr.bins.length===70,'unsupported/mismatched BinArray');
+  assert(key(arr.lb_pair)===m.pool&&Number(arr.index.toString())===e.index&&arr.bins.length===70,'unsupported/mismatched BinArray');
+  if(arr.version!==3){report.reason='POSITION_BIN_VERSION_UNSUPPORTED';report.binArrayVersion=arr.version;output();return;}
   const [start,end]=getBinArrayLowerUpperBinId(new anchor.BN(e.index)).map(n=>n.toNumber());assert(end-start===69,'invalid array bounds');
   for(let i=0;i<70;i++)bins.set(start+i,arr.bins[i]);
  }

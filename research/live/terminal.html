@@ -82,7 +82,8 @@ details{padding-top:10px;border-top:1px solid var(--line)}summary{cursor:pointer
  </div>
  <div class="position-layout">
   <div class="stack"><section class="compare"><div class="head"><h2>仓位监控</h2><small>每 15 秒读取采集状态 · 非交易信号</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>数据状态</th><th>价格区间状态</th><th>评估准备状态</th></tr></thead><tbody id="monitorRows"></tbody></table></div><div class="subline">区间外仅表示同源 Active Bin 超出仓位范围，不代表应当撤池。</div></section><section class="compare"><div class="head"><h2>持续风险评估</h2><small id="autoMonitorStatus" role="status">读取服务状态</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>研究风险状态</th><th>压力损失 SOL</th><th>库存比例</th><th>最后评估</th></tr></thead><tbody id="autoMonitorRows"></tbody></table></div><div class="subline" id="autoMonitorDetail">仅显示同源、未过期的研究结果；不执行交易。</div><details class="diagnostics"><summary>风险状态变更历史</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>Position</th><th>状态</th><th>原因 / 标志</th></tr></thead><tbody id="autoMonitorEvents"></tbody></table></div><p class="micro">历史不代表当前风险；服务最多保留最近 500 条状态变更，界面显示最近 100 条。</p></details></section>
-   <section class="compare"><div class="head"><h2>可查看仓位</h2><small>采集快照 / 归档 · 当前目标池</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>来源</th><th>Slot</th><th>Bin 区间</th><th>本金 SOL</th><th>本金 MEME</th><th>查看</th></tr></thead><tbody id="positionRows"></tbody></table></div><div class="subline" id="positionListStatus">尚未导入仓位快照。</div></section>
+   <section class="compare"><div class="head"><h2>钱包 LP 仓位</h2><button type="button" id="refreshWalletPositions" class="ghost">刷新钱包仓位</button></div><p class="micro" id="walletPositionStatus">连接钱包后发现当前池仓位 · 公开地址将发送至配置 RPC</p><div class="table-wrap"><table><thead><tr><th>Position</th><th>状态</th><th>区间</th><th>本金 SOL / MEME</th><th>未领 SOL / MEME</th><th>详情</th></tr></thead><tbody id="walletPositionRows"></tbody></table></div></section>
+<section class="compare"><div class="head"><h2>可查看仓位</h2><small>采集快照 / 归档 · 当前目标池</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>来源</th><th>Slot</th><th>Bin 区间</th><th>本金 SOL</th><th>本金 MEME</th><th>查看</th></tr></thead><tbody id="positionRows"></tbody></table></div><div class="subline" id="positionListStatus">尚未导入仓位快照。</div></section>
    <section class="chartpanel"><div class="head"><h2>仓位逐 Bin 本金分布</h2><small id="posDistributionLabel">本金 · 不含未领取费用</small></div><div id="posChart" class="chart binchart">选择仓位快照</div><details class="bin-details"><summary>逐 Bin 本金与未领取费用</summary><div class="table-wrap"><table><thead><tr><th>Bin</th><th>本金 SOL</th><th>本金 MEME</th><th>费用 SOL</th><th>费用 MEME</th></tr></thead><tbody id="posBinRows"></tbody></table></div></details><div class="subline">同一归档参考价下折算 SOL；不含未领取费用。无匹配参考价时仅显示原始数量。</div><div class="table-wrap"><table><thead><tr><th>资产</th><th>当前本金</th><th>未领取手续费</th><th>历史已领取计数</th></tr></thead><tbody id="posAssets"><tr><td>SOL</td><td>—</td><td>—</td><td>—</td></tr><tr><td>MEME</td><td>—</td><td>—</td><td>—</td></tr></tbody></table></div></section>
    <section class="compare"><div class="head"><h2>管理方案比较</h2><small>模型场景 · 非执行报价</small></div><div class="table-wrap"><table><thead><tr><th>动作</th><th>模型可行 / 总数</th><th>场景 PnL SOL</th><th>压力损失 SOL</th><th>操作成本 SOL</th><th>不可行原因</th><th>查看</th></tr></thead><tbody id="manageRows"></tbody></table></div><div class="subline" id="manageReason">等待 T10 同源仓位分析报告。</div></section>
   </div>
@@ -281,7 +282,7 @@ $('shadowSplit').addEventListener('change',renderShadow);
 $('shadowFile').addEventListener('change',async()=>{const g=++shadowGeneration;shadow=null;renderShadow();try{const r=validateShadow(await readJson($('shadowFile').files[0]));if(g!==shadowGeneration)return;shadow=r;$('shadowSplit').value=r.evaluatedSplit;renderShadow();put('shadowStatus','已导入未验证的研究报告；与当前 Pool 独立。')}catch(e){if(g===shadowGeneration)put('shadowStatus','导入失败：'+e.message)}});
 $('clearShadow').addEventListener('click',()=>{shadowGeneration++;shadow=null;$('shadowFile').value='';renderShadow();put('shadowStatus','尚未导入。')});
 let previousTarget=target;
-function handleTargetChange(){if(target!==previousTarget){clearIndexedPool();clearWalletObservation();previousTarget=target;poolEpoch++;put('priceHistoryChart','等待真实价格序列');put('priceHistoryLabel','等待历史行情');resetPositions();applyServiceMarket(null);servicePositions.clear();autoMonitor=null;autoRenderSignature='';renderAutoMonitor();closeResearchReview();if(page==='performance')put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择')}}
+function handleTargetChange(){if(target!==previousTarget){clearIndexedPool();clearWalletObservation();clearWalletPositions();previousTarget=target;poolEpoch++;put('priceHistoryChart','等待真实价格序列');put('priceHistoryLabel','等待历史行情');resetPositions();applyServiceMarket(null);servicePositions.clear();autoMonitor=null;autoRenderSignature='';renderAutoMonitor();closeResearchReview();if(page==='performance')put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择')}}
 function clearIndexedPool(){put('indexedPairName','MEME / SOL');for(const id of ['indexedTvl','indexedVolume','indexedFees','indexedDynamicFee'])put(id,'—');put('indexedPoolStatus','等待行情')}
 function scopedEndpoint(path,scope){return scope?path+'?pool='+encodeURIComponent(scope):path}
 async function refreshIndexedPool(scope,epoch,m){
@@ -360,7 +361,7 @@ async function refreshService({initial=false}={}){
   if(target!==x.pool){clearIndexedPool();applyServiceMarket(null);applyMonitoring([]);clearServicePositions();put('captureStatus','此服务配置的 Pool 与当前选择不一致；请修改本地配置或选择该池。');return}
   const m=x.status==='CAPTURED_UNVERIFIED'&&x.market&&hash(x.market.rawHash)&&Number.isSafeInteger(x.market.slot)&&Number.isSafeInteger(x.market.expiresAt)&&x.market.expiresAt>Date.now()?x.market:null;
   const gate=x.reviewGate?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&hash(x.reviewGate.reviewHash)&&Number.isSafeInteger(x.reviewGate.expiresAt)?x.reviewGate:{status:'BLOCKED',reason:x.reviewGate?.reason??'REVIEW_NOT_CONFIGURED'};applyServiceMarket(m,gate);put('captureStatus',m?'Slot '+m.slot+' · '+m.binCount+' 个 Bin · 本地采集开始时间 '+new Date(m.receivedAt).toLocaleTimeString():x.reason==='POOL_CAPTURE_PENDING'?'新 Pool 正在采集链上数据':x.reason==='POOL_COLLECTOR_BUSY'?'采集器正在处理另一 Pool，稍后刷新':x.reason==='POOL_CAPTURE_RETRY_COOLDOWN'?'采集暂不可用，等待下一次重试':'采集不可用：'+reasonText(x.reason??x.gaps?.[0]));
-  put('poolStatus',m?(x.scope==='MARKET_PREVIEW_ONLY'?'已切换 Pool · 只读观察':'目标池已匹配本地采集 · 未验收'):'目标池已选择 · 等待采集');refreshPriceHistory(target,poolEpoch);refreshIndexedPool(target,poolEpoch,m);
+  put('poolStatus',m?(x.scope==='MARKET_PREVIEW_ONLY'?'已切换 Pool · 只读观察':'目标池已匹配本地采集 · 未验收'):'目标池已选择 · 等待采集');refreshPriceHistory(target,poolEpoch);refreshIndexedPool(target,poolEpoch,m);if(walletAddress&&target)refreshWalletPositions();
   const incoming=new Map();let invalidPositions=0;for(const p of x.positions??[]){try{validatePosition(p,target);incoming.set(p.position,p)}catch{invalidPositions++}}
   let changed=false;for(const id of servicePositions)if(!incoming.has(id)&&positions.get(id)?.source==='service'){positions.delete(id);changed=true;}
   servicePositions.clear();
@@ -470,14 +471,15 @@ setInterval(()=>{if(monitoring.size)applyMonitoring([...monitoring.values()]);if
 refreshService({initial:true}).then(()=>refreshAutoMonitor());setInterval(()=>{refreshService().then(()=>refreshAutoMonitor())},15000);setInterval(()=>{if(report?.terminalBinding&&report.terminalBinding.expiresAt<=Date.now()){clearReport();put('generateStatus','研究证据已过期，请刷新后重新评估。')}if(serviceMarket&&!canAnalyze()){updatePlanButton();$('reviewDot').dataset.ready='false';if(serviceReview?.status==='PREFLIGHT_MATCHED_UNVERIFIED')put('reviewStatus','研究证据或市场快照已过期，请刷新。')}},1000);
 
 let observationEpoch=0,observationExpiry=0,observationBusy=false;
+let positionReadEpoch=0,walletIndex=null,walletReadBusy=false,lastPositionRead=0,walletDetails=new Map();
 let walletAddress=null,walletProvider=null,walletBusy=false,walletEpoch=0,reviewEpoch=0,activeReview=null,walletEvidenceBusy=false,walletEvidenceResult=null,reviewVerified=false,reviewExpiresAt=0;
 function walletKey(provider){try{const key=provider?.publicKey?.toBase58?.()??provider?.publicKey?.toString?.();return addr(key)?key:null}catch{return null}}
 function closeResearchReview(){reviewEpoch++;activeReview=null;reviewVerified=false;reviewExpiresAt=0;walletEvidenceResult=null;if($('reviewDialog').open)$('reviewDialog').close()}
 function setWallet(value){
- if(walletAddress!==value)clearWalletObservation();
+ if(walletAddress!==value){clearWalletObservation();clearWalletPositions()}
  if(walletAddress!==value){walletEpoch++;closeResearchReview()}
  walletAddress=value;put('walletIdentity',value?value.slice(0,6)+'…'+value.slice(-6):'未连接钱包');$('walletIdentity').title=value??'';
- $('connectWallet').textContent=walletBusy?'连接中…':value?'断开钱包':'连接 Phantom';$('connectWallet').disabled=walletBusy;updateReviewButtons();
+ $('connectWallet').textContent=walletBusy?'连接中…':value?'断开钱包':'连接 Phantom';$('connectWallet').disabled=walletBusy;updateReviewButtons();if(value&&target)refreshWalletPositions();
 }
 $('connectWallet').addEventListener('click',async()=>{
  if(walletBusy)return;walletBusy=true;const prior=walletAddress;setWallet(prior);
@@ -512,6 +514,44 @@ $('observeWallet').addEventListener('click',async()=>{
  finally{observationBusy=false;$('observeWallet').disabled=false}
 });
 setInterval(()=>{if(observationExpiry&&observationExpiry<=Date.now()){clearWalletObservation();put('observedWalletStatus','余额已过期，请重新读取')}if(serviceMarket&&serviceMarket.expiresAt<=Date.now())renderActualMarket(null)},1000);
+function clearWalletPositions(){positionReadEpoch++;walletIndex=null;lastPositionRead=0;walletDetails.clear();$('walletPositionRows').replaceChildren();put('walletPositionStatus','等待当前钱包与 Pool')}
+function renderWalletPositions(){
+ const rows=$('walletPositionRows');rows.replaceChildren();const idx=walletIndex;if(!idx||idx.expiresAt<=Date.now())return;
+ for(const p of idx.positions){const d=walletDetails.get(p.address),snap=d?.snapshot,tr=document.createElement('tr');
+  cell(tr,p.address.slice(0,7)+'…'+p.address.slice(-5)).title=p.address;
+  cell(tr,d?.status==='POSITION_CALCULATED_UNVERIFIED'?'已读取 · 未验收':d?.status==='PARTIAL'?'不支持 BinArray V'+d.binArrayVersion:d?.reason??'已发现');
+  cell(tr,Number.isSafeInteger(d?.lowerBinId)?d.lowerBinId+' 至 '+d.upperBinId:'—');
+  cell(tr,snap?exactAmount(snap.currentPrincipalRaw.y,9)+' / '+exactAmount(snap.currentPrincipalRaw.x,snap.snapshot.decimalsX):'—');
+  cell(tr,snap?exactAmount(snap.pendingFeeRaw.y,9)+' / '+exactAmount(snap.pendingFeeRaw.x,snap.snapshot.decimalsX):'—');
+  const td=cell(tr,''),b=document.createElement('button');b.type='button';b.textContent='读取详情';b.disabled=walletReadBusy;b.addEventListener('click',()=>loadWalletDetail(p.address));td.append(b);rows.append(tr)}
+ if(!idx.positions.length){const tr=document.createElement('tr');cell(tr,'当前 V2 仓位索引未发现匹配记录').colSpan=6;rows.append(tr)}
+}
+async function refreshWalletPositions(force=false){
+ if(!walletAddress||!target||walletReadBusy||!force&&Date.now()-lastPositionRead<30000)return;
+ const e=positionReadEpoch,p=target,w=walletAddress;walletReadBusy=true;lastPositionRead=Date.now();put('walletPositionStatus','查询当前钱包仓位…');
+ try{const res=await fetch('/api/terminal/wallet-positions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pool:p,wallet:w}),signal:AbortSignal.timeout(45000)}),r=await res.json();
+  if(e!==positionReadEpoch||p!==target||w!==walletAddress)return;
+  if(!res.ok)throw Error(r.gaps?.[0]??'POSITION_INDEX_UNAVAILABLE');
+  if(r.status!=='INDEX_CAPTURED_UNVERIFIED'||r.pool!==p||r.wallet!==w||r.decisionReady!==false||r.executionReady!==false||!Number.isSafeInteger(r.slot)||!Number.isSafeInteger(r.expiresAt)||r.expiresAt<=Date.now()||!Array.isArray(r.positions)||r.positions.length>100||!r.positions.every(x=>addr(x.address)&&x.owner===w)||new Set(r.positions.map(x=>x.address)).size!==r.positions.length)throw Error('仓位索引身份或时效无效');
+  walletIndex=r;for(const id of walletDetails.keys())if(!r.positions.some(x=>x.address===id))walletDetails.delete(id);
+  put('walletPositionStatus','发现 '+r.total+' 个 V2 仓位 · Slot '+r.slot+(r.truncated?' · 仅显示前 100 个':'')+' · 索引未验收');
+ }catch(err){if(e===positionReadEpoch){clearWalletPositions();lastPositionRead=Date.now();put('walletPositionStatus','索引读取失败：'+err.message)}}finally{walletReadBusy=false;renderWalletPositions()}
+ if(e===positionReadEpoch&&walletIndex?.positions.length&&!walletDetails.size)loadWalletDetail(walletIndex.positions[0].address);
+}
+async function loadWalletDetail(id){
+ if(walletReadBusy||!walletIndex||walletIndex.expiresAt<=Date.now()||!walletIndex.positions.some(x=>x.address===id))return;
+ const e=positionReadEpoch,p=target,w=walletAddress,slot=walletIndex.slot;walletReadBusy=true;walletDetails.set(id,{reason:'采集中'});renderWalletPositions();
+ try{const res=await fetch('/api/terminal/wallet-position-detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pool:p,wallet:w,position:id}),signal:AbortSignal.timeout(175000)}),r=await res.json();
+  if(e!==positionReadEpoch||p!==target||w!==walletAddress)return;
+  if(!res.ok)throw Error(r.gaps?.[0]??'POSITION_DETAIL_UNAVAILABLE');
+  if(r.pool!==p||r.wallet!==w||r.position!==id||r.decisionReady!==false||r.executionReady!==false||!Number.isSafeInteger(r.slot)||r.slot<slot)throw Error('仓位详情身份无效');
+  if(r.status==='POSITION_CALCULATED_UNVERIFIED'){const snap=validatePosition(r.snapshot,p);if(snap.position!==id||snap.owner!==w||snap.slot!==r.slot)throw Error('仓位快照不符')}
+  else if(r.status!=='PARTIAL'||r.reason!=='POSITION_BIN_VERSION_UNSUPPORTED')throw Error('仓位状态无效');
+  walletDetails.set(id,{...r,readAt:Date.now()});
+ }catch(err){if(e===positionReadEpoch)walletDetails.set(id,{reason:err.message,readAt:Date.now()})}finally{walletReadBusy=false;renderWalletPositions()}
+}
+$('refreshWalletPositions').addEventListener('click',()=>refreshWalletPositions(true));
+setInterval(()=>{if(walletReadBusy)return;let changed=false;for(const [id,d] of walletDetails)if(d.readAt&&Date.now()-d.readAt>120000){walletDetails.delete(id);changed=true}if(walletIndex&&walletIndex.expiresAt<=Date.now()){clearWalletPositions();refreshWalletPositions()}else if(changed)renderWalletPositions()},1000);
 function reviewSelection(mode){
  if(!walletAddress||!serviceMarket)return null;
  if(mode==='plans'){
