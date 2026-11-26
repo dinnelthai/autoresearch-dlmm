@@ -6,7 +6,7 @@ Updated 2026-11-26. This is the only integration backlog. Implement in roadmap o
 |---|---|---|---|
 | I01 | T01 raw Pool capture | BLOCKED: RPC DNS in chat environment | Real finalized RPC response, raw bytes, slot, SHA256, manifest |
 | I02 | T02 SDK/IDL identity and mint/vault decoding | Code draft committed; dependencies and real runtime unverified | Install exact SDK version; validate program owner, token mints, decimals, vault mint/owner and extensions against real accounts |
-| I03 | T03 BinArray/bitmap | Pending implementation | Real pool arrays, coverage, SDK comparison, same-slot or explicitly separate snapshots |
+| I03 | T03 BinArray/bitmap | Code draft committed; SDK install and actual account validation pending | Real pool arrays, coverage, SDK comparison, same-slot or explicitly separate snapshots |
 | I04 | T04 swaps/fees | Pending implementation | Actual getTransaction/getBlock data, event order, raw amounts, fee and vault balance deltas; gaps |
 | I05 | T05 Position ledger | Pending implementation | Public or user-approved read-only positions; shares, principal, fee checkpoints and lifecycle receipts |
 | I06 | T06 reference and exits | Pending implementation | Non-target pools, valid timestamps, depth and read-only executable quotes; missing data must reject decision |
@@ -47,3 +47,17 @@ Replace placeholders with decoded real addresses and capture directories. Verify
  
 ## Business prototype review
 Open docs/prototypes/terminal-v0.html locally in browser. Independent static prototype; tabs and form controls are for review only, no fake prices/positions/returns and no trade execution. Review empty states and layout before editing formal UI. Browser rendering and business acceptance still pending.
+
+## I03 commands — BinArray and bitmap coverage
+Dependencies now additionally pin @meteora-ag/dlmm 1.9.15 (verify published package and helper compatibility with pinned source commit). Install/update lockfile as part of I02.
+```bash
+npm install --prefix research/live
+node research/live/bitmap.test.mjs
+node research/live/inspect-bins.mjs --capture data/raw/accounts-REPLACE --idl data/raw/dlmm-idl.json
+```
+First run returns bitmap PDA if not already captured. Capture pool + bitmap in one request, then run inspector again. Explicit null bitmap is valid absence at that slot; absent from request is unknown. Next output lists expected bitmap-marked BinArray PDAs. Re-capture pool + bitmap + all expected arrays together (up to 98 arrays with current CLI). Re-run inspector on the new capture; membership is recomputed from that snapshot, not previous output. A null optional bitmap can make T01 return PARTIAL; inspect-bins distinguishes null from not requested. Do not treat exit 1 from initial discovery as success.
+```bash
+node research/capture-accounts.mjs --pool POOL --account BITMAP --account ARRAY_1 --account ARRAY_2
+node research/live/inspect-bins.mjs --capture data/raw/accounts-NEW --idl data/raw/dlmm-idl.json
+```
+Replace placeholders with real discovered addresses; include all expected arrays, not just two. Save stdout reports under gitignored data/raw. Compare signed indices/PDA/bounds with SDK, active id, per-bin raw x/y, price Q64, shares and fee growth; check real layout and version 3 semantics. Compare bitmap membership against SDK getBinArrays (may include allocated empty arrays not marked in bitmap); document difference rather than claim all allocated arrays covered. More than 98 arrays or changing membership requires separate collection/reconstruction strategy; no multi-slot merge. Non-v3 arrays remain explicitly unsupported pending protocol evidence. Token-2022/orientation restriction from T02 remains. Verify MM principal separate from protocol fees, reward and limit-order balances; do not treat summed bins as executable depth or full vault reconciliation. Status BITMAP_COVERAGE_CHECKED_UNVERIFIED means internally covered supplied snapshot only, not live Gate A. Pure bitmap boundary checks executed in JS; repository test file and installed SDK CLI not run in chat. No live data or PnL claimed.
