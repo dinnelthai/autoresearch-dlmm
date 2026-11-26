@@ -5,7 +5,7 @@ const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigIn
 const text=v=>v.toString();
 const SCOPE='PAPER_FEE_GROWTH_DIAGNOSTIC_ONLY';
 const limits=['openOrderAmountRaw','totalProcessingOrderAmountRaw','processedOrderRemainingAmountRaw'];
-function snapshotRows(s){
+export function snapshotRows(s){
  const i=s?.identity,b=s?.bins;
  assert(i?.status==='IDENTITY_CHECKED_UNVERIFIED'&&i.orientation==='MEME_X_SOL_Y'&&poolAddress(i.pool)&&poolAddress(i.mintX)&&poolAddress(i.mintY)&&i.mintX!==i.mintY&&Number.isSafeInteger(i.slot)&&i.slot>=0&&hash(i.rawHash)&&i.sdkCommit===K.SDK_COMMIT&&b?.status==='BITMAP_COVERAGE_CHECKED_UNVERIFIED'&&['pool','slot','rawHash','mintX','mintY','binStep','activeId','sdkCommit','idlBlob'].every(k=>i[k]===b[k]),'PAPER_FEE_SNAPSHOT_SCOPE');
  assert(Array.isArray(b.arrays)&&b.arrays.length<=98&&b.coverage?.expected===b.arrays.length&&b.coverage?.decoded===b.arrays.length&&b.coverage?.missing===0&&b.coverage?.unsupported===0,'PAPER_FEE_BIN_COVERAGE');
