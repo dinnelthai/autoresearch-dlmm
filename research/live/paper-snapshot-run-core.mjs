@@ -7,6 +7,7 @@ import {assert,hash,errorCode} from './research-contract.mjs';
 const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits)),'PAPER_SNAPSHOT_RAW_INVALID');return BigInt(v)};
 const s=v=>v.toString(),Q=K.Q;
 export const PAPER_SNAPSHOT_LIMIT=200000;
+export const PAPER_FEE_BASIS='FROZEN_FEE_FLOW_DILUTION_PROXY_V1';
 const RETAINED_POINTS=1000;
 function appendPoint(row,point){const points=[...row.points,point];return {points:points.slice(-RETAINED_POINTS),pointsDropped:(row.pointsDropped??0)+Math.max(0,points.length-RETAINED_POINTS),maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps)}}
 const modes=['NO_LP','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid','adaptive'];
@@ -50,13 +51,14 @@ export function openSnapshotExperiment({id,snapshot,report,budget,policy,backend
    assert(wallet.x>=0n&&wallet.y>=0n&&(!opened||wallet.y>=exitCost),'PAPER_SNAPSHOT_WALLET_OR_EXIT_RESERVE');
    const p=opened?principal(a.map,r.rows):zero();
    const pt=samplePoint({slot:a.i.slot,received:a.received,price:a.price,wallet,principal:p,fees:zero(),initial,hold:initial,peak:initial,cost,status:base.status});
+   if(opened)assert(initial-BigInt(pt.navYRaw)<maxLoss&&pt.drawdownBps<policy.maxDrawdownBps,'PAPER_SNAPSHOT_OPENING_RISK_LIMIT');
    return {...base,points:[pt],pointsDropped:0,maxDrawdownBps:pt.drawdownBps,claimedFeeXRaw:'0',claimedFeeYRaw:'0'};
   }catch(e){return {...base,status:'BLOCKED',reason:errorCode(e,'PAPER_SNAPSHOT_OPEN_FAILED')}}
  });
- return {schemaVersion:1,scope:'PAPER_SNAPSHOT_FIXED_SHARE_ONLY',status:'SNAPSHOT_RESEARCH_UNVERIFIED',id,pool:a.i.pool,mintX:a.i.mintX,mintY:a.i.mintY,decimalsX:a.i.sides[0].decimals,decimalsY:9,frozenAt,backendHash,policy:{...policy,exitCostSolRaw:s(exitCost),maxLossSolRaw:s(maxLoss)},capital:{xRaw:s(capital.x),yRaw:s(capital.y)},opening:{slot:a.i.slot,proof:a.proof},last:{slot:a.i.slot,proof:a.proof},snapshotCount:1,rows,decisionReady:false,executionReady:false,pnlReady:false,protocolExact:false,coverageVerified:false,calibrated:false,limitations:['Observed-share principal and cumulative observed fee entitlement on the external market path; not an added-liquidity counterfactual. No dilution fees or swap replay fees added.','Constant supply at each observed endpoint only; intervening changes, trade paths and execution prices unknown.','Active Bin Q64 mark in raw Y units; not independent reference or executable exit value.','Virtual exits are same-snapshot accounting marks minus declared cost; no actual realized PnL, liquidation guarantee or strategy rebalance.','Initial plan frozen locally; capture timestamps and local archive integrity do not prove independent causal provenance.','Latest 1000 points retained per strategy; lifetime peak, max sampled drawdown and claimed fees retained. Not a complete historical series.']};
+ return {schemaVersion:1,scope:'PAPER_SNAPSHOT_FIXED_SHARE_ONLY',status:'SNAPSHOT_RESEARCH_UNVERIFIED',id,pool:a.i.pool,mintX:a.i.mintX,mintY:a.i.mintY,decimalsX:a.i.sides[0].decimals,decimalsY:9,frozenAt,backendHash,policy:{...policy,exitCostSolRaw:s(exitCost),maxLossSolRaw:s(maxLoss)},capital:{xRaw:s(capital.x),yRaw:s(capital.y)},opening:{slot:a.i.slot,proof:a.proof},last:{slot:a.i.slot,proof:a.proof},snapshotCount:1,feeBasis:PAPER_FEE_BASIS,gapCount:0,rows,decisionReady:false,executionReady:false,pnlReady:false,protocolExact:false,coverageVerified:false,calibrated:false,limitations:['Observed-share principal and cumulative frozen-fee-flow diluted fee estimates; not an added-liquidity counterfactual or a guaranteed lower bound. No undiluted or swap replay fees added.','Constant supply at each observed endpoint only; intervening changes, trade paths and execution prices unknown.','Active Bin Q64 mark in raw Y units; not independent reference or executable exit value.','Virtual exits are same-snapshot accounting marks minus declared cost; no actual realized PnL, liquidation guarantee or strategy rebalance.','Initial plan frozen locally; capture timestamps and local archive integrity do not prove independent causal provenance.','Latest 1000 points retained per strategy; lifetime peak, max sampled drawdown and claimed fees retained. Not a complete historical series.']};
 }
 export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,exit=false,segmentOpenings={}}){
- assert(state?.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.status==='SNAPSHOT_RESEARCH_UNVERIFIED'&&state.backendHash===backendHash&&state.executionReady===false&&state.pnlReady===false&&Number.isSafeInteger(state.snapshotCount)&&state.snapshotCount<PAPER_SNAPSHOT_LIMIT&&Array.isArray(state.rows)&&state.rows.length===8&&state.rows.every((r,i)=>r.mode===modes[i]),'PAPER_SNAPSHOT_CHECKPOINT_SCOPE');
+ assert(state?.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.status==='SNAPSHOT_RESEARCH_UNVERIFIED'&&state.backendHash===backendHash&&state.feeBasis===PAPER_FEE_BASIS&&state.executionReady===false&&state.pnlReady===false&&Number.isSafeInteger(state.snapshotCount)&&state.snapshotCount<PAPER_SNAPSHOT_LIMIT&&Array.isArray(state.rows)&&state.rows.length===8&&state.rows.every((r,i)=>r.mode===modes[i]),'PAPER_SNAPSHOT_CHECKPOINT_SCOPE');
  const a=facts(opening),b=facts(previous),c=facts(snapshot);scope(a,b);scope(b,c);
  assert(state.opening.slot===a.i.slot&&state.opening.proof.manifestHash===a.proof.manifestHash&&state.opening.proof.accountsHash===a.proof.accountsHash&&state.last.slot===b.i.slot&&state.last.proof.manifestHash===b.proof.manifestHash&&state.last.proof.accountsHash===b.proof.accountsHash&&state.pool===c.i.pool&&state.mintX===c.i.mintX&&state.mintY===c.i.mintY,'PAPER_SNAPSHOT_CHECKPOINT_BINDING');
  assert(c.i.slot>b.i.slot&&c.requested>state.frozenAt&&c.requested>=b.received&&c.received<=now,'PAPER_SNAPSHOT_ORDER_OR_LOOKAHEAD');
@@ -76,7 +78,8 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
      assert(x&&y&&z&&x.version===y.version&&y.version===z.version&&x.priceQ64Raw===z.priceQ64Raw&&x.liquiditySupplyRaw===y.liquiditySupplyRaw&&y.liquiditySupplyRaw===z.liquiditySupplyRaw&&raw(z.feeXPerTokenRaw)>=raw(y.feeXPerTokenRaw)&&raw(z.feeYPerTokenRaw)>=raw(y.feeYPerTokenRaw),'PAPER_SNAPSHOT_SUPPLY_OR_GROWTH_CHANGED')}
     p=principal(c.map,r.mapping.rows);
     const fee=estimateFeeGrowth({before:anchor,after:snapshot,allocation:r.mapping.allocation});assert(fee.status==='PAPER_FEE_ESTIMATES_UNVERIFIED','PAPER_SNAPSHOT_FEE_BLOCKED');
-    fees={x:raw(fee.totals.observedXRaw),y:raw(fee.totals.observedYRaw)};
+    assert(fee.totals.dilutedXRaw!==null&&fee.totals.dilutedYRaw!==null,'PAPER_SNAPSHOT_DILUTION_UNAVAILABLE');
+    fees={x:raw(fee.totals.dilutedXRaw),y:raw(fee.totals.dilutedYRaw)};
     const nav=mark(wallet.x+p.x+fees.x,wallet.y+p.y+fees.y,c.price),peak=raw(last.peakYRaw),high=nav>peak?nav:peak;
     const loss=initial-nav,dd=high?(high-nav)*10000n/high:0n;
     if(exit||loss>=raw(state.policy.maxLossSolRaw)||dd>=BigInt(state.policy.maxDrawdownBps)){
@@ -88,7 +91,7 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
    return {...r,status,reason,claimedFeeXRaw:s(claimedX),claimedFeeYRaw:s(claimedY),...appendPoint(r,point)};
   }catch(e){return block(errorCode(e,'PAPER_SNAPSHOT_UPDATE_FAILED'))}
  });
- return {...state,last:{slot:c.i.slot,proof:c.proof},snapshotCount:state.snapshotCount+1,rows};
+ return {...state,last:{slot:c.i.slot,proof:c.proof},snapshotCount:state.snapshotCount+1,gapCount:(state.gapCount??0)+(gap?1:0),rows};
 }
 
 // Apply a reviewed virtual management intent to the current accounting point only.
