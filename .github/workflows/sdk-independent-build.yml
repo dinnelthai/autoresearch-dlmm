@@ -77,14 +77,38 @@ jobs:
           if(!exact)process.exitCode=1;
           JS
       - name: Install unchanged consumer lock and verify project adapter
+        id: consumer-install
         shell: bash
         run: |
           set -euo pipefail
           (cd research/live && npm ci --ignore-scripts --no-audit --no-fund)
           node --test research/live/sdk-runtime.test.mjs
           git diff --exit-code -- research/live/package.json research/live/package-lock.json
+      - name: Record fresh consumer audit without applying fixes
+        id: consumer-audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          (cd research/live && npm audit --omit=dev --ignore-scripts --json) > data/acceptance/sdk-consumer-audit-ci.json
+          rc=$?
+          set -e
+          AUDIT_EXIT="$rc" node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          const audit=JSON.parse(readFileSync('data/acceptance/sdk-consumer-audit-ci.json','utf8'));
+          const valid=!audit.error&&typeof audit.metadata?.vulnerabilities==='object';
+          const result={scope:'DEPENDENCY_AUDIT_ONLY',exitCode:Number(process.env.AUDIT_EXIT),valid,counts:valid?audit.metadata.vulnerabilities:null,advisories:valid?Object.values(audit.vulnerabilities??{}).flatMap(v=>v.via.filter(x=>typeof x==='object').map(x=>({name:x.name,severity:x.severity,source:x.source,url:x.url}))).filter((x,i,a)=>a.findIndex(y=>y.source===x.source)===i):[],securityReviewComplete:false,liveAcceptance:false};
+          writeFileSync('data/acceptance/sdk-consumer-audit-summary.json',JSON.stringify(result,null,2)+'\n');
+          console.log(JSON.stringify(result));
+          if(!valid)process.exitCode=1;
+          JS
+      - name: Run full offline verifier using verified original SDK
+        shell: bash
+        run: |
+          node research/live/verify-offline.mjs
       - name: Verify required direct ESM contract without fallback
         id: direct-esm
+        if: ${{ always() && steps['consumer-install'].outcome == 'success' }}
         working-directory: research/live
         run: |
           node --input-type=module -e 'import DLMM,* as sdk from "@meteora-ag/dlmm"; for(const k of ["createProgram","wrapPosition","getBinArrayIndexesCoverage","deriveBinArray","deriveBinArrayBitmapExtension","getBinArrayLowerUpperBinId","deriveEventAuthority","binIdToBinArrayIndex","toWeightDistribution","toAmountBidSide","toAmountAskSide","toAmountBothSide"]) if(typeof sdk[k]!=="function") throw Error("missing SDK helper "+k); for(const k of ["POSITION_MAX_LENGTH","MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX","DEFAULT_BIN_PER_POSITION"]) if(sdk[k]==null) throw Error("missing SDK constant "+k); if(typeof DLMM?.create!=="function") throw Error("missing DLMM.create"); console.log("Direct ESM exports present; security and protocol acceptance still open")'
@@ -137,6 +161,8 @@ jobs:
           });
           assert.ok(importCount>0&&anchorBindings.some(b=>b.exported==='BN'));
           const candidate='import '+alias+' from "@coral-xyz/anchor";\n'+rewritten;
+          assert.equal(sha(candidate),'e32d73efe8fc2e25da01776f25fd7a980aa2574f54157d82a58fae2cae153b42');
+          assert.equal(importCount,11);assert.equal(anchorBindings.length,13);
           const evidence={scope:'DISPOSABLE_ESM_PATH_AND_ANCHOR_CJS_CANDIDATE_ONLY',originalError:originalError.code,originalSha256:sha(original),pathCandidateSha256:sha(pathCandidate),candidateSha256:sha(candidate),replacementCount:count,anchorImportCount:importCount,anchorBindings,originalArtifactChanged:false,liveAcceptance:false,passed:false};
           const report='../../data/acceptance/sdk-esm-candidate.json';
           writeFileSync(report,JSON.stringify(evidence,null,2)+'\n');
@@ -171,5 +197,7 @@ jobs:
           path: |
             data/acceptance/sdk-independent-build.json
             data/acceptance/sdk-esm-candidate.json
+            data/acceptance/sdk-consumer-audit*.json
+            data/acceptance/offline-*.json
           if-no-files-found: warn
           retention-days: 7
