@@ -33,7 +33,7 @@ async function main(){
  const dep=spawnSync(process.execPath,['--input-type=module','-e',"import('./sdk-runtime.mjs').then(m=>{if(typeof m.wrapPosition!=='function')process.exitCode=1})"],{cwd:join(root,'research/live'),timeout:15000,stdio:'ignore'});
  const endpoints=await Promise.all([get(tp,'/health'),get(cp,'/health'),get(tp,'/api/terminal/state'),get(tp,'/api/terminal/input-status')]);
  // A tick may land between the parallel reads. Retry only the two state views once.
- if(endpoints[2].data?.market&&endpoints[3].data?.marketSlot!==endpoints[2].data.market.slot){[endpoints[2],endpoints[3]]=await Promise.all([get(tp,'/api/terminal/state'),get(tp,'/api/terminal/input-status')])}
+ if(endpoints[2].data?.market&&(endpoints[3].data?.marketSlot!==endpoints[2].data.market.slot||endpoints[3].data?.marketRawHash!==endpoints[2].data.market.rawHash)){[endpoints[2],endpoints[3]]=await Promise.all([get(tp,'/api/terminal/state'),get(tp,'/api/terminal/input-status')])}
  const result=classifyLocal({pool,health:endpoints[0].data,collector:endpoints[1].data,state:endpoints[2].data,input:endpoints[3].data,...hashes});
  const environment=[{id:'node',status:Number(process.versions.node.split('.')[0])>=20?'PASS':'BLOCKED'},{id:'configs-match',status:pool&&lc?.pool===pool?'PASS':'BLOCKED'},{id:'sdk-tarball',status:vendorHash===expectedVendor?'PASS':'BLOCKED'},{id:'sdk-runtime-import',status:dep.status===0?'PASS':'BLOCKED'}];
  const tasks=endpoints[3].data?.tasks;

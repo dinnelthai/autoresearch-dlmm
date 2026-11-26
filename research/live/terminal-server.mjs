@@ -88,7 +88,7 @@ async function scopedOverview(scope){
  return {pool:scope,sequence,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason:market?null:reason,market,collection,reviewGate:{status:'BLOCKED',reason:'POOL_RESEARCH_NOT_CONFIGURED'},positions:[],monitoring:[],streams:{},decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY',scope:configuredPools.has(scope)?'SCOPED_RESEARCH_ONLY':'MARKET_PREVIEW_ONLY'};
 }
 const html=await readFile(join(ROOT,'research/live/terminal.html'));
-const startup={apiVersion:'flow-data-v9',startedAt:Date.now(),htmlHash:sha(html),serverHash:sha(await readFile(fileURLToPath(import.meta.url)))};
+const startup={apiVersion:'flow-data-v10',startedAt:Date.now(),htmlHash:sha(html),serverHash:sha(await readFile(fileURLToPath(import.meta.url)))};
 let busy=false,monitorTimer=null,monitorJob=null,stopping=false,monitorLock=null,monitorLockPath=null,monitorFile=null,monitorCursor=0,monitorError=null,monitorLastCycle=null;
 const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitoring?.intervalSeconds??30;
 assert(Number.isInteger(monitorSeconds)&&monitorSeconds>=15&&monitorSeconds<=600,'INVALID_MONITOR_INTERVAL');
@@ -469,10 +469,12 @@ async function positionAccounting(body){
  const capture=await safeDataPath(raw.directory),mb=await boundedRead(await safeDataPath(join(capture,'manifest.json')),8*1024*1024),cm=JSON.parse(mb);
  assert(cm.pool===scope&&cm.position===position&&cm.indexAddress===position&&cm.commitment==='finalized'&&cm.before===plan.before&&Array.isArray(cm.signatures)&&cm.signatures.length<=10,'POSITION_HISTORY_SCOPE_INVALID');
  const pointer={capture:relative(ROOT,capture),sha256:sha(mb)},next=appendLedgerPage(prior,obs,cm,pointer,plan);
- const sources=new Map(next.pages.map(p=>[p.capture,p.sha256]));sources.set(pointer.capture,pointer.sha256);
+ // Check even pages about to be replaced; otherwise a repeated signature could conceal conflicting evidence.
+ const sources=new Map(prior.pages.map(p=>[p.capture,p.sha256]));for(const p of next.pages)sources.set(p.capture,p.sha256);sources.set(pointer.capture,pointer.sha256);
  const args=[];for(const [path,hash] of sources){const p=await safeDataPath(path);assert(sha(await boundedRead(await safeDataPath(join(p,'manifest.json')),8*1024*1024))===hash,'LEDGER_SOURCE_MANIFEST_CHANGED');args.push('--capture',p)}
  const poolCapture=await safeDataPath(market.capture);
  const ledger=await run([...args,'--pool-capture',poolCapture,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--owner',wallet,'--position',position],'reconcile-position.mjs',120000);
+ assert(!ledger.gaps?.some(g=>['DUPLICATE_EVIDENCE_CONFLICT','BLOCK_ORDER_CONFLICT'].includes(g.reason)),'LEDGER_SOURCE_CONFLICT_INDEX_NOT_ADVANCED');
  // Never treat separately retained but potentially disjoint pages as a clean valuation window.
  const coverage={mode:plan.mode,pages:next.pages.length,gapObserved:next.gapObserved,retentionTruncated:next.retentionTruncated,backfillExhausted:next.backfillExhausted,historyComplete:false};
  if(next.gapObserved||next.retentionTruncated){assert(Array.isArray(ledger.archiveGaps),'LEDGER_ARCHIVE_GAPS_REQUIRED');ledger.archiveGaps.push({reason:next.gapObserved?'INCREMENTAL_HISTORY_GAP_OBSERVED':'INCREMENTAL_RETENTION_TRUNCATED'});ledger.status='PARTIAL_LEDGER'}

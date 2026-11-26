@@ -10,7 +10,8 @@ export function boundedSwapObservation(stream,pool,now,maxAgeMs){
  const d=stream?.evidence?.decoded;
  if(stream?.status!=='CAPTURED_UNVERIFIED'||!fresh(stream.receivedAt,now,maxAgeMs)||d?.pool!==pool||d.position!=null||d.status!=='EVENTS_DECODED_UNVERIFIED'||!Array.isArray(d.gaps)||d.gaps.length||!Array.isArray(d.events)||!d.events.length||d.events.length>20000||!Array.isArray(d.transactions))return null;
  let buy=0n,sell=0n,buyCount=0,sellCount=0,minTime=Infinity,maxTime=-Infinity;
- const txs=new Map(d.transactions.map(t=>[t.signature,t]));const ids=new Set();
+ if(d.transactions.length>20000||d.transactions.some(t=>typeof t?.signature!=='string'||!Number.isSafeInteger(t.slot)||t.slot<0))return null;
+ const txs=new Map(d.transactions.map(t=>[t.signature,t]));if(txs.size!==d.transactions.length)return null;const ids=new Set();
  for(const e of d.events){
   const t=txs.get(e.signature);
   if(e.pool!==pool||typeof e.id!=='string'||ids.has(e.id)||!t||t.success!==true||t.slot!==e.slot||t.blockTime!==e.blockTime||!Number.isSafeInteger(e.blockTime)||e.blockTime<=0||e.blockTime>Math.floor(now/1000)||!positive(e.amountInRaw)||!positive(e.amountOutRaw))return null;

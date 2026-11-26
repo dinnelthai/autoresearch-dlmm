@@ -7,6 +7,7 @@ import anchor from '@coral-xyz/anchor';
 import bs58 from 'bs58';
 import {PublicKey} from '@solana/web3.js';
 import {resolveReadMessage} from './transaction-version.mjs';
+import {verifyIndexPages} from './history-index-evidence.mjs';
 import {PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const sha=b=>createHash('sha256').update(b).digest('hex');
@@ -55,6 +56,13 @@ async function main(){
   const b=await readFile(join(values.capture,file));assert(sha(b)===f.sha256,'evidence hash mismatch');const p=JSON.parse(b);assert(p.jsonrpc==='2.0'&&p.id===f.requestId&&!p.error&&p.result!=null,'invalid evidence payload');return p.result;
  }
  const report={pool:m.pool,sdkCommit:SDK_COMMIT,idlBlob:IDL_BLOB,status:'PARTIAL',position,events:[],positionEvents:[],transactions:[],gaps:[...(m.gaps??[])],limitations:['Supplied evidence only; no live or complete history claim.','CPI events preferred over log mirror; log-only evidence has no instruction path.','Transaction-level vault deltas are observations, not per-swap reconciliation.','No inferred per-bin fill, fee rate units or legacy MM fee.']};
+ // Do not trust the manifest's copied signature list without its actual index pages.
+ try{
+  const pages=[];for(const file of [...files.keys()].filter(k=>k.startsWith('signatures-')).sort((a,b)=>Number(a.slice(11,-5))-Number(b.slice(11,-5)))){
+   const request=files.get(file),rows=await load(file,'getSignaturesForAddress',m.indexAddress);pages.push({file,request,rows});
+  }
+  report.indexEvidence=verifyIndexPages(m,pages);
+ }catch{report.gaps.push({reason:'HISTORY_INDEX_EVIDENCE_INVALID'})}
  const seen=new Set(),blocks=new Map();
  for(const s of m.signatures){
   try{
