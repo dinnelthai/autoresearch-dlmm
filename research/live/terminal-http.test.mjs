@@ -49,7 +49,7 @@ test('real localhost server: stale/missing state, scoped fixture, request guards
   await writeFile(stPath,JSON.stringify(state(pool,Date.now()-200000)));
   const stale=await get('/api/terminal/state');assert.equal(stale.body.status,'BLOCKED');assert.equal(stale.body.market,null);
   const post=(path,body,origin)=>get(path,{method:'POST',headers:{'content-type':'application/json',...(origin?{origin}: {})},body:JSON.stringify(body)});
-  for(const path of ['/api/terminal/plans','/api/terminal/management','/api/terminal/research-snapshot','/api/terminal/research-replay','/api/terminal/position-accounting','/api/terminal/wallet-observation','/api/terminal/holder-features','/api/terminal/external-market','/api/terminal/wallet-positions'])assert.equal((await post(path,{},undefined)).status,403,path);
+  for(const path of ['/api/terminal/plans','/api/terminal/management','/api/terminal/research-snapshot','/api/terminal/research-build','/api/terminal/research-replay','/api/terminal/position-accounting','/api/terminal/wallet-observation','/api/terminal/holder-features','/api/terminal/external-market','/api/terminal/wallet-positions'])assert.equal((await post(path,{},undefined)).status,403,path);
   assert.equal((await post('/api/terminal/research-replay',{pool,snapshotId:'../bad'},base)).status,400);
   assert.equal((await post('/api/terminal/position-accounting',{pool,wallet:key(),position:key()},base)).status,400);
   assert.equal((await post('/api/terminal/research-snapshot',{pool},base)).status,400);

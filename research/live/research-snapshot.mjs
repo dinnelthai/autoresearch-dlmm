@@ -16,6 +16,7 @@ export function snapshotManifest({pool,market,createdAt,files,reviewStatus,diagn
  assert(seen.has('state.json')&&seen.has('capture-manifest.json')&&seen.has('diagnostic.json'),'SNAPSHOT_FILES_REQUIRED');
  assert(diagnostic?.pool===pool&&diagnostic.marketSlot===market.slot&&diagnostic.marketRawHash===market.rawHash&&diagnostic.modelInputReady===false,'SNAPSHOT_DIAGNOSTIC_MISMATCH');
  assert(reviewStatus==='MATCHED_HASHES_UNVERIFIED'?seen.has('review.json'):!seen.has('review.json'),'SNAPSHOT_REVIEW_BINDING_INVALID');
+ snapshotFileList({files,reviewStatus});
  const manifest={schemaVersion:1,scope:'IMMUTABLE_RESEARCH_DIAGNOSTIC',pool,mintX:market.mintX,mintY:market.mintY,marketSlot:market.slot,marketRawHash:market.rawHash,marketCapture:market.capture,createdAt,reviewStatus,files:files.slice().sort((a,b)=>a.name.localeCompare(b.name)),modelInputReady:false,decisionReady:false,executionReady:false};
  return {...manifest,snapshotId:sha(JSON.stringify(manifest))};
 }
