@@ -33,6 +33,7 @@ export function openSnapshotExperiment({id,snapshot,report,budget,policy,backend
  assert(typeof id==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(id)&&hash(backendHash)&&Number.isSafeInteger(frozenAt),'PAPER_SNAPSHOT_EXPERIMENT_ID');
  const a=facts(snapshot);assert(a.received<=frozenAt,'PAPER_SNAPSHOT_OPENING_FUTURE');
  assert(Number.isInteger(policy?.maxDrawdownBps)&&policy.maxDrawdownBps>=1&&policy.maxDrawdownBps<=10000&&Number.isSafeInteger(policy.maxGapSeconds)&&policy.maxGapSeconds>=10&&policy.maxGapSeconds<=3600,'PAPER_SNAPSHOT_RISK_POLICY');
+ assert(frozenAt-a.received<=policy.maxGapSeconds*1000,'PAPER_SNAPSHOT_OPENING_STALE');
  const exitCost=raw(policy.exitCostSolRaw,64),maxLoss=raw(policy.maxLossSolRaw,64);assert(maxLoss>0n,'PAPER_SNAPSHOT_RISK_POLICY');
  const mapping=mapPaperPlans({snapshot,report,budget});assert(mapping.status==='PAPER_SHARE_DIAGNOSTIC_UNVERIFIED','PAPER_SNAPSHOT_MAPPING_BLOCKED');
  const capital={x:raw(budget.memeRaw,64),y:raw(budget.solRaw,64)},initial=mark(capital.x,capital.y,a.price);assert(initial>0n,'PAPER_SNAPSHOT_CAPITAL');
@@ -53,7 +54,7 @@ export function openSnapshotExperiment({id,snapshot,report,budget,policy,backend
 export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,exit=false}){
  assert(state?.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.status==='SNAPSHOT_RESEARCH_UNVERIFIED'&&state.backendHash===backendHash&&state.executionReady===false&&state.pnlReady===false&&Number.isSafeInteger(state.snapshotCount)&&state.snapshotCount<1000&&Array.isArray(state.rows)&&state.rows.length===8&&state.rows.every((r,i)=>r.mode===modes[i]),'PAPER_SNAPSHOT_CHECKPOINT_SCOPE');
  const a=facts(opening),b=facts(previous),c=facts(snapshot);scope(a,b);scope(b,c);
- assert(state.opening.slot===a.i.slot&&state.opening.proof.manifestHash===a.proof.manifestHash&&state.last.slot===b.i.slot&&state.last.proof.manifestHash===b.proof.manifestHash&&state.pool===c.i.pool&&state.mintX===c.i.mintX&&state.mintY===c.i.mintY,'PAPER_SNAPSHOT_CHECKPOINT_BINDING');
+ assert(state.opening.slot===a.i.slot&&state.opening.proof.manifestHash===a.proof.manifestHash&&state.opening.proof.accountsHash===a.proof.accountsHash&&state.last.slot===b.i.slot&&state.last.proof.manifestHash===b.proof.manifestHash&&state.last.proof.accountsHash===b.proof.accountsHash&&state.pool===c.i.pool&&state.mintX===c.i.mintX&&state.mintY===c.i.mintY,'PAPER_SNAPSHOT_CHECKPOINT_BINDING');
  assert(c.i.slot>b.i.slot&&c.requested>state.frozenAt&&c.requested>=b.received&&c.received<=now,'PAPER_SNAPSHOT_ORDER_OR_LOOKAHEAD');
  const gap=c.received-b.received>state.policy.maxGapSeconds*1000;
  const initial=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),a.price),hold=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),c.price);
