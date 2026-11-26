@@ -25,6 +25,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
  if(!activeOk)result.alerts.push('REFERENCE_AND_ACTIVE_BIN_MISMATCH');
  const known=new Set((market.bins??[]).map(b=>b.binId));
  const scenarios=Engine.forecast(s,cfg);
+ const evaluated=new Map();
  const actions=Engine.candidatePlans(s,cfg,'adaptive').filter(a=>['HOLD','REDUCE','REMOVE_AND_HOLD','REPOSITION'].includes(a.type)&&!a.acquireSol);
  for(const action of actions){
   const row={action,feasible:false,score:null,reason:null,scenarioEstimates:null,allocation:null,postRisk:null,inventoryAfterAction:null};
@@ -49,11 +50,14 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
    const v=Engine.evaluate(s,cfg,action,scenarios);
    if(!v.feasible)throw Error(v.reason??'MODEL_INFEASIBLE');
    if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
-   row.feasible=true;row.score=v.utility;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};
+   evaluated.set(row,v);
+   row.feasible=true;row.score=v.utility;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};
   }catch(e){row.reason=String(e.message).slice(0,180);}
   result.candidates.push(row);
  }
  const hold=result.candidates.find(r=>r.action.type==='HOLD');
+ for(const row of result.candidates){if(!row.feasible||row===hold)continue;row.holdComparison=Engine.compareWithHold(evaluated.get(row),evaluated.get(hold),cfg);if(row.action.type==='REPOSITION'&&!row.holdComparison.eligible){row.feasible=false;row.reason='REPOSITION_NET_ADVANTAGE_NOT_ESTABLISHED';}}
+ result.costBasis='DECLARED_LOGICAL_OPERATION_AGGREGATE_ALREADY_IN_NET_NAV';
  const protective=result.candidates.filter(r=>r.feasible&&['REDUCE','REMOVE_AND_HOLD'].includes(r.action.type));
  const hardRisk=risk.violations.length>0||!marketOk;
  if(hardRisk){
@@ -67,6 +71,6 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
   result.reason=result.selected===hold?'HOLD_BASELINE_OR_UNCERTAINTY_MARGIN':'RESEARCH_SCENARIO_IMPROVEMENT';
  }else result.reason='HOLD_BASELINE_UNAVAILABLE';
  result.status='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED';
- result.limitations=['Path CVaR measures maximum loss from initial NAV on sampled scenarios; path breach diagnostics do not imply execution approval.','Withdrawal retains token exposure; no disposal or implicit spot trades.','Counters are supplied reviewed metadata, not independently reconciled history.','Lock/fee rights, costs, realized PnL, Markout, protocol rounding and live feasibility not verified.','No live recommendations or transaction amounts.'];
+ result.limitations=['Reposition must exceed matched HOLD net PnL and utility margin; modeled cost is a declared aggregate already subtracted from NAV, not verified per-instruction fees or migration costs.','Path CVaR measures maximum loss from initial NAV on sampled scenarios; path breach diagnostics do not imply execution approval.','Withdrawal retains token exposure; no disposal or implicit spot trades.','Counters are supplied reviewed metadata, not independently reconciled history.','Lock/fee rights, costs, realized PnL, Markout, protocol rounding and live feasibility not verified.','No live recommendations or transaction amounts.'];
  return result;
 }
