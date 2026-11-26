@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {buildReview} from './review-core.mjs';
+import {validateWalletEvidence,walletReview} from './wallet-evidence-core.mjs';
 import {parseArgs} from 'node:util';
 import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest} from './terminal-core.mjs';
 import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObservation} from './monitor-core.mjs';
@@ -25,7 +26,7 @@ const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitorin
 assert(Number.isInteger(monitorSeconds)&&monitorSeconds>=15&&monitorSeconds<=600,'INVALID_MONITOR_INTERVAL');
 let ledger=emptyLedger(pool);
 async function jsonBody(req){assert(req.headers['content-type']?.split(';')[0]==='application/json','JSON_REQUIRED');let size=0,parts=[];for await(const b of req){size+=b.length;assert(size<=32768,'BODY_TOO_LARGE');parts.push(b)}return JSON.parse(Buffer.concat(parts).toString('utf8'))}
-function run(args){return new Promise((ok,fail)=>{const p=spawn(process.execPath,[join(ROOT,'research/live/analyze-state.mjs'),...args],{cwd:ROOT,stdio:['ignore','pipe','ignore']});let parts=[],size=0,failed=false;const timer=setTimeout(()=>{failed=true;p.kill('SIGKILL')},30000);p.stdout.on('data',b=>{size+=b.length;if(size>8*1024*1024){failed=true;p.kill('SIGKILL')}else parts.push(b)});p.once('error',e=>{clearTimeout(timer);fail(e)});p.once('close',()=>{clearTimeout(timer);try{assert(!failed,'ANALYSIS_TIMEOUT_OR_SIZE');ok(JSON.parse(Buffer.concat(parts).toString('utf8')))}catch(e){fail(e)}})})}
+function run(args,script='analyze-state.mjs'){return new Promise((ok,fail)=>{const p=spawn(process.execPath,[join(ROOT,'research/live',script),...args],{cwd:ROOT,stdio:['ignore','pipe','ignore']});let parts=[],size=0,failed=false;const timer=setTimeout(()=>{failed=true;p.kill('SIGKILL')},30000);p.stdout.on('data',b=>{size+=b.length;if(size>8*1024*1024){failed=true;p.kill('SIGKILL')}else parts.push(b)});p.once('error',e=>{clearTimeout(timer);fail(e)});p.once('close',()=>{clearTimeout(timer);try{assert(!failed,'ANALYSIS_TIMEOUT_OR_SIZE');ok(JSON.parse(Buffer.concat(parts).toString('utf8')))}catch(e){fail(e)}})})}
 function send(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value))}
 function blocked(reason){return {schemaVersion:1,pool,status:'BLOCKED',decisionReady:false,executionReady:false,gaps:[reason]}}
 // Review availability is a preflight, not verification of its underlying evidence.
@@ -152,6 +153,7 @@ function rememberReport(r,mode){
  const id=randomUUID();while(reviewReports.size>=16)reviewReports.delete(reviewReports.keys().next().value);
  reviewReports.set(id,{report:r,mode});return {...r,reviewId:id};
 }
+let walletEvidenceBusy=false;
 async function inspectReview(body){
  const saved=reviewReports.get(body?.reviewId);assert(saved&&saved.mode===body.mode,'RESEARCH_REPORT_UNAVAILABLE');
  const r=saved.report,b=r.terminalBinding,now=Date.now(),s=await loadState(),m=currentMarket(s,pool,now,maxAgeMs);
@@ -160,6 +162,20 @@ async function inspectReview(body){
  assert(b.expiresAt>now&&m.receivedAt+maxAgeMs>now,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
  return buildReview({report:r,mode:saved.mode,rowIndex:body.rowIndex,wallet:body.wallet,market:m,position:ctx?.p.report,reviewHash:review.reviewHash,policyHash:ctx?.policyHash,now:Date.now()});
 }
+async function inspectWalletEvidence(body){
+ assert(cfg.walletEvidence?.enabled===true,'WALLET_EVIDENCE_DISABLED');
+ const genesis=cfg.walletEvidence.expectedGenesisHash;
+ assert(typeof genesis==='string'&&/^[1-9A-HJ-NP-Za-km-z]{20,64}$/.test(genesis),'WALLET_EXPECTED_GENESIS_REQUIRED');
+ const before=await inspectReview(body),m=currentMarket(await loadState(),pool,Date.now(),maxAgeMs);
+ assert(m.slot===before.marketSlot&&before.expiresAt>Date.now(),'RESEARCH_MARKET_CHANGED');
+ const args=['--wallet',before.wallet,'--mint-x',m.mintX,'--mint-y',m.mintY,'--decimals-x',String(m.decimalsX),'--min-slot',String(m.slot),'--genesis',genesis];
+ const e=await run(args,'capture-wallet.mjs');
+ if(e.status==='BLOCKED')throw Error(e.reason??'WALLET_CAPTURE_FAILED');
+ validateWalletEvidence(e,{wallet:before.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now:Date.now()});
+ const after=await inspectReview(body);assert(after.requestHash===before.requestHash&&after.wallet===before.wallet&&after.marketSlot===before.marketSlot,'RESEARCH_MARKET_CHANGED');
+ const raw=await readFile(await safeDataPath(join(e.directory,'rpc.json')));assert(sha(raw)===e.rawHash,'WALLET_EVIDENCE_HASH_MISMATCH');
+ return walletReview(e,after);
+}
 const server=createServer(async(req,res)=>{
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
@@ -167,6 +183,11 @@ const server=createServer(async(req,res)=>{
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
   if(req.method==='GET'&&req.url==='/api/terminal/monitor'){send(res,200,publicMonitor());return}
   if(req.method==='GET'&&req.url==='/api/terminal/state'){try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}return}
+  if(req.method==='POST'&&req.url==='/api/terminal/wallet-evidence'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   if(walletEvidenceBusy){send(res,409,blocked('WALLET_EVIDENCE_BUSY'));return}walletEvidenceBusy=true;
+   try{send(res,200,await inspectWalletEvidence(await jsonBody(req)))}finally{walletEvidenceBusy=false}return
+  }
   if(req.method==='POST'&&req.url==='/api/terminal/review'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    send(res,200,await inspectReview(await jsonBody(req)));return
