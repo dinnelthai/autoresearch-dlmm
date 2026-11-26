@@ -4,7 +4,7 @@ import {rawHuman} from './engine-input.mjs';
 import {snapshotRows} from './paper-fee-core.mjs';
 import {previewManagement} from './preview-management.mjs';
 import {allocationDiagnostic,scaledFloat} from './allocation-diagnostic.mjs';
-import {proportionalShare} from './paper-share-core.mjs';
+import {proportionalShare,assertProjectedShareLimit} from './paper-share-core.mjs';
 import {assert,errorCode} from './research-contract.mjs';
 const raw=v=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v),'PAPER_ADAPTIVE_RAW');return BigInt(v)};
 export function adaptivePolicy(p){
@@ -26,7 +26,7 @@ export function adaptiveIntent({row,preview,slot,requestedAt,now,reviewHash,dela
  const selected=preview?.status==='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED'?preview.selected:null,action=selected?.feasible&&['REPOSITION','REMOVE_AND_HOLD'].includes(selected.action?.type)&&!selected.action.acquireSol?selected.action.type:null;
  if(!action)return {pending:null,apply:null,reason:preview?.reason??'PAPER_ADAPTIVE_NO_SELECTION'};
  const pending=row.pendingAdaptive;
- if(pending&&pending.action===action&&slot>pending.slot&&requestedAt>pending.createdAt&&now>=pending.createdAt+delaySeconds*1000&&now-pending.createdAt<=600000){
+ if(pending&&pending.action===action&&pending.reviewHash!==reviewHash&&slot>pending.slot&&requestedAt>pending.createdAt&&now>=pending.createdAt+delaySeconds*1000&&now-pending.createdAt<=600000){
   // Revalidate action type and exact plan specification; no price or allocation from prior snapshot reused.
   if(JSON.stringify(pending.spec??null)===JSON.stringify(selected.action.spec??null))return {pending:null,apply:selected,reason:'PAPER_ADAPTIVE_REVALIDATED'};
  }
@@ -44,7 +44,7 @@ export function remapAdaptive({row,selected,snapshot,state,cfg}){
  const d=allocationDiagnostic({row:{family:'adaptive',action:{type:'OPEN'},feasible:true,allocation:{...selected.allocation,lowerBinId:lo,upperBinId:hi}},market:{activeId:i.activeId,decimalsX:i.sides[0].decimals,decimalsY:9,bins:[...map.values()]},budget:{allowDispose:false,memeRaw:String(x),solRaw:String(y),minSolReserve:cfg.minSolReserve,operationCostSol:0}});
  assert(d.status==='INTEGER_DIAGNOSTIC_ONLY'&&d.rows.length<=256&&!d.zeroRows,'PAPER_ADAPTIVE_ALLOCATION_BLOCKED');
  const rows=d.rows.map(v=>proportionalShare(map.get(v.binId),v,i.activeId)),dx=raw(d.totalMemeRaw),dy=raw(d.totalSolRaw);
- const cap=scaledFloat(cfg.maxBinShare,9);assert(rows.every(r=>raw(r.shareRaw)*1000000000n<=cap*raw(r.projectedSupplyRaw)),'PAPER_ADAPTIVE_CONFIGURED_SHARE_LIMIT');
+ assertProjectedShareLimit(rows,cfg.maxBinShare);
  const turnover=oldTurnover+value(principalX,principalY)+value(dx,dy);
  assert(turnover<=scaledFloat(cfg.maxTurnoverSol,9)&&y-dy>=raw(state.policy.exitCostSolRaw),'PAPER_ADAPTIVE_TURNOVER_OR_RESERVE');
  const pX=rows.reduce((n,r)=>n+raw(r.shareRaw)*raw(map.get(r.binId).amountXRaw)/raw(map.get(r.binId).liquiditySupplyRaw),0n),pY=rows.reduce((n,r)=>n+raw(r.shareRaw)*raw(map.get(r.binId).amountYRaw)/raw(map.get(r.binId).liquiditySupplyRaw),0n);

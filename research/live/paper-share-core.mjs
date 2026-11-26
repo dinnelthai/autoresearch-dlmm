@@ -1,6 +1,6 @@
 // Research-only proportional share mapping. Not the program's mint-share algorithm.
 import {IntegerKernel as K} from '../integer.mjs';
-import {allocationDiagnostic} from './allocation-diagnostic.mjs';
+import {allocationDiagnostic,scaledFloat} from './allocation-diagnostic.mjs';
 import {snapshotRows,estimateFeeGrowth} from './paper-fee-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits)),'PAPER_SHARE_RAW_INVALID');return BigInt(v)};
@@ -20,6 +20,11 @@ export function proportionalShare(bin,deposit,activeId){
  assert(principalX<=dx&&principalY<=dy,'PAPER_SHARE_PRINCIPAL_DOMAIN');
  return {binId:bin.binId,shareRaw:String(share),depositXRaw:String(dx),depositYRaw:String(dy),externalSupplyRaw:String(s),projectedSupplyRaw:String(s+share),openingPrincipalXRaw:String(principalX),openingPrincipalYRaw:String(principalY),roundingDustXRaw:String(dx-principalX),roundingDustYRaw:String(dy-principalY),basis:'PROPORTIONAL_PRINCIPAL_SHARE_PROXY_NOT_PROTOCOL_MINT'};
 }
+export function assertProjectedShareLimit(rows,maxBinShare){
+ assert(typeof maxBinShare==='number'&&Number.isFinite(maxBinShare)&&maxBinShare>0&&maxBinShare<=.1,'PAPER_SHARE_CONFIGURED_LIMIT_INVALID');
+ const cap=scaledFloat(maxBinShare,9);
+ assert(cap>0n&&rows.every(r=>raw(r.shareRaw)*1000000000n<=cap*raw(r.projectedSupplyRaw)),'PAPER_SHARE_CONFIGURED_LIMIT');
+}
 export function mapPaperPlans({snapshot,report,budget}){
  const result={schemaVersion:1,scope:'PAPER_SHARE_MAPPING_DIAGNOSTIC_ONLY',status:'BLOCKED',reason:null,pool:snapshot?.identity?.pool??null,modelEligible:false,protocolExact:false,pnlReady:false,executionReady:false,rows:[]};
  try{
@@ -27,6 +32,8 @@ export function mapPaperPlans({snapshot,report,budget}){
   assert(report?.schemaVersion===1&&report.pool===i.pool&&report.status==='RESEARCH_DIAGNOSTIC_UNVERIFIED'&&report.executionReady===false&&report.decisionReady===false&&report.protocolExact===false&&report.calibrated===false&&m?.slot===i.slot&&m.rawHash===i.rawHash&&m.mintX===i.mintX&&m.mintY===i.mintY&&m.activeId===i.activeId&&m.binStep===i.binStep&&i.sides?.length===2&&i.sides[0].mint===i.mintX&&i.sides[1].mint===i.mintY&&m.decimalsX===i.sides[0].decimals&&m.decimalsY===9&&i.sides[1].decimals===9,'PAPER_SHARE_REPORT_SCOPE');
   assert(p?.status==='RESEARCH_PLAN_PREVIEW_UNVERIFIED'&&p.scope==='NEW_POSITION_ONLY'&&p.executionReady===false&&p.decisionReady===false&&Array.isArray(p.families)&&p.families.length===7&&new Set(p.families.map(r=>r.family)).size===7&&modes.every(k=>p.families.some(r=>r.family===k)),'PAPER_SHARE_PLAN_SCOPE');
   assert(budget?.allowDispose===false&&raw(budget.memeRaw,64)+raw(budget.solRaw,64)>0n&&Number.isFinite(budget.minSolReserve)&&budget.minSolReserve>=0&&Number.isFinite(budget.operationCostSol)&&budget.operationCostSol>=0,'PAPER_SHARE_BUDGET');
+  const maxBinShare=budget.maxBinShare??.1;assertProjectedShareLimit([],maxBinShare);
+  if(report.terminalBinding?.researchBudget){const frozen=report.terminalBinding.researchBudget;assert(['memeRaw','solRaw','allowDispose','minSolReserve','operationCostSol','maxBinShare'].every(k=>budget[k]===frozen[k]),'PAPER_SHARE_REPORT_BUDGET_CHANGED')}
   const market={...m,bins:[...map.values()]};
   function mapping(mode,row){
    const blocked=reason=>({mode,status:'BLOCKED',reason,allocation:null,rows:[]});
@@ -37,7 +44,7 @@ export function mapPaperPlans({snapshot,report,budget}){
    if(d.status!=='INTEGER_DIAGNOSTIC_ONLY')return blocked(d.reason??'INTEGER_MAPPING_UNAVAILABLE');
    try{
     assert(d.rows.length<=256&&d.zeroRows===0,'PAPER_SHARE_DUST_OR_RANGE');
-    const rows=d.rows.map(v=>proportionalShare(map.get(v.binId),v,i.activeId));
+    const rows=d.rows.map(v=>proportionalShare(map.get(v.binId),v,i.activeId));assertProjectedShareLimit(rows,maxBinShare);
     return {mode,status:'SHARE_PROXY_MAPPED_UNVERIFIED',reason:null,integerAllocation:d,rows,allocation:{schemaVersion:1,pool:i.pool,mintX:i.mintX,mintY:i.mintY,openingSlot:i.slot,openingRawHash:i.rawHash,shares:rows.map(r=>({binId:r.binId,shareRaw:r.shareRaw}))}};
    }catch(e){return blocked(errorCode(e,'PAPER_SHARE_MAPPING_FAILED'))}
   }

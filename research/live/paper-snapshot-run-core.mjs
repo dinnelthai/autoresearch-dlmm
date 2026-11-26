@@ -106,6 +106,7 @@ export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHa
    const initial=raw(row.initialNavYRaw),hold=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),c.price);
    const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet:{x:r.walletX,y:r.walletY},principal:{x:r.principalX,y:r.principalY},fees:zero(),initial,hold,peak:raw(last.peakYRaw),cost:raw(last.costYRaw)+r.cost,status:r.status});
    assert(BigInt(point.navYRaw)<=BigInt(last.navYRaw),'PAPER_ADAPTIVE_NAV_INCREASE_ON_ACTION');
+   if(r.status==='OPEN_PROXY')assert(initial-BigInt(point.navYRaw)<raw(state.policy.maxLossSolRaw)&&point.drawdownBps<state.policy.maxDrawdownBps,'PAPER_ADAPTIVE_POST_ACTION_RISK_LIMIT');
    next={...next,mapping:r.mapping,status:r.status,reason:r.status==='EXITED_PROXY'?'VIRTUAL_T10_REMOVE':null,pendingAdaptive:null,segmentOpening:{slot:c.i.slot,proof:c.proof},lastActionTime:reviewed.latest.t,rebalances:(row.rebalances??0)+(r.status==='OPEN_PROXY'?1:0),turnoverYRaw:s(r.turnover),claimedFeeXRaw:s(raw(row.claimedFeeXRaw??'0')+raw(last.feeXRaw)),claimedFeeYRaw:s(raw(row.claimedFeeYRaw??'0')+raw(last.feeYRaw)),points:[...row.points.slice(0,-1),point],maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps),adaptiveReason:'VIRTUAL_T10_'+intent.apply.action.type};
   }catch(e){next={...next,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REMAP_BLOCKED')}}
  }

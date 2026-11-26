@@ -9,7 +9,7 @@ import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
 import {reviewedObservations} from './review-observations.mjs';
 import {sourceInventory} from './source-inventory.mjs';
-import {assert,hash,errorCode} from './research-contract.mjs';
+import {assert,hash,errorCode,sameSnapshot} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
 export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,isStopping,idlPath='data/raw/dlmm-idl.json',intervalMs=15000}){
  const dir=join(DATA,'paper-auto',pool),pointer=join(dir,'active.json');
@@ -65,7 +65,10 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
       const evidence=async(path,digest)=>{assert(hash(digest),'PAPER_ADAPTIVE_EVIDENCE_HASH');const bytes=await read(path,8*1024*1024);assert(sha(bytes)===digest,'PAPER_ADAPTIVE_EVIDENCE_CHANGED');return bytes};
       const reviewed=await reviewedObservations({m,req:next.adaptiveRequest,review:review.review,evidence});
       const management=virtualManagement({state:next,row,snapshot,reviewed});
-      assert(review.expiresAt>Date.now(),'PAPER_ADAPTIVE_REVIEW_EXPIRED');
+      const latest=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs);
+      assert(sameSnapshot(latest,m),'PAPER_ADAPTIVE_MARKET_CHANGED');
+      const after=await loadReview(latest,Date.now());
+      assert(after.reviewHash===review.reviewHash&&Math.min(review.expiresAt,after.expiresAt)>Date.now(),'PAPER_ADAPTIVE_REVIEW_CHANGED_OR_EXPIRED');
       next=updateAdaptiveSnapshot(next,{snapshot,reviewed,preview:management,reviewHash:review.reviewHash,now:Date.now()});
      }catch(e){next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}:r)}}
     }
