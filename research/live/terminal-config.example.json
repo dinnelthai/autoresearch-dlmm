@@ -13,6 +13,8 @@
   },
   "weightDiagnostic": {
     "enabled": false,
-    "maxDeviationBps": null
+    "maxDeviationBps": null,
+    "inverseEnabled": false,
+    "maxAmountErrorBps": null
   }
 }
