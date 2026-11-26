@@ -13,7 +13,7 @@ function account(v){
  return {data,owner:new PublicKey(v.owner),lamports:number(v.lamports),executable:v.executable,rentEpoch:v.rentEpoch};
 }
 function identity(a){return a===null?null:[a.owner.toBase58(),a.lamports,a.executable,sha(a.data)]}
-export async function simulateLocalOpen({endpoint,genesis,msg,messageHash,market,cfg,coder,program,addresses,low,high,allocation,funding}){
+export async function simulateLocalOpen({endpoint,genesis,msg,messageHash,market,cfg,coder,program,addresses,low,high,allocation,funding,capturedAccounts}){
  const url=new URL(endpoint);assert(url.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(url.hostname),'LOCAL_RPC_REQUIRED');
  assert(funding.status==='CAP_BUDGET_DIAGNOSTIC_ONLY','SIM_FUNDING_BLOCKED');
  const message=Buffer.from(msg.serialize());assert(sha(message)===messageHash,'SIM_MESSAGE_HASH_MISMATCH');
@@ -31,6 +31,7 @@ export async function simulateLocalOpen({endpoint,genesis,msg,messageHash,market
   const options={encoding:'base64',commitment:'confirmed',minContextSlot:market.slot};
   const first=await rpc('getMultipleAccounts',[names,options]);assert(first.context.slot>=market.slot&&first.value.length===11,'SIM_PRE_CONTEXT_INVALID');
   const pre=first.value.map(account);
+  for(const i of [2,3,4,5,6,9,10]){const old=capturedAccounts.get(names[i]);assert(old&&pre[i]&&old.owner.equals(pre[i].owner)&&old.data.equals(pre[i].data),'SIM_CAPTURE_STATE_CHANGED')}
   const fee=await rpc('getFeeForMessage',[message.toString('base64'),{commitment:'confirmed',minContextSlot:first.context.slot}]);
   assert(fee.context.slot>=first.context.slot&&String(number(fee.value))===funding.fee.feeLamportsRaw,'SIM_FEE_CHANGED');
   const sim=await rpc('simulateTransaction',[bytes.toString('base64'),{encoding:'base64',commitment:'confirmed',sigVerify:false,replaceRecentBlockhash:false,minContextSlot:fee.context.slot,accounts:{encoding:'base64',addresses:names}}]);
