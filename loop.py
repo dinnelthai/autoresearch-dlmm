@@ -268,8 +268,9 @@ def latest_val_result(before: set[str] | None = None) -> Path:
     candidates = sorted(config.EXPERIMENTS_DIR.glob("*_val.json"))
     if before is not None:
         new_candidates = [path for path in candidates if path.name not in before]
-        if new_candidates:
-            return new_candidates[-1]
+        if len(new_candidates) != 1:
+            raise RuntimeError("Expected exactly one fresh validation result; refusing stale or ambiguous results")
+        return new_candidates[0]
     if not candidates:
         raise FileNotFoundError("No validation result files found in experiments/")
     return candidates[-1]
@@ -311,7 +312,12 @@ def run_backtest(args: argparse.Namespace, horizon_mode: str) -> tuple[dict, Pat
     val_file = latest_val_result(before)
     with open(val_file) as f:
         payload = json.load(f)
-    return payload["metrics"], val_file
+    if payload.get("pool_address") != args.pool or payload.get("label") != "val" or payload.get("strategy_source") != STRATEGY_FILE.read_text():
+        raise RuntimeError("Validation result identity mismatch")
+    metrics = payload["metrics"]
+    if not math.isfinite(metric_value(metrics)):
+        raise RuntimeError("Non-finite validation metric")
+    return metrics, val_file
 
 
 def best_metric() -> float:
@@ -404,7 +410,7 @@ def main() -> None:
     ensure_cached_data(args)
 
     print("=" * 60)
-    print("  DLMM Autoresearch — Autonomous Loop")
+    print("  DLMM Autoresearch — Exploratory Development Only (not out-of-sample validation)")
     print("=" * 60)
     print(f"  Pool:       {args.pool}")
     print(f"  Horizon:    {config.normalize_horizon_mode(args.horizon)}")
@@ -424,6 +430,7 @@ def main() -> None:
     best_source = STRATEGY_FILE.read_text()
     baseline_metrics, baseline_file = run_backtest(args, config.normalize_horizon_mode(args.horizon))
     best_val = metric_value(baseline_metrics)
+    baseline_metric_name = metric_name(baseline_metrics)
     last_val = best_val
 
     print(
@@ -489,7 +496,13 @@ def main() -> None:
                 time.sleep(args.sleep_seconds)
             continue
 
-        metrics, val_file = run_backtest(args, config.normalize_horizon_mode(args.horizon))
+        try:
+            metrics, val_file = run_backtest(args, config.normalize_horizon_mode(args.horizon))
+            if metric_name(metrics) != baseline_metric_name:
+                raise RuntimeError("Validation objective changed during optimization")
+        except Exception:
+            STRATEGY_FILE.write_text(best_source)
+            raise
         last_val = metric_value(metrics)
         improved = last_val > (best_val + args.min_improvement)
 
