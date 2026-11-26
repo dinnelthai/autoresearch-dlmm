@@ -7,6 +7,7 @@ import {parseArgs} from 'node:util';
 import {Engine} from '../engine.mjs';
 import {IntegerKernel as K} from '../integer.mjs';
 import {rawHuman,checkTime,extractMarket} from './engine-input.mjs';
+import {previewPlans} from './preview-plans.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=resolve(ROOT,'data');
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const sha=b=>createHash('sha256').update(b).digest('hex');
@@ -21,12 +22,12 @@ async function verifyCapture(m){
  // This checks archive integrity, not independently decoded fields or chain authenticity.
 }
 async function main(){
- const {values}=parseArgs({options:{state:{type:'string'},request:{type:'string'},review:{type:'string'},help:{type:'boolean'}}});
- if(values.help){console.log('node research/live/analyze-state.mjs --state data/live/POOL/state.json [--request data/analysis-request.json --review data/research-evidence.json]');return;}
+ const {values}=parseArgs({options:{state:{type:'string'},request:{type:'string'},review:{type:'string'},plans:{type:'boolean'},help:{type:'boolean'}}});
+ if(values.help){console.log('node research/live/analyze-state.mjs --state data/live/POOL/state.json [--request data/analysis-request.json --review data/research-evidence.json --plans]');return;}
  assert(values.state,'state path required');
  const state=JSON.parse(await readFile(dataPath(values.state),'utf8'));
  const report={schemaVersion:1,pool:state.pool??null,sequence:state.sequence??null,status:'BLOCKED',decisionReady:false,executionReady:false,calibrated:false,protocolExact:false,limitations:['Read-only research diagnostic; not live recommendation, execution, or actual PnL.','Archive hashes and declared review metadata do not prove real-world correctness.','No synthetic observations or aggregate-Swap-to-bin conversion.'],gaps:[]};
- const output=()=>{console.log(JSON.stringify(report,null,2));if(report.status!=='RESEARCH_DIAGNOSTIC_UNVERIFIED')process.exitCode=1;};
+ const output=()=>{console.log(JSON.stringify(report,null,2));if(report.status!=='RESEARCH_DIAGNOSTIC_UNVERIFIED'||(values.plans&&report.planPreview?.status!=='RESEARCH_PLAN_PREVIEW_UNVERIFIED'))process.exitCode=1;};
  try{
   const m=extractMarket(state);await verifyCapture(m);
   report.market={slot:m.slot,rawHash:m.rawHash,activeId:m.activeId,binStep:m.binStep,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,decimalsY:m.decimalsY,binCount:m.bins.length,status:'ARCHIVE_INTEGRITY_CHECKED_UNVERIFIED'};
@@ -43,7 +44,7 @@ async function main(){
   assert(['sol','holding','position'].includes(req.entry)&&req.capitalScope==='USER_DECLARED_ALLOCATION'&&['balanced','defensive','growth'].includes(req.goal),'invalid explicit capital request');
   assert(Number.isSafeInteger(req.horizonSeconds)&&req.horizonSeconds>0,'explicit horizon required');
   const anchorPrice=10**(m.decimalsX-m.decimalsY);
-  const cfg=Engine.config({...req.riskConfig,binStepBps:m.binStep,anchorPrice,maxReferenceAge:maxAge});
+  const cfg=Engine.requestConfig(req,{...req.riskConfig,binStepBps:m.binStep,anchorPrice,maxReferenceAge:maxAge,forecastHorizonSeconds:req.horizonSeconds});
   const observations=[],ids=new Set();let last=-1;
   for(const o of review.observations){
    assert(typeof o.id==='string'&&o.id&&!ids.has(o.id)&&Number.isSafeInteger(o.t)&&o.t>last&&o.t<=asOf,'duplicate or out-of-order market observation');
@@ -94,7 +95,13 @@ async function main(){
   const regime=Engine.classify(model,cfg),risk=Engine.risk(model,cfg,latest.ref.price);
   report.status='RESEARCH_DIAGNOSTIC_UNVERIFIED';report.asOf=asOf;report.observedAt=latest.t;report.capitalScope=req.capitalScope;
   report.referencePriceSolPerMeme=latest.ref.price;report.model={regime,risk,inventory:Engine.balances(model),navEstimateSol:Engine.nav(model,latest.ref.price),externalBins:external.length};
-  report.limitations.push('User-declared capital is not verified wallet balance. Prior reference observations are feature warmup, not historical PnL.','Model risk and NAV are floating-point estimates; forecast/fees/risk parameters are not calibrated. No candidate or transaction produced.');
+  report.limitations.push('User-declared capital is not verified wallet balance. Prior reference observations are feature warmup, not historical PnL.','Model risk and NAV are floating-point estimates; forecast/fees/risk parameters are not calibrated. No transaction produced.');
+  if(values.plans){
+   const required=['maxInventoryRatio','maxInventoryTokens','minSolReserve','maxLossSol','stressDrop','maxBinShare','operationCostSol','feeBps','protocolShare','slippageBps'];
+   const missing=required.filter(k=>!Object.hasOwn(req.riskConfig??{},k));
+   if(missing.length)report.planPreview={status:'BLOCKED',reason:'EXPLICIT_RISK_AND_COST_PARAMETERS_REQUIRED',missing,decisionReady:false,executionReady:false};
+   else report.planPreview=previewPlans(model,cfg,m,{asOf});
+  }
  }catch(e){report.gaps.push(String(e.message).slice(0,240));}
  output();
 }
