@@ -153,7 +153,7 @@ jobs:
           const css=await fetch(origin+'/assets/terminal.css',{signal:AbortSignal.timeout(5000)});
           assert.equal(css.status,200);assert.ok((await css.arrayBuffer()).byteLength>0,'Terminal CSS empty');
           const state=await get('/api/terminal/state');
-          assert.equal(state.status,'BLOCKED');assert.equal(state.reason,'STATE_UNAVAILABLE');assert.equal(state.market,null);
+          assert.equal(state.status,'BLOCKED');assert.deepEqual(state.gaps,['STATE_UNAVAILABLE']);assert.equal(state.reviewGate?.reason,'STATE_UNAVAILABLE');assert.equal(state.market,null);assert.equal(state.decisionReady,false);assert.equal(state.executionReady,false);
           const paper=await get('/api/terminal/paper-status');
           assert.equal(paper.status,'NO_EXPERIMENT');assert.equal(paper.running,false);assert.equal(paper.pnlReady,false);
           const pools=await get('/api/terminal/paper-pools');assert.equal(pools.pools.length,1);assert.equal(pools.pools[0].pool,health.pool);
@@ -245,6 +245,90 @@ jobs:
           }catch(e){evidence.failureCode=e.code??e.name;evidence.failureMessage=e.message;process.exitCode=1}
           finally{writeFileSync(report,JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence))}
           JS
+      - name: Build source-level ESM repair candidate without replacing original lock
+        if: ${{ always() && steps['consumer-install'].outcome == 'success' && steps['direct-esm'].outcome == 'failure' }}
+        shell: bash
+        env:
+          npm_config_ignore_scripts: 'true'
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE"
+          out="$root/data/acceptance/sdk-source-candidate"
+          mkdir -p "$out"
+          cd "$root/data/vendor/dlmm-sdk/ts-client"
+          test -z "$(git status --porcelain)"
+          node --input-type=module <<'JS'
+          import {readdirSync,readFileSync,writeFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          import {createRequire} from 'node:module';
+          import assert from 'node:assert/strict';
+          const require=createRequire(import.meta.url);
+          assert.equal(require('bn.js'),require('@coral-xyz/anchor').BN,'Source dependency BN constructor differs');
+          function* files(dir){for(const e of readdirSync(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory()){if(e.name!=='idl')yield* files(p)}else if(p.endsWith('.ts'))yield p}}
+          const target='@coral-xyz/anchor/dist/cjs/utils/bytes';
+          const changes=[];
+          let pathCount=0,bnCount=0;
+          for(const path of files('src/dlmm')){
+            const old=readFileSync(path,'utf8');
+            let next=old.replace(/import\s*\{([^{}]+)\}\s*from\s*(['"])@coral-xyz\/anchor\2\s*;/g,(full,body)=>{
+              const names=body.split(',').map(x=>x.trim()).filter(Boolean);
+              if(!names.includes('BN'))return full;
+              assert.ok(!/import\s+BN\s+from/.test(old),'Existing default BN import '+path);
+              bnCount++;
+              const rest=names.filter(x=>x!=='BN');
+              return 'import BN from "bn.js";'+(rest.length?'\nimport { '+rest.join(', ')+' } from "@coral-xyz/anchor";':'');
+            });
+            const from='"'+target+'"';
+            if(next.includes(from)){pathCount+=next.split(from).length-1;next=next.split(from).join('"'+target+'/index.js"')}
+            if(next!==old){writeFileSync(path,next);changes.push(path)}
+          }
+          assert.equal(pathCount,1);assert.ok(bnCount>0);
+          console.log(JSON.stringify({scope:'SOURCE_REPAIR_CANDIDATE_ONLY',bnCount,pathCount,changes}));
+          JS
+          git diff --check
+          git diff -- . > "$out/source.patch"
+          test -s "$out/source.patch"
+          pnpm run build
+          npm pack --ignore-scripts --pack-destination "$out"
+          candidate="$out/meteora-ag-dlmm-1.9.15.tgz"
+          sha256sum "$candidate" > "$out/tarball.sha256"
+          test "$(sha256sum "$root/data/vendor/meteora-ag-dlmm-1.9.15.tgz" | cut -d' ' -f1)" = 7e8da2ee2e528a5aba4c1efd3909dcd74ac94cfed380fa9636f256ade1a41b3b
+          cd "$root/research/live"
+          sdkdir=node_modules/@meteora-ag/dlmm
+          cp "$sdkdir/dist/index.js" "$sdkdir/dist/original-reference.cjs"
+          tar -xzf "$candidate" --strip-components=1 -C "$sdkdir"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {createRequire} from 'node:module';
+          import {readFileSync,writeFileSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const require=createRequire(import.meta.url);
+          const file='node_modules/@meteora-ag/dlmm/dist/index.mjs';
+          const report={scope:'SOURCE_REPAIR_CANDIDATE_ONLY',candidateEsmSha256:createHash('sha256').update(readFileSync(file)).digest('hex'),passed:false,liveAcceptance:false};
+          try{
+            const esm=await import('@meteora-ag/dlmm'),cjs=require('@meteora-ag/dlmm'),original=require('./node_modules/@meteora-ag/dlmm/dist/original-reference.cjs');
+            const sdkRequire=createRequire(require.resolve('@meteora-ag/dlmm'));
+            const {BN}=sdkRequire('@coral-xyz/anchor');
+            assert.equal(sdkRequire('bn.js'),BN,'Consumer SDK BN constructor differs');
+            for(const k of ['createProgram','wrapPosition','getBinArrayIndexesCoverage','deriveBinArray','deriveBinArrayBitmapExtension','getBinArrayLowerUpperBinId','deriveEventAuthority','binIdToBinArrayIndex','toWeightDistribution','toAmountBidSide','toAmountAskSide','toAmountBothSide','positionV2Filter','positionLbPairFilter','positionOwnerFilter']){
+              for(const api of [esm,cjs,original])assert.equal(typeof api[k],'function',k)
+            }
+            for(const k of ['POSITION_MAX_LENGTH','MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX','DEFAULT_BIN_PER_POSITION']){assert.notEqual(esm[k],null,k);assert.equal(String(esm[k]),String(original[k]),k);assert.equal(String(cjs[k]),String(original[k]),k)}
+            assert.equal(typeof esm.default.create,'function');
+            for(const id of [-71,-70,-1,0,69,70]){
+              const index=original.binIdToBinArrayIndex(new BN(id));
+              assert.equal(index.toString(),String(Math.floor(id/70)));
+              for(const api of [esm,cjs]){
+                const actual=api.binIdToBinArrayIndex(new BN(id));assert.equal(actual.toString(),index.toString());
+                assert.deepEqual(api.getBinArrayLowerUpperBinId(actual).map(String),original.getBinArrayLowerUpperBinId(index).map(String));
+              }
+            }
+            report.passed=true;
+          }catch(e){report.failureCode=e.code??e.name;evidenceFailure(e);process.exitCode=1}
+          finally{writeFileSync('../../data/acceptance/sdk-source-candidate/result.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report))}
+          function evidenceFailure(e){report.failureMessage=e.message}
+          JS
+          git diff --exit-code -- package.json package-lock.json
       - name: Retain build identity evidence only
         if: always()
         uses: actions/upload-artifact@v4
@@ -256,5 +340,8 @@ jobs:
             data/acceptance/sdk-consumer-audit*.json
             data/acceptance/offline-*.json
             data/acceptance/terminal-process-smoke.*
+            data/acceptance/sdk-source-candidate/source.patch
+            data/acceptance/sdk-source-candidate/tarball.sha256
+            data/acceptance/sdk-source-candidate/result.json
           if-no-files-found: warn
           retention-days: 7
