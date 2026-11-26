@@ -7,16 +7,17 @@ import {PublicKey} from '@solana/web3.js';
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const assert=(v,m)=>{if(!v)throw Error(m);};
 async function main(){
- const {values}=parseArgs({options:{pool:{type:'string'},pages:{type:'string',default:'1'},limit:{type:'string',default:'50'},before:{type:'string'},provider:{type:'string',default:'solana-rpc'},help:{type:'boolean'}}});
- if(values.help){console.log('SOLANA_RPC_URL=... node research/live/capture-swaps.mjs --pool ADDRESS [--pages 1 --limit 50 --before SIGNATURE]');return;}
+ const {values}=parseArgs({options:{pool:{type:'string'},position:{type:'string'},pages:{type:'string',default:'1'},limit:{type:'string',default:'50'},before:{type:'string'},provider:{type:'string',default:'solana-rpc'},help:{type:'boolean'}}});
+ if(values.help){console.log('SOLANA_RPC_URL=... node research/live/capture-swaps.mjs --pool ADDRESS [--position ADDRESS --pages 1 --limit 50 --before SIGNATURE]');return;}
  const pool=new PublicKey(values.pool).toBase58();assert(pool===values.pool,'invalid pool');
+ const position=values.position?new PublicKey(values.position).toBase58():null;assert(!position||position!==pool,'position must differ from pool');const indexAddress=position??pool;
  const pages=Number(values.pages),limit=Number(values.limit);
  assert(Number.isInteger(pages)&&pages>=1&&pages<=20&&Number.isInteger(limit)&&limit>=1&&limit<=1000,'invalid capture bounds');
  assert(/^[a-zA-Z0-9_-]{1,48}$/.test(values.provider),'provider must be a non-secret label');
  const endpoint=new URL(process.env.SOLANA_RPC_URL||'https://api.mainnet-beta.solana.com');
  assert(endpoint.protocol==='https:'||(endpoint.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(endpoint.hostname)),'RPC requires HTTPS or local HTTP');
  const root=join('data','raw');await mkdir(root,{recursive:true,mode:0o700});const dir=await mkdtemp(join(root,'swaps-'));
- const manifest={schemaVersion:1,pool,provider:values.provider,commitment:'finalized',requestedAt:new Date().toISOString(),pagesRequested:pages,pageLimit:limit,before:values.before??null,files:[],gaps:[],signatures:[],blocks:[],status:'PARTIAL',limitations:['Address-indexed bounded sample only; no historical completeness claim.','Block signature lists supply transaction order, not per-bin state.']};
+ const manifest={schemaVersion:1,pool,position,indexAddress,provider:values.provider,commitment:'finalized',requestedAt:new Date().toISOString(),pagesRequested:pages,pageLimit:limit,before:values.before??null,files:[],gaps:[],signatures:[],blocks:[],status:'PARTIAL',limitations:['Address-indexed bounded sample only; no historical completeness claim.','Block signature lists supply transaction order, not per-bin state.']};
  let id=0;
  async function rpc(method,params,file){
   const requestedAt=new Date().toISOString(),rid=++id;
@@ -35,7 +36,7 @@ async function main(){
  let cursor=values.before;const seen=new Set(),slots=new Set();
  for(let i=0;i<pages;i++){
   const cfg={commitment:'finalized',limit,...(cursor?{before:cursor}:{})};
-  const rows=await rpc('getSignaturesForAddress',[pool,cfg],'signatures-'+i+'.json');
+  const rows=await rpc('getSignaturesForAddress',[indexAddress,cfg],'signatures-'+i+'.json');
   if(!Array.isArray(rows)){manifest.gaps.push({reason:'SIGNATURE_PAGE_UNAVAILABLE',page:i});break;}
   if(rows.length===0){manifest.stopReason='EMPTY_PAGE';break;}
   for(const row of rows){
