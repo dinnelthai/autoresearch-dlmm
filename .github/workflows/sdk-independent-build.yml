@@ -1,0 +1,97 @@
+name: Pinned SDK independent build
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sdk-independent-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sdk-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Verify pinned upstream source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p data/vendor data/acceptance
+          git init -q data/vendor/dlmm-sdk
+          git -C data/vendor/dlmm-sdk remote add origin https://github.com/MeteoraAg/dlmm-sdk.git
+          git -C data/vendor/dlmm-sdk fetch --depth 1 origin 1532e540db41ac405dbf4c5bb2ddfceaa1f98ff1
+          git -C data/vendor/dlmm-sdk checkout --detach FETCH_HEAD
+          cd data/vendor/dlmm-sdk
+          test "$(git rev-parse HEAD)" = 1532e540db41ac405dbf4c5bb2ddfceaa1f98ff1
+          test -z "$(git status --porcelain)"
+          test "$(git hash-object ts-client/package.json)" = 6b0040e267f19f7dffa287b6768e5a660f6087cb
+          test "$(git hash-object ts-client/pnpm-lock.yaml)" = 8c589f3f8f595f12ad930a407863b933df7dc6cb
+          test "$(git hash-object ts-client/pnpm-workspace.yaml)" = 7177be995327f3f2fc77ca128020a72cb084bbfa
+          test "$(git hash-object ts-client/src/dlmm/idl/idl.json)" = 6715f5cf19dffa8651a185ac0dd823218c6a2a75
+          test "$(git hash-object ts-client/tsup.config.ts)" = ac58e23edc91a079dacc429e8a7b905964029c63
+      - name: Build pinned SDK without install lifecycle scripts
+        shell: bash
+        env:
+          npm_config_ignore_scripts: 'true'
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm install --global --ignore-scripts --no-audit --no-fund pnpm@10.33.1
+          test "$(pnpm --version)" = 10.33.1
+          cd data/vendor/dlmm-sdk/ts-client
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run build
+          test -f dist/index.js
+          test -f dist/index.mjs
+          test -f dist/index.d.ts
+          git diff --exit-code
+          npm pack --ignore-scripts --pack-destination "$GITHUB_WORKSPACE/data/vendor"
+      - name: Verify artifact identity before consumer install
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const file='data/vendor/meteora-ag-dlmm-1.9.15.tgz';
+          const sha256=b=>createHash('sha256').update(b).digest('hex');
+          const bytes=readFileSync(file);
+          const expected='7e8da2ee2e528a5aba4c1efd3909dcd74ac94cfed380fa9636f256ade1a41b3b';
+          const actual=sha256(bytes);
+          const integrity='sha512-'+createHash('sha512').update(bytes).digest('base64');
+          const lock=readFileSync('research/live/package-lock.json');
+          const expectedLock='dad5c239e5da6b8bb3efe2a59de814a234fd2b1b16fee347f9e96c361b2bd197';
+          const lockHash=sha256(lock);
+          const entry=JSON.parse(lock).packages['node_modules/@meteora-ag/dlmm'];
+          const exact=actual===expected&&lockHash===expectedLock&&entry?.integrity===integrity;
+          const report={scope:'INDEPENDENT_SDK_BUILD_ONLY',node:process.version,platform:process.platform,arch:process.arch,expected,actual,integrity,expectedLock,lockHash,exact,liveAcceptance:false};
+          writeFileSync('data/acceptance/sdk-independent-build.json',JSON.stringify(report,null,2)+'\n');
+          console.log(JSON.stringify(report));
+          if(!exact)process.exitCode=1;
+          JS
+      - name: Install unchanged consumer lock and verify project adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd research/live && npm ci --ignore-scripts --no-audit --no-fund)
+          node --test research/live/sdk-runtime.test.mjs
+          git diff --exit-code -- research/live/package.json research/live/package-lock.json
+      - name: Verify required direct ESM contract without fallback
+        working-directory: research/live
+        run: |
+          node --input-type=module -e 'import DLMM,* as sdk from "@meteora-ag/dlmm"; for(const k of ["createProgram","wrapPosition","getBinArrayIndexesCoverage","deriveBinArray","deriveBinArrayBitmapExtension","getBinArrayLowerUpperBinId","deriveEventAuthority","binIdToBinArrayIndex","toWeightDistribution","toAmountBidSide","toAmountAskSide","toAmountBothSide"]) if(typeof sdk[k]!=="function") throw Error("missing SDK helper "+k); for(const k of ["POSITION_MAX_LENGTH","MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX","DEFAULT_BIN_PER_POSITION"]) if(sdk[k]==null) throw Error("missing SDK constant "+k); if(typeof DLMM?.create!=="function") throw Error("missing DLMM.create"); console.log("Direct ESM exports present; security and protocol acceptance still open")'
+      - name: Retain build identity evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-independent-build
+          path: data/acceptance/sdk-independent-build.json
+          if-no-files-found: warn
+          retention-days: 7
