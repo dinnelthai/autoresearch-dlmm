@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "replace-with-experiment-id",
+  "pool": "REPLACE_POOL",
+  "mintX": "REPLACE_MEME_MINT",
+  "mintY": "So11111111111111111111111111111111111111112",
+  "start": 0,
+  "request": {
+    "pool": "REPLACE_POOL",
+    "entry": "holding",
+    "meme": 0,
+    "sol": 0,
+    "goal": "balanced",
+    "horizonSeconds": 480,
+    "allowDispose": false
+  },
+  "config": {}
+}

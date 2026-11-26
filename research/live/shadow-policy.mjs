@@ -4,12 +4,14 @@ import {previewPlans} from './preview-plans.mjs';
 import {previewManagement} from './preview-management.mjs';
 const MODES=['hodl','spot','curve','bid_ask','hybrid','adaptive'];
 const assert=(ok,m)=>{if(!ok)throw Error(m);};
-export function replayWindow(window,sample){
+export const PAPER_MODES=Object.freeze(['hodl','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid','adaptive']);
+export function replayWindow(window,sample,{modes=MODES,paper=false}={}){
+ assert(Array.isArray(modes)&&modes.length>0&&new Set(modes).size===modes.length&&modes.every(m=>PAPER_MODES.includes(m)),'invalid replay modes');
  const cfg=E.requestConfig(window.request,window.config);
  const first=E.reference(sample.events[0],cfg);assert(first.valid,'invalid opening reference');
  const req={...window.request,initialPrice:first.price,allowDispose:false};
  const runs=[];
- for(const mode of MODES){
+ for(const mode of modes){
   const s=E.newState(req,cfg);
   let poolAt=null,lastReview=-Infinity,attempted=false,decisions=0,missing=0,gateCount=0;
   const policyLog=[];
@@ -37,7 +39,7 @@ export function replayWindow(window,sample){
     }
     if(s.pending)E.executePending(s,cfg,e.t);
    }
-   if(mode==='hodl'||s.pending||e.t===window.end)continue;
+   if(mode==='hodl'||s.pending||(!paper&&e.t===window.end))continue;
    if(!stateFresh){missing++;continue;}
    if(e.t-lastReview<cfg.cooldownSeconds)continue;
    if(mode!=='adaptive'&&attempted)continue;
@@ -48,7 +50,9 @@ export function replayWindow(window,sample){
     if(mode==='adaptive')row=preview.selected;
     else if(preview.status==='RESEARCH_PLAN_PREVIEW_UNVERIFIED'){
      // Fixed comparator: same original width-4, full-size shape rule; no parameter search.
-     row=preview.candidates.find(r=>r.family===mode&&r.action.spec?.width===4&&r.action.spec?.bidFraction===(preview.regime==='DOWNTREND'?0:1)&&r.action.spec?.askFraction===.7)??null;
+     row=paper&&mode==='hybrid_grid'
+      ?preview.candidates.find(r=>r.family===mode&&r.action.spec?.width===4&&r.action.spec?.alphaBid===.5&&r.action.spec?.alphaAsk===.5&&r.action.spec?.askFraction===.5)??null
+      :preview.candidates.find(r=>r.family===mode&&r.action.spec?.width===4&&r.action.spec?.bidFraction===(preview.regime==='DOWNTREND'?0:1)&&r.action.spec?.askFraction===(mode==='asymmetric'&&preview.regime==='UPTREND'?.25:.7))??null;
      attempted=true;
     }
    }else if(mode==='adaptive'){
@@ -65,9 +69,9 @@ export function replayWindow(window,sample){
    policyLog.push({t:e.t,action:row.action.type,status:'VIRTUAL_INTENT_ONLY'});
   }
   const p=s.market.ref.price,r=E.reportAt(s,p);
-  const invalid=s.quality.length>0||!!s.pending||s.receipts.some(x=>['FAILED','REJECTED','EXPIRED','PARTIAL'].includes(x.status))||!Number.isFinite(r.residual)||Math.abs(r.residual)>1e-6*Math.max(1,Math.abs(r.nav));
+  const invalid=s.quality.length>0||(!paper&&!!s.pending)||s.receipts.some(x=>['FAILED','REJECTED','EXPIRED','PARTIAL'].includes(x.status))||!Number.isFinite(r.residual)||Math.abs(r.residual)>1e-6*Math.max(1,Math.abs(r.nav));
   const capitalSeconds=s.curve.slice(1).reduce((v,b,i)=>v+s.curve[i].nav*(b.t-s.curve[i].t),0);
-  runs.push({mode,status:invalid?'INCONCLUSIVE_MODEL_PATH':'HYPOTHETICAL_REPLAY',pnlSol:invalid?null:r.pnl,alphaSol:invalid?null:r.alpha,feesSol:invalid?null:r.fee,costSol:invalid?null:r.cost,inventoryContributionSol:invalid?null:r.inventory,unattributedSol:invalid?null:r.unattributed,markout:invalid?null:r.markout,maxDrawdown:Math.max(0,...s.curve.map(b=>b.drawdown)),netPerSolHour:!invalid&&capitalSeconds>0?r.pnl*3600/capitalSeconds:null,riskBreaches:s.riskLog.length,quality:s.quality,pending:!!s.pending,decisions,missingStateReviews:missing,manualReviewOrInvalidationCount:gateCount,policyLog,modeledOperations:s.receipts.map(x=>({t:x.t,action:x.action,modeledStatus:x.status,reason:x.reason??null})),initialNavSol:s.initialNav,endInventory:invalid?null:E.balances(s)});
+  runs.push({mode,status:invalid?'INCONCLUSIVE_MODEL_PATH':paper&&s.pending?'VIRTUAL_INTENT_PENDING':'HYPOTHETICAL_REPLAY',...(paper?{virtualNavSol:invalid?null:r.nav,virtualWallet:invalid?null:s.wallet,virtualBins:invalid?null:s.bins,unclaimed:invalid?null:r.unclaimed,claimed:invalid?null:r.claimed,navSeries:invalid?[]:s.curve.map(v=>({t:v.t,nav:v.nav,drawdown:v.drawdown})),liquidation:invalid?null:E.liquidation(s,cfg)}:{}),pnlSol:invalid?null:r.pnl,alphaSol:invalid?null:r.alpha,feesSol:invalid?null:r.fee,costSol:invalid?null:r.cost,inventoryContributionSol:invalid?null:r.inventory,unattributedSol:invalid?null:r.unattributed,markout:invalid?null:r.markout,maxDrawdown:Math.max(0,...s.curve.map(b=>b.drawdown)),netPerSolHour:!invalid&&capitalSeconds>0?r.pnl*3600/capitalSeconds:null,riskBreaches:s.riskLog.length,quality:s.quality,pending:!!s.pending,decisions,missingStateReviews:missing,manualReviewOrInvalidationCount:gateCount,policyLog,modeledOperations:s.receipts.map(x=>({t:x.t,action:x.action,modeledStatus:x.status,reason:x.reason??null})),initialNavSol:s.initialNav,endInventory:invalid?null:E.balances(s)});
  }
  return {id:window.id,group:window.group,split:window.split,runs,source:'HYPOTHETICAL_FROZEN_PATH_NOT_CHAIN_PNL'};
 }

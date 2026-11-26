@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import {Engine} from '../engine.mjs';
+import {engineSourcePaths} from '../engine-source-paths.mjs';
 import {validateFreeze,validateSample} from './shadow-contract.mjs';
 import {replayWindow} from './shadow-policy.mjs';
 import {summarize} from './shadow-summary.mjs';
@@ -12,7 +13,7 @@ const HERE=dirname(fileURLToPath(import.meta.url)),ROOT=resolve(HERE,'../..'),DA
 const assert=(ok,m)=>{if(!ok)throw Error(m);};
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const files={engine:'../engine.mjs',plans:'preview-plans.mjs',management:'preview-management.mjs',contract:'shadow-contract.mjs',policy:'shadow-policy.mjs',runner:'shadow-run.mjs',summary:'shadow-summary.mjs'};
-async function codeHashes(){return Object.fromEntries(await Promise.all(Object.entries(files).map(async ([k,v])=>[k,sha(await readFile(resolve(HERE,v)))])));}
+async function codeHashes(){return Object.fromEntries(await Promise.all([...Object.entries(files).map(([k,v])=>[k,resolve(HERE,v)]),...engineSourcePaths.map(p=>[p,resolve(ROOT,p)])].map(async ([k,v])=>[k,sha(await readFile(v))])));}
 async function safePath(p){
  assert(typeof p==='string','evidence path missing');
  const v=await realpath(resolve(ROOT,p)),r=relative(await realpath(DATA),v);
