@@ -1,0 +1,6 @@
+{
+  "maxDrawdownBps": 1000,
+  "maxLossSolRaw": "1000000000",
+  "maxGapSeconds": 180,
+  "exitCostSolRaw": "2000000"
+}
