@@ -1,0 +1,5 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {historyRecord,validateHistoryRecord,appendHistoryShard} from './paper-history-core.mjs';
+const state=n=>({id:'run',pool:'pool',snapshotCount:n,last:{slot:n,proof:{}},feeBasis:'basis',backendHash:'f'.repeat(64),gapCount:0,rows:Array.from({length:8},(_,i)=>({mode:String(i),status:i?'BLOCKED':'HOLD_ONLY',points:i?[]:[{slot:n,navYRaw:'100'}]}))});
+test('chain includes blocked paths and exact orphan retry only',()=>{const a=historyRecord(state(1),null),b=historyRecord(state(2),a.recordHash),xs=appendHistoryShard([a],b);assert.equal(xs.length,2);assert.equal(xs[1].rows[1].point,null);assert.equal(validateHistoryRecord(b,{id:'run',pool:'pool',sequence:2,previousHash:a.recordHash}),b.recordHash);assert.equal(appendHistoryShard(xs,b),xs);assert.throws(()=>appendHistoryShard(xs,historyRecord({...state(2),gapCount:1},a.recordHash)));assert.throws(()=>validateHistoryRecord({...b,slot:9},{id:'run',pool:'pool',sequence:2,previousHash:a.recordHash}));assert.throws(()=>appendHistoryShard([],b))});
