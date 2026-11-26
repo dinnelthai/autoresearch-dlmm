@@ -18,7 +18,7 @@
 | T11 | Live shadow validation | Real events, frozen test, risk and costs versus fair baselines | Shadow framework draft; source fixture checks passed; actual reconciled samples and out-of-sample validation pending |
 | T12 | Single-pool terminal | Manual pool entry and plan preview | V4.5 approved; formal read-only terminal + local state/plans API code ready; live/browser integration pending |
 | T13 | Position monitoring | Actual position, suggestions, alerts and recovery | V4.5 capture/range monitoring, manual T10 and opt-in continuous risk observation, transition journal and historical recovery code ready; live acceptance pending |
-| T14 | Human-confirmed execution | Wallet, preview, simulation, limits, explicit signing and confirmation | Phase A identity/research review and B1 read-only wallet/ATA evidence code ready; actual message fee/debit, SDK quote, simulation, signing and confirmation pending |
+| T14 | Human-confirmed execution | Wallet, preview, simulation, limits, explicit signing and confirmation | Phase A identity/review, B1 wallet evidence, B2 conservative integer allocation diagnostic code ready; SDK mapping/build, actual message fee/debit, simulation, signing and confirmation pending |
 | T15 | Execution reconciliation | Confirmed on-chain outcomes; failure/idempotency checks | Pending |
 | T16 | Performance | Actual net PnL, fees, costs and HODL-relative attribution | V4.5 actual-vs-shadow view retained; actual accounting implementation pending |
 | T17 | End-to-end acceptance | Safety and evidence; any funded trial requires separate approval | Pending |
