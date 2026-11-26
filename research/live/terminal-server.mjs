@@ -23,18 +23,27 @@ async function jsonBody(req){assert(req.headers['content-type']?.split(';')[0]==
 function run(args){return new Promise((ok,fail)=>{const p=spawn(process.execPath,[join(ROOT,'research/live/analyze-state.mjs'),...args],{cwd:ROOT,stdio:['ignore','pipe','ignore']});let parts=[],size=0,failed=false;const timer=setTimeout(()=>{failed=true;p.kill('SIGKILL')},30000);p.stdout.on('data',b=>{size+=b.length;if(size>8*1024*1024){failed=true;p.kill('SIGKILL')}else parts.push(b)});p.once('error',e=>{clearTimeout(timer);fail(e)});p.once('close',()=>{clearTimeout(timer);try{assert(!failed,'ANALYSIS_TIMEOUT_OR_SIZE');ok(JSON.parse(Buffer.concat(parts).toString('utf8')))}catch(e){fail(e)}})})}
 function send(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value))}
 function blocked(reason){return {schemaVersion:1,pool,status:'BLOCKED',decisionReady:false,executionReady:false,gaps:[reason]}}
+// Review availability is a preflight, not verification of its underlying evidence.
+async function loadReview(m,now){
+ assert(cfg.review,'REVIEW_NOT_CONFIGURED');
+ let bytes;try{bytes=await readFile(await safeDataPath(cfg.review))}catch{throw Error('REVIEW_FILE_UNAVAILABLE')}
+ let review;try{review=JSON.parse(bytes)}catch{throw Error('REVIEW_JSON_INVALID')}
+ reviewMatches(review,m,now);
+ const expiry=(Math.min(review.asOf,review.marketObservedAt,review.observations.at(-1).t)+review.maxAgeSeconds)*1000;
+ return {review,reviewHash:sha(bytes),expiresAt:expiry};
+}
 async function overview(){
  const s=await loadState(),now=Date.now();assert(s.pool===pool&&s.schemaVersion===1&&s.decisionReady===false&&Number.isSafeInteger(s.sequence),'STATE_IDENTITY_MISMATCH');const streams=Object.fromEntries(Object.entries(s.streams??{}).map(([k,v])=>[k,{status:v.status,receivedAt:v.receivedAt??null,locallyFresh:Number.isSafeInteger(v.receivedAt)&&v.receivedAt<=now&&now-v.receivedAt<=maxAgeMs}]));
  const positions=[];for(const [k,v] of Object.entries(s.streams??{})){const p=v.evidence?.report;if(k.startsWith('position:')&&v.status==='CAPTURED_UNVERIFIED'&&streams[k].locallyFresh&&p?.pool===pool&&p.position===k.slice(9)&&p.status==='POSITION_CALCULATED_UNVERIFIED')positions.push(p)}
- let market=null,reason=null;try{const m=currentMarket(s,pool,now,maxAgeMs);market={slot:m.slot,rawHash:m.rawHash,activeId:m.activeId,binStep:m.binStep,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,decimalsY:m.decimalsY,receivedAt:m.receivedAt,binCount:m.bins.length}}catch(e){reason=e.message}
- return {pool,sequence:s.sequence??null,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason,market,positions,streams,decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY'};
+ let market=null,reason=null,reviewGate={status:'BLOCKED',reason:'MARKET_UNAVAILABLE'};try{const m=currentMarket(s,pool,now,maxAgeMs);market={slot:m.slot,rawHash:m.rawHash,activeId:m.activeId,binStep:m.binStep,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,decimalsY:m.decimalsY,receivedAt:m.receivedAt,binCount:m.bins.length,expiresAt:m.receivedAt+maxAgeMs};try{const r=await loadReview(m,now);reviewGate={status:'PREFLIGHT_MATCHED_UNVERIFIED',reviewHash:r.reviewHash,expiresAt:r.expiresAt}}catch(e){reviewGate={status:'BLOCKED',reason:e.message}}}catch(e){reason=e.message}
+ return {pool,sequence:s.sequence??null,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason,market,reviewGate,positions,streams,decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY'};
 }
 async function preview(body){
  const now=Date.now(),s=await loadState(),m=currentMarket(s,pool,now,maxAgeMs);
  assert(body?.marketSlot===m.slot&&body.marketRawHash===m.rawHash,'MARKET_CHANGED_REFRESH_REQUIRED');
  const request=requestFromDraft(body.draft,m);
- assert(cfg.review,'REVIEW_NOT_CONFIGURED');
- const review=JSON.parse(await readFile(await safeDataPath(cfg.review),'utf8'));reviewMatches(review,m,now);
+ const {review,reviewHash,expiresAt}=await loadReview(m,now);
+ assert(body.reviewHash===reviewHash,'REVIEW_CHANGED_REFRESH_REQUIRED');
  const base=join(DATA,'terminal');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'analysis-'));
  try{
   const requestJson=JSON.stringify(request),requestHash=sha(requestJson);
@@ -42,8 +51,8 @@ async function preview(body){
   const r=await run(['--state',join(dir,'state.json'),'--request',join(dir,'request.json'),'--review',join(dir,'review.json'),'--plans']);
   assert(r.pool===pool&&r.decisionReady===false&&r.executionReady===false,'ANALYSIS_CONTRACT_MISMATCH');
   if(r.market)assert(r.market.slot===m.slot&&r.market.rawHash===m.rawHash,'ANALYSIS_SNAPSHOT_MISMATCH');
-  const latest=currentMarket(await loadState(),pool,Date.now(),maxAgeMs);assert(latest.slot===m.slot&&latest.rawHash===m.rawHash,'MARKET_CHANGED_DURING_ANALYSIS');reviewMatches(review,m,Date.now());
-  return {...r,terminalBinding:{requestHash,marketSlot:m.slot,marketRawHash:m.rawHash,sequence:s.sequence,generatedAt:Date.now(),scope:'RESEARCH_ONLY'}};
+  const latest=currentMarket(await loadState(),pool,Date.now(),maxAgeMs);assert(latest.slot===m.slot&&latest.rawHash===m.rawHash,'MARKET_CHANGED_DURING_ANALYSIS');const after=await loadReview(latest,Date.now());assert(after.reviewHash===reviewHash,'REVIEW_CHANGED_DURING_ANALYSIS');
+  return {...r,terminalBinding:{requestHash,reviewHash,expiresAt:Math.min(expiresAt,m.receivedAt+maxAgeMs),marketSlot:m.slot,marketRawHash:m.rawHash,sequence:s.sequence,generatedAt:Date.now(),scope:'RESEARCH_ONLY'}};
  }finally{await rm(dir,{recursive:true,force:true})}
 }
 const server=createServer(async(req,res)=>{
@@ -51,7 +60,7 @@ const server=createServer(async(req,res)=>{
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
  try{
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
-  if(req.method==='GET'&&req.url==='/api/terminal/state'){try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,positions:[],streams:{}})}return}
+  if(req.method==='GET'&&req.url==='/api/terminal/state'){try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],streams:{}})}return}
   if(req.method==='POST'&&req.url==='/api/terminal/plans'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(busy){send(res,409,blocked('ANALYSIS_BUSY'));return}busy=true;
