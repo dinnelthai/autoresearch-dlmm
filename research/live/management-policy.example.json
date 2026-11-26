@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "pool": "REPLACE_WITH_POOL_ADDRESS",
+  "position": "REPLACE_WITH_POSITION_ADDRESS",
+  "owner": "REPLACE_WITH_POSITION_OWNER",
+  "capitalScope": "USER_DECLARED_ALLOCATION",
+  "allowDispose": false,
+  "goal": null,
+  "horizonSeconds": null,
+  "extraSolHuman": null,
+  "extraMemeHuman": null,
+  "riskConfig": {
+    "maxInventoryRatio": null,
+    "maxInventoryTokens": null,
+    "minSolReserve": null,
+    "maxLossSol": null,
+    "stressDrop": null,
+    "maxBinShare": null,
+    "operationCostSol": null,
+    "feeBps": null,
+    "protocolShare": null,
+    "slippageBps": null,
+    "cooldownSeconds": null,
+    "maxRebalances": null,
+    "maxTurnoverSol": null
+  }
+}
