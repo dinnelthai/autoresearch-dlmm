@@ -2,6 +2,14 @@
 import {createHash} from 'node:crypto';
 const sha=x=>createHash('sha256').update(x).digest('hex'),hash=x=>typeof x==='string'&&/^[0-9a-f]{64}$/.test(x);
 const assert=(x,m)=>{if(!x)throw Error(m)};
+const allowedFiles=new Set(['state.json','diagnostic.json','review.json','external.json','holder.json','capture-manifest.json']);
+export function snapshotFileList(m){
+ assert(Array.isArray(m?.files)&&m.files.length>=3&&m.files.length<=6,'SNAPSHOT_FILE_LIST_INVALID');
+ const seen=new Set();let total=0;
+ for(const f of m.files){assert(allowedFiles.has(f?.name)&&!seen.has(f.name)&&hash(f.sha256)&&Number.isSafeInteger(f.bytes)&&f.bytes>0&&f.bytes<=64*1024*1024,'SNAPSHOT_FILE_INVALID');seen.add(f.name);total+=f.bytes}
+ assert(total<=80*1024*1024&&['state.json','diagnostic.json','capture-manifest.json'].every(x=>seen.has(x)),'SNAPSHOT_FILE_BUDGET');
+ assert((m.reviewStatus==='MATCHED_HASHES_UNVERIFIED')===seen.has('review.json'),'SNAPSHOT_REVIEW_BINDING_INVALID');return m.files;
+}
 export function snapshotManifest({pool,market,createdAt,files,reviewStatus,diagnostic}){
  assert(market?.pool===pool&&Number.isSafeInteger(market.slot)&&market.slot>=0&&hash(market.rawHash)&&Number.isSafeInteger(createdAt)&&Array.isArray(files)&&files.length>=2&&files.length<=8,'SNAPSHOT_IDENTITY_INVALID');
  const seen=new Set();for(const f of files){assert(['state.json','diagnostic.json','review.json','external.json','holder.json','capture-manifest.json'].includes(f.name)&&!seen.has(f.name)&&hash(f.sha256)&&Number.isSafeInteger(f.bytes)&&f.bytes>0,'SNAPSHOT_FILE_INVALID');seen.add(f.name)}
@@ -13,6 +21,7 @@ export function snapshotManifest({pool,market,createdAt,files,reviewStatus,diagn
 }
 export function verifySnapshotManifest(m,files){
  const {snapshotId,...body}=m??{};assert(hash(snapshotId)&&sha(JSON.stringify(body))===snapshotId&&m.scope==='IMMUTABLE_RESEARCH_DIAGNOSTIC'&&m.modelInputReady===false&&m.decisionReady===false&&m.executionReady===false&&Array.isArray(m.files),'SNAPSHOT_MANIFEST_HASH_MISMATCH');
+ snapshotFileList(m);
  assert(files instanceof Map&&files.size===m.files.length&&m.files.every(f=>{const b=files.get(f.name);return b&&b.length===f.bytes&&sha(b)===f.sha256}),'SNAPSHOT_FILE_HASH_MISMATCH');
  return true;
 }

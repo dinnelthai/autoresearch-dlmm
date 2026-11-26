@@ -19,7 +19,8 @@ import {observeExternalMarket} from './external-market.mjs';
 import {inputStatus} from './research-input-status.mjs';
 import {captureHolderFeatures} from './capture-holder-features.mjs';
 import {cohortChange} from './market-features.mjs';
-import {snapshotManifest,reviewEvidenceRefs} from './research-snapshot.mjs';
+import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-snapshot.mjs';
+import {replayRequest,replayResult} from './research-replay.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
@@ -260,7 +261,7 @@ async function observeWallet(body){
  return {pool:scope,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
-let externalBusy=false,externalLast=null,holderBusy=false,holderLastAttempt=0,snapshotBusy=false;
+let externalBusy=false,externalLast=null,holderBusy=false,holderLastAttempt=0,snapshotBusy=false,replayBusy=false;
 const holderCache=new Map();
 async function holderObservation(body){
  const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),key=scope+':'+m.mintX,now=Date.now(),old=holderCache.get(key);
@@ -277,10 +278,11 @@ async function holderObservation(body){
 async function researchInputs(scope){
  const now=Date.now();let state=null,m=null,review=null,reason=null;
  try{state=await loadState(scope);m=currentMarket(state,scope,now,maxAgeMs)}catch{reason='MARKET_CAPTURE_UNAVAILABLE'}
- if(m&&scope===pool){try{review=(await loadReview(m,now)).review}catch(e){reason=e.message}}
+ if(m&&snapshotReviewPath(scope)){try{review=(await loadReview(m,now,snapshotReviewPath(scope))).review}catch(e){reason=e.message}}
  else if(m)reason='POOL_RESEARCH_NOT_CONFIGURED';
  return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:externalLast,holder:m?holderCache.get(scope+':'+m.mintX)?.public:null,review,reviewReason:reason,now,maxAgeMs});
 }
+function snapshotReviewPath(scope){const map=cfg.researchReviews;if(map&&typeof map==='object'&&!Array.isArray(map)&&Object.hasOwn(map,scope)&&typeof map[scope]==='string')return map[scope];return scope===pool?cfg.review:null}
 async function saveResearchSnapshot(body){
  const scope=validateScope(body?.pool),now=Date.now(),state=await loadState(scope),m=currentMarket(state,scope,now,maxAgeMs);
  assert(body.marketSlot===m.slot&&body.marketRawHash===m.rawHash,'MARKET_CHANGED_REFRESH_REQUIRED');
@@ -288,8 +290,9 @@ async function saveResearchSnapshot(body){
  assert(manifest.pool===scope&&manifest.contextSlot===m.slot&&manifest.commitment==='finalized'&&manifest.raw?.file==='accounts.json'&&manifest.raw.sha256===m.rawHash,'SNAPSHOT_RAW_IDENTITY_MISMATCH');
  assert(sha(await boundedRead(await safeDataPath(join(source,'accounts.json')),32*1024*1024))===m.rawHash,'SNAPSHOT_RAW_HASH_MISMATCH');
  let reviewed=null,reviewStatus='NOT_AVAILABLE';
- if(scope===pool&&cfg.review){try{
-  const candidate=await loadReview(m,now);let budget=64*1024*1024;
+ const reviewPath=snapshotReviewPath(scope);
+ if(reviewPath){try{
+  const candidate=await loadReview(m,now,reviewPath);let budget=64*1024*1024;
   for(const ref of reviewEvidenceRefs(candidate.review)){const b=await boundedRead(await safeDataPath(ref.path),Math.min(budget,8*1024*1024));assert(sha(b)===ref.sha256,'SNAPSHOT_REVIEW_HASH_MISMATCH');budget-=b.length}
   reviewed=candidate;reviewStatus='MATCHED_HASHES_UNVERIFIED';
  }catch{reviewStatus='REVIEW_MISSING_STALE_OR_UNVERIFIED'}}
@@ -305,6 +308,37 @@ async function saveResearchSnapshot(body){
  const base=join(DATA,'research-snapshots');await mkdir(base,{recursive:true,mode:0o700});const tmp=await mkdtemp(join(base,'.pending-')),dir=join(base,out.snapshotId);
  try{for(const [name,b] of files)await writeFile(join(tmp,name),b,{mode:0o600,flag:'wx'});await writeFile(join(tmp,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(tmp,dir)}catch(e){await rm(tmp,{recursive:true,force:true});throw e}
  return {...out,capture:relative(ROOT,dir)};
+}
+async function replayResearchSnapshot(body){
+ const scope=validateScope(body?.pool),id=body?.snapshotId;
+ assert(typeof id==='string'&&/^[0-9a-f]{64}$/.test(id),'INVALID_SNAPSHOT_ID');
+ const dir=await safeDataPath(join(DATA,'research-snapshots',id));
+ const manifest=JSON.parse(await boundedRead(await safeDataPath(join(dir,'manifest.json')),128*1024));
+ assert(manifest.snapshotId===id&&manifest.pool===scope,'REPLAY_SCOPE_INVALID');
+ const files=new Map();
+ for(const f of snapshotFileList(manifest)){const b=await boundedRead(await safeDataPath(join(dir,f.name)),f.bytes);files.set(f.name,b)}
+ const x=replayRequest(manifest,files,{pool:scope,snapshotId:id,draft:body.draft});
+ const source=await safeDataPath(x.market.capture);
+ assert(sha(await boundedRead(await safeDataPath(join(source,'manifest.json')),16*1024*1024))===sha(files.get('capture-manifest.json')),'REPLAY_CAPTURE_MANIFEST_CHANGED');
+ assert(sha(await boundedRead(await safeDataPath(join(source,'accounts.json')),32*1024*1024))===x.market.rawHash,'REPLAY_CAPTURE_HASH_MISMATCH');
+ let budget=64*1024*1024;for(const r of x.evidence){const b=await boundedRead(await safeDataPath(r.path),Math.min(budget,8*1024*1024));assert(sha(b)===r.sha256,'REPLAY_EVIDENCE_CHANGED');budget-=b.length}
+ const sourcePaths=['research/engine.mjs','research/integer.mjs','research/live/analyze-state.mjs','research/live/engine-input.mjs','research/live/preview-plans.mjs','research/live/research-replay.mjs','research/live/research-snapshot.mjs','research/live/terminal-core.mjs'];
+ const code=()=>Promise.all(sourcePaths.map(async path=>({path,sha256:sha(await readFile(join(ROOT,path)))})));
+ const sourceHashes=await code(),base=join(DATA,'research-runs',scope);await mkdir(base,{recursive:true,mode:0o700});
+ const tmp=await mkdtemp(join(base,'.pending-'));
+ try{
+  // Use verified bytes, not mutable service state or the current review config.
+  await writeFile(join(tmp,'state.json'),files.get('state.json'),{mode:0o600,flag:'wx'});
+  await writeFile(join(tmp,'review.json'),files.get('review.json'),{mode:0o600,flag:'wx'});
+  await writeFile(join(tmp,'request.json'),JSON.stringify(x.request),{mode:0o600,flag:'wx'});
+  const report=await run(['--state',join(tmp,'state.json'),'--request',join(tmp,'request.json'),'--review',join(tmp,'review.json'),'--plans']);
+  assert(JSON.stringify(await code())===JSON.stringify(sourceHashes),'REPLAY_CODE_CHANGED');
+  const out=replayResult({manifest,request:x.request,report,sourceHashes,generatedAt:Date.now()});
+  await writeFile(join(tmp,'report.json'),JSON.stringify(report),{mode:0o600,flag:'wx'});
+  await writeFile(join(tmp,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});
+  const resultDir=join(base,out.runId);await rename(tmp,resultDir);
+  return {...out,report,capture:relative(ROOT,resultDir)};
+ }catch(e){await rm(tmp,{recursive:true,force:true});throw e}
 }
 async function externalObservation(body){
  const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),now=Date.now();
@@ -362,6 +396,11 @@ const server=createServer(async(req,res)=>{
    if(positionReadBusy){send(res,409,blocked('POSITION_CAPTURE_BUSY'));return}positionReadBusy=true;
    try{const body=await jsonBody(req);send(res,200,await (req.url.endsWith('-detail')?readPositionDetail(body):readPositionIndex(body)))}finally{positionReadBusy=false}return
   }
+  if(req.method==='POST'&&req.url==='/api/terminal/research-replay'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   if(replayBusy||busy){send(res,409,blocked('REPLAY_BUSY'));return}replayBusy=true;
+   try{send(res,200,await replayResearchSnapshot(await jsonBody(req)))}finally{replayBusy=false}return
+  }
   if(req.method==='POST'&&req.url==='/api/terminal/research-snapshot'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(snapshotBusy){send(res,409,blocked('SNAPSHOT_BUSY'));return}snapshotBusy=true;
@@ -393,7 +432,7 @@ const server=createServer(async(req,res)=>{
   }
   if(req.method==='POST'&&['/api/terminal/plans','/api/terminal/management'].includes(req.url)){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
-   if(busy){send(res,409,blocked('ANALYSIS_BUSY'));return}busy=true;
+   if(busy||replayBusy){send(res,409,blocked('ANALYSIS_BUSY'));return}busy=true;
    try{const mode=req.url.endsWith('/management')?'management':'plans';send(res,200,rememberReport(await preview(await jsonBody(req),mode),mode))}finally{busy=false}return
   }
   send(res,404,blocked('NOT_FOUND'));
