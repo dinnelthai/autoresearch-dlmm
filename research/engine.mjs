@@ -41,11 +41,14 @@ function createResearchEngine() {
     const rs=e.references.filter(r=>r.pool!==e.pool&&typeof r.pool==="string"&&typeof r.price==="number"&&r.price>0&&Number.isFinite(r.price)&&typeof r.depth==="number"&&Number.isFinite(r.depth)&&r.depth>=c.minDepthSol&&Number.isFinite(r.availableAt)&&r.availableAt<=e.t&&r.availableAt>=e.t-c.maxReferenceAge&&Number.isFinite(r.observedAt??r.availableAt)&&(r.observedAt??r.availableAt)<=r.availableAt&&(r.observedAt??r.availableAt)>=e.t-c.maxReferenceAge);
     const uniq=[...new Map(rs.slice().sort((a,b)=>a.availableAt-b.availableAt).map(r=>[r.pool,r])).values()];
     if(uniq.length<2)return {valid:false,reason:"INSUFFICIENT_INDEPENDENT_POOLS"};
-    const ps=uniq.map(r=>r.price),p=sum(uniq.map(r=>r.price*r.depth))/sum(uniq.map(r=>r.depth));
+    const ps=uniq.map(r=>r.price),depth=sum(uniq.map(r=>r.depth));
+    if(!Number.isFinite(depth)||depth<=0)return {valid:false,reason:'REFERENCE_NUMERIC_DOMAIN'};
+    const p=sum(uniq.map(r=>r.price*(r.depth/depth)));
+    if(!Number.isFinite(p)||p<=0)return {valid:false,reason:'REFERENCE_NUMERIC_DOMAIN'};
     if((Math.max(...ps)-Math.min(...ps))/p>c.maxReferenceDivergence)return {valid:false,reason:"REFERENCE_DIVERGENCE"};
-    return {valid:true,price:p,depth:sum(uniq.map(r=>r.depth)),pools:uniq.map(r=>r.pool),expiresAt:Math.min(...uniq.map(r=>(r.observedAt??r.availableAt)+c.maxReferenceAge))};
+    return {valid:true,price:p,depth,pools:uniq.map(r=>r.pool),expiresAt:Math.min(...uniq.map(r=>(r.observedAt??r.availableAt)+c.maxReferenceAge))};
   }
-  function fresh(s,c,t=s.lastTime){return !!s.market?.ref.valid&&t<=s.market.ref.expiresAt&&t-s.market.t<=c.maxReferenceAge;}
+  function fresh(s,c,t=s.lastTime){return !!s.market?.ref.valid&&t>=s.market.t&&t<=s.market.ref.expiresAt&&t-s.market.t<=c.maxReferenceAge;}
   function classify(s,c){
     const m=s.market;if(!m||!fresh(s,c))return {regime:"UNKNOWN",flags:["REFERENCE_UNAVAILABLE"],features:{}};
     const flags=[];
@@ -135,7 +138,9 @@ function createResearchEngine() {
   }
   function applyAction(s,c,action,t,opts={}){
     const p=fresh(s,c,t)?s.market.ref.price:null;
-    const k=action.type;if(["HOLD","NO_LP"].includes(k))return {status:"NO_ACTION"};
+    const k=action.type;
+    assert(!['DISPOSE','REMOVE_AND_DISPOSE'].includes(k)||s.allowDispose===true,'DISPOSAL_NOT_ALLOWED');
+    if(["HOLD","NO_LP"].includes(k))return {status:"NO_ACTION"};
     if(k==="FUND"||k==="WITHDRAW"){assert(p!==null,"reference required for external flows");const x=finite(action.x??0,"flow x"),y=finite(action.y??0,"flow y"),sign=k==="FUND"?1:-1;if(sign<0)assert(x<=Math.min(s.wallet.x,s.baseline.x)+EPS&&y<=Math.min(s.wallet.y,s.baseline.y)+EPS,"withdraw exceeds wallet or matched HODL inventory");s.wallet.x+=sign*x;s.wallet.y+=sign*y;s.baseline.x+=sign*x;s.baseline.y+=sign*y;s.externalFlows+=sign*(x*p+y);return {status:"CONFIRMED"}}
     assert(p!==null||["CLAIM","REMOVE","REMOVE_AND_HOLD","REDUCE"].includes(k),"reference required for "+k);
     pay(s,c.operationCostSol);
@@ -227,12 +232,16 @@ function createResearchEngine() {
     });
   }
   function evaluate(s,c,action,scenarios){
-    const p=s.market.ref.price,base=nav(s,p),out=[];
     let start;
-    try{start=clone(s);start.pending=null;const a=applyAction(start,c,action,s.lastTime);const g=classify(start,c),rr=risk(start,c,p);
+    try{
+      assert(fresh(s,c),'REFERENCE_UNAVAILABLE_OR_STALE');
+      assert(Array.isArray(scenarios)&&scenarios.length>0&&scenarios.every(v=>Array.isArray(v.events)&&v.events.length>0),'SCENARIO_SAMPLE_EMPTY');
+      const p=s.market.ref.price,base=nav(s,p),out=[];
+      assert(Number.isFinite(base)&&base>0,'SCENARIO_BASE_INVALID');
+      start=clone(s);start.pending=null;const a=applyAction(start,c,action,s.lastTime);const g=classify(start,c),rr=risk(start,c,p);
       if(["OPEN","ADD","REPOSITION"].includes(action.type)){
         if(!start.bins.length)throw Error("EMPTY_DEPLOYMENT");
-        if(action.type==="REPOSITION"&&(start.turnover+start.rebalanceTurnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances))throw Error("REBALANCE_BUDGET");
+        if(start.turnover+start.rebalanceTurnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances)throw Error("REBALANCE_BUDGET");
         if(["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION"))throw Error("MARKET_ADMISSION");
         if(g.flags.includes("TOXIC_BID")&&sum(start.bins.map(b=>b.y))>EPS)throw Error("TOXIC_BID");
         if(g.flags.includes("TOXIC_ASK")&&sum(start.bins.map(b=>b.x))>EPS)throw Error("TOXIC_ASK");
@@ -243,11 +252,14 @@ function createResearchEngine() {
         if(!["HOLD","NO_LP"].includes(action.type))submit(sim,c,action,s.lastTime);
         for(const e of scenario.events){event(sim,c,e);executePending(sim,c,e.t);}
         if(sim.pending||sim.receipts.slice(s.receipts.length).some(r=>["REJECTED","FAILED","EXPIRED"].includes(r.status)))throw Error("SCENARIO_EXECUTION_UNAVAILABLE");
+        assert(fresh(sim,c),'SCENARIO_END_REFERENCE_UNAVAILABLE');
         const end=reportAt(sim,sim.market.ref.price),before=reportAt(s,sim.market.ref.price);
+        assert([end.nav,end.alpha,end.ratio,end.fee,end.cost,before.alpha,before.fee,before.cost].every(Number.isFinite),'SCENARIO_NONFINITE_OUTPUT');
         if(sim.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT"))throw Error("FROZEN_PATH_SHARE_LIMIT");
         out.push({name:scenario.name,incrementalAlpha:end.alpha-before.alpha,pnl:end.nav-base,loss:Math.max(0,base-end.nav),ratio:end.ratio,fee:end.fee-before.fee,cost:end.cost-before.cost});
       }
       const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
+      assert(Number.isFinite(utility)&&Number.isFinite(tail),'SCENARIO_NONFINITE_SCORE');
       return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
     }catch(err){return {action,feasible:false,reason:err.message}}
   }
@@ -273,6 +285,7 @@ function createResearchEngine() {
       return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"MARKET_GATE",regime:g.regime,risk:r,candidates:[]};
     }
     const sc=forecast(s,c),results=candidatePlans(s,c,mode).map(a=>evaluate(s,c,a,sc)),feasible=results.filter(a=>a.feasible).sort((a,b)=>b.utility-a.utility),base=results[0];
+    if(!s.bins.length&&!base?.feasible)return {action:{type:'NO_LP'},reason:'BASELINE_UNAVAILABLE_NO_DEPLOYMENT',regime:g.regime,risk:r,candidates:results};
     if(!feasible.length)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"RISK_BLOCKED",regime:g.regime,risk:r,candidates:results};
     let best=feasible[0];
     if(base.feasible&&best.action.type!==base.action.type&&best.utility-base.utility<=c.uncertaintySol+c.minImprovementSol)best=base;
