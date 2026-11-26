@@ -217,18 +217,28 @@ function createResearchEngine() {
   }
   function forecast(s,c){
     const m=s.market,p=m.ref.price,mid=binId(c,p),step=1+c.binStepBps/10000;
+    const flowWindow=Number.isFinite(m.flowWindowSeconds)&&m.flowWindowSeconds>0?m.flowWindowSeconds:null;
+    const stepSeconds=c.forecastHorizonSeconds/c.forecastSteps;
+    const stepVolume=flowWindow?finite(m.flowSol,"forecast observed flow")*stepSeconds/flowWindow:0;
+    assert(Number.isFinite(stepVolume),"FORECAST_VOLUME_NONFINITE");
     const g=classify(s,c),r=g.features,amp=clip(Math.round((r.volatility||.02)/Math.log(step)),2,8);
     const drift=g.regime==="UPTREND"?1:g.regime==="DOWNTREND"?-1:0;
     const patterns=[{name:"range",f:i=>Math.round(amp*Math.sin(i*Math.PI/2))},{name:"up",f:i=>i},{name:"down",f:i=>-i},{name:"whipsaw",f:i=>i<c.forecastSteps/2?i:-i},{name:"stress",f:i=>-Math.round(i*amp/2)}];
     return patterns.map((pat,j)=>{
-      const events=[];
+      const events=[];let modeledVolumeSol=0,missingLiquiditySteps=0;
       for(let i=1;i<=c.forecastSteps;i++){
         const id=mid+pat.f(i)+(j===0?drift*i:0),px=price(c,id),t=s.lastTime+c.forecastHorizonSeconds*i/c.forecastSteps;
-        events.push({type:"MARKET",id:"f"+j+"m"+i,t,pool:m.pool,references:[{pool:"scenario-a",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t},{pool:"scenario-b",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t}],exitDepth:m.exitDepth,tokenSafe:m.tokenSafe,holderShare:m.holderShare,holderOutflow:m.holderOutflow,buyImbalance:m.buyImbalance,flowSol:m.flowSol});
-        const qty=Math.max(0,m.flowSol||0)/px*.25,side=pat.f(i)+(j===0?drift*i:0)>=pat.f(i-1)+(j===0?drift*(i-1):0)?"LP_SELL":"LP_BUY",fee=qty*c.feeBps/10000*(1-c.protocolShare);
-        events.push({type:"SWAP",id:"f"+j+"s"+i,t,bin:id,side,baseQty:qty,externalLiquiditySol:Math.max(10,m.ref.depth/2),mmFeeX:side==="LP_BUY"?fee:0,mmFeeY:side==="LP_SELL"?fee*px:0});
+        events.push({type:"MARKET",id:"f"+j+"m"+i,t,pool:m.pool,references:[{pool:"scenario-a",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t},{pool:"scenario-b",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t}],exitDepth:m.exitDepth,tokenSafe:m.tokenSafe,holderShare:m.holderShare,holderOutflow:m.holderOutflow,buyImbalance:m.buyImbalance,flowSol:m.flowSol,flowWindowSeconds:flowWindow});
+        // Frozen target-bin liquidity, never independent-reference quote depth.
+        // Only the explicit built-in demo uses its declared synthetic liquidity proxy.
+        const ext=s.poolBins[id]??(m.pool==="DEMO_POOL"&&m.syntheticFixture===true?80:null);
+        if(!(stepVolume>0))continue;
+        if(!Number.isFinite(ext)||ext<=0){missingLiquiditySteps++;continue;}
+        const qty=stepVolume/px,side=pat.f(i)+(j===0?drift*i:0)>=pat.f(i-1)+(j===0?drift*(i-1):0)?"LP_SELL":"LP_BUY",fee=qty*c.feeBps/10000*(1-c.protocolShare);
+        events.push({type:"SWAP",id:"f"+j+"s"+i,t,bin:id,side,baseQty:qty,externalLiquiditySol:ext,mmFeeX:side==="LP_BUY"?fee:0,mmFeeY:side==="LP_SELL"?fee*px:0});
+        modeledVolumeSol+=stepVolume;
       }
-      return {name:pat.name,events};
+      return {name:pat.name,events,volumeDiagnostic:{flowWindowSeconds:flowWindow,projectedVolumeSol:stepVolume*c.forecastSteps,modeledVolumeSol,missingLiquiditySteps,liquidityBasis:"FROZEN_TARGET_BIN_VALUE_PROXY",calibrated:false}};
     });
   }
   function evaluate(s,c,action,scenarios){
@@ -241,6 +251,7 @@ function createResearchEngine() {
       start=clone(s);start.pending=null;const a=applyAction(start,c,action,s.lastTime);const g=classify(start,c),rr=risk(start,c,p);
       if(["OPEN","ADD","REPOSITION"].includes(action.type)){
         if(!start.bins.length)throw Error("EMPTY_DEPLOYMENT");
+        if(scenarios.some(v=>v.volumeDiagnostic&&(!v.volumeDiagnostic.flowWindowSeconds||v.volumeDiagnostic.modeledVolumeSol<=0)))throw Error("FORECAST_VOLUME_EVIDENCE_UNAVAILABLE");
         if(start.turnover+start.rebalanceTurnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances)throw Error("REBALANCE_BUDGET");
         if(["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION"))throw Error("MARKET_ADMISSION");
         if(g.flags.includes("TOXIC_BID")&&sum(start.bins.map(b=>b.y))>EPS)throw Error("TOXIC_BID");
@@ -276,7 +287,7 @@ function createResearchEngine() {
       }
       const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),terminalCvar=cvar(out.map(a=>a.terminalLoss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
       assert(Number.isFinite(utility)&&Number.isFinite(tail),'SCENARIO_NONFINITE_SCORE');
-      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
+      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},volumeDiagnostics:scenarios.map(v=>v.volumeDiagnostic??null),scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
     }catch(err){return {action,feasible:false,reason:err.message}}
   }
   function candidatePlans(s,c,mode="adaptive"){
@@ -390,7 +401,7 @@ function createResearchEngine() {
     const c=config(overrides),events=[],ids=kind==="up"?[0,1,2,3,4,5,6,7,8,9,10,11]:kind==="down"?[0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11]:kind==="crash"?[0,1,-1,2,0,-1,-30,-35,-40,-43,-45,-50]:[0,1,-1,2,-2,3,-3,2,-2,1,-1,0,2,-2,3,-3,0,1,-1,0];
     for(let i=0;i<ids.length;i++){
       const id=ids[i],p=price(c,id),t=i*60,qty=8/p,side=i&&id<ids[i-1]?"LP_BUY":"LP_SELL",fee=qty*c.feeBps/10000*(1-c.protocolShare);
-      events.push({type:"MARKET",id:"m"+i,t,pool:"DEMO_POOL",references:[{pool:"DEMO_A",price:p,depth:80,availableAt:t},{pool:"DEMO_B",price:p,depth:60,availableAt:t}],exitDepth:kind==="crash"&&i>=6?0.5:30,tokenSafe:true,holderShare:.25,holderOutflow:0,buyImbalance:0,flowSol:32});
+      events.push({type:"MARKET",id:"m"+i,t,pool:"DEMO_POOL",references:[{pool:"DEMO_A",price:p,depth:80,availableAt:t},{pool:"DEMO_B",price:p,depth:60,availableAt:t}],exitDepth:kind==="crash"&&i>=6?0.5:30,tokenSafe:true,holderShare:.25,holderOutflow:0,buyImbalance:0,flowSol:32,flowWindowSeconds:240,syntheticFixture:true});
       events.push({type:"SWAP",id:"s"+i,t:t+1,bin:id,side,baseQty:qty,externalLiquiditySol:80,mmFeeX:side==="LP_BUY"?fee:0,mmFeeY:side==="LP_SELL"?fee*p:0});
     }
     return events;
