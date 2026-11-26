@@ -84,14 +84,68 @@ jobs:
           node --test research/live/sdk-runtime.test.mjs
           git diff --exit-code -- research/live/package.json research/live/package-lock.json
       - name: Verify required direct ESM contract without fallback
+        id: direct-esm
         working-directory: research/live
         run: |
           node --input-type=module -e 'import DLMM,* as sdk from "@meteora-ag/dlmm"; for(const k of ["createProgram","wrapPosition","getBinArrayIndexesCoverage","deriveBinArray","deriveBinArrayBitmapExtension","getBinArrayLowerUpperBinId","deriveEventAuthority","binIdToBinArrayIndex","toWeightDistribution","toAmountBidSide","toAmountAskSide","toAmountBothSide"]) if(typeof sdk[k]!=="function") throw Error("missing SDK helper "+k); for(const k of ["POSITION_MAX_LENGTH","MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX","DEFAULT_BIN_PER_POSITION"]) if(sdk[k]==null) throw Error("missing SDK constant "+k); if(typeof DLMM?.create!=="function") throw Error("missing DLMM.create"); console.log("Direct ESM exports present; security and protocol acceptance still open")'
+      - name: Test explicit ESM import path candidate in disposable installed copy
+        if: ${{ always() && steps['direct-esm'].outcome == 'failure' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd research/live
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync,existsSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          import {createRequire} from 'node:module';
+          import assert from 'node:assert/strict';
+          const require=createRequire(import.meta.url);
+          const file='node_modules/@meteora-ag/dlmm/dist/index.mjs';
+          const original=readFileSync(file,'utf8');
+          const sha=x=>createHash('sha256').update(x).digest('hex');
+          let originalError;
+          try{await import('@meteora-ag/dlmm')}catch(e){originalError=e}
+          assert.equal(originalError?.code,'ERR_UNSUPPORTED_DIR_IMPORT');
+          assert.ok(originalError.url.endsWith('/@coral-xyz/anchor/dist/cjs/utils/bytes'));
+          const target='@coral-xyz/anchor/dist/cjs/utils/bytes';
+          assert.ok(existsSync(require.resolve(target+'/index.js')));
+          const literals=['"'+target+'"',"'"+target+"'"];
+          const count=literals.reduce((n,v)=>n+original.split(v).length-1,0);
+          assert.ok(count>0);
+          const candidate=literals.reduce((s,v)=>s.split(v).join(v.slice(0,-1)+'/index.js'+v.slice(-1)),original);
+          const evidence={scope:'DISPOSABLE_ESM_PATH_CANDIDATE_ONLY',originalError:originalError.code,originalSha256:sha(original),candidateSha256:sha(candidate),replacementCount:count,originalArtifactChanged:false,liveAcceptance:false,passed:false};
+          const report='../../data/acceptance/sdk-esm-candidate.json';
+          writeFileSync(report,JSON.stringify(evidence,null,2)+'\n');
+          writeFileSync(file,candidate);
+          try{
+            // A fresh process is required after a failed ESM link. Run the child below.
+            console.log(JSON.stringify(evidence));
+          }catch(e){writeFileSync(file,original);throw e}
+          JS
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {createRequire} from 'node:module';
+          import {readFileSync,writeFileSync} from 'node:fs';
+          const report='../../data/acceptance/sdk-esm-candidate.json';
+          const evidence=JSON.parse(readFileSync(report,'utf8'));
+          try{
+            const esm=await import('@meteora-ag/dlmm'),require=createRequire(import.meta.url),cjs=require('@meteora-ag/dlmm');
+            const {BN}=require('@coral-xyz/anchor');
+            for(const k of ['createProgram','wrapPosition','getBinArrayIndexesCoverage','deriveBinArray','deriveBinArrayBitmapExtension','getBinArrayLowerUpperBinId','deriveEventAuthority','binIdToBinArrayIndex','toWeightDistribution','toAmountBidSide','toAmountAskSide','toAmountBothSide','positionV2Filter','positionLbPairFilter','positionOwnerFilter']){assert.equal(typeof esm[k],'function',k);assert.equal(typeof cjs[k],'function',k)}
+            for(const k of ['POSITION_MAX_LENGTH','MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX','DEFAULT_BIN_PER_POSITION']){assert.notEqual(esm[k],null,k);assert.equal(String(esm[k]),String(cjs[k]),k)}
+            assert.equal(typeof esm.default.create,'function');
+            for(const id of [-71,-70,-1,0,69,70]){const a=esm.binIdToBinArrayIndex(new BN(id)),b=cjs.binIdToBinArrayIndex(new BN(id));assert.equal(a.toString(),String(Math.floor(id/70)));assert.equal(a.toString(),b.toString());assert.deepEqual(esm.getBinArrayLowerUpperBinId(a).map(String),cjs.getBinArrayLowerUpperBinId(b).map(String))}
+            evidence.passed=true;
+          }catch(e){evidence.failureCode=e.code??e.name;evidence.failureMessage=e.message;process.exitCode=1}
+          finally{writeFileSync(report,JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence))}
+          JS
       - name: Retain build identity evidence only
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sdk-independent-build
-          path: data/acceptance/sdk-independent-build.json
+          path: |
+            data/acceptance/sdk-independent-build.json
+            data/acceptance/sdk-esm-candidate.json
           if-no-files-found: warn
           retention-days: 7
