@@ -33,11 +33,12 @@ async function main(){
    return p.result;
   }catch{manifest.gaps.push({method,file,reason:'NETWORK_OR_STORAGE_FAILURE'});return null;}
  }
- let cursor=values.before;const seen=new Set(),slots=new Set();
+ let cursor=values.before;manifest.nextBefore=cursor??null;const seen=new Set(),slots=new Set();
  for(let i=0;i<pages;i++){
   const cfg={commitment:'finalized',limit,...(cursor?{before:cursor}:{})};
   const rows=await rpc('getSignaturesForAddress',[indexAddress,cfg],'signatures-'+i+'.json');
   if(!Array.isArray(rows)){manifest.gaps.push({reason:'SIGNATURE_PAGE_UNAVAILABLE',page:i});break;}
+  if(rows.length>limit){manifest.gaps.push({reason:'SIGNATURE_PAGE_LIMIT_EXCEEDED',page:i});break;}
   if(rows.length===0){manifest.stopReason='EMPTY_PAGE';break;}
   for(const row of rows){
    if(typeof row.signature!=='string'||!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(row.signature)||!Number.isSafeInteger(row.slot)||row.slot<0||seen.has(row.signature)){manifest.gaps.push({reason:'INVALID_OR_DUPLICATE_SIGNATURE',page:i});continue;}
@@ -56,10 +57,10 @@ async function main(){
   for(const s of manifest.signatures.filter(s=>s.slot===slot))if(!b.signatures.includes(s.signature))manifest.gaps.push({signature:s.signature,slot,reason:'SIGNATURE_NOT_IN_BLOCK'});
  }
  manifest.stopReason??='PAGE_BUDGET_OR_ERROR';
- manifest.status=manifest.signatures.length&&!manifest.gaps.length?'BOUNDED_SAMPLE_CAPTURED_UNVERIFIED':'PARTIAL';
+ manifest.status=!manifest.gaps.length?(manifest.signatures.length?'BOUNDED_SAMPLE_CAPTURED_UNVERIFIED':manifest.stopReason==='EMPTY_PAGE'?'EMPTY_PAGE_OBSERVED_UNVERIFIED':'PARTIAL'):'PARTIAL';
  manifest.completedAt=new Date().toISOString();
  await writeFile(join(dir,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{mode:0o600,flag:'wx'});
  console.log(JSON.stringify({directory:dir,status:manifest.status,signatures:manifest.signatures.length,gaps:manifest.gaps.length,nextBefore:manifest.nextBefore}));
- if(manifest.status!=='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED')process.exitCode=1;
+ if(!['BOUNDED_SAMPLE_CAPTURED_UNVERIFIED','EMPTY_PAGE_OBSERVED_UNVERIFIED'].includes(manifest.status))process.exitCode=1;
 }
 main().catch(()=>{console.error('T04 capture blocked: check configuration or local storage.');process.exitCode=1;});
