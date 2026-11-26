@@ -30,4 +30,5 @@ export function reviewMatches(review,m,now){
  const t=Math.floor(now/1000);
  assert(review?.pool===m.pool&&review.marketSlot===m.slot&&review.marketRawHash===m.rawHash&&review.mintX===m.mintX&&review.mintY===m.mintY,'REVIEW_SNAPSHOT_MISMATCH');
  assert(Number.isSafeInteger(review.asOf)&&Number.isSafeInteger(review.maxAgeSeconds)&&review.maxAgeSeconds>0&&review.maxAgeSeconds<=600&&review.asOf<=t&&t-review.asOf<=review.maxAgeSeconds,'REVIEW_STALE_OR_INVALID');
+ const latest=review.observations?.at(-1);assert(Number.isSafeInteger(review.marketObservedAt)&&review.marketObservedAt<=t&&t-review.marketObservedAt<=review.maxAgeSeconds&&Number.isSafeInteger(latest?.t)&&latest.t<=t&&t-latest.t<=review.maxAgeSeconds,'REVIEW_OBSERVATION_STALE');
 }
