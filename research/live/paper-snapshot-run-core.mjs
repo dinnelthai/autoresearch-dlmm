@@ -6,6 +6,9 @@ import {snapshotRows,estimateFeeGrowth} from './paper-fee-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits)),'PAPER_SNAPSHOT_RAW_INVALID');return BigInt(v)};
 const s=v=>v.toString(),Q=K.Q;
+export const PAPER_SNAPSHOT_LIMIT=200000;
+const RETAINED_POINTS=1000;
+function appendPoint(row,point){const points=[...row.points,point];return {points:points.slice(-RETAINED_POINTS),pointsDropped:(row.pointsDropped??0)+Math.max(0,points.length-RETAINED_POINTS),maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps)}}
 const modes=['NO_LP','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid','adaptive'];
 const limits=['openOrderAmountRaw','totalProcessingOrderAmountRaw','processedOrderRemainingAmountRaw'];
 function facts(snapshot){
@@ -47,13 +50,13 @@ export function openSnapshotExperiment({id,snapshot,report,budget,policy,backend
    assert(wallet.x>=0n&&wallet.y>=0n&&(!opened||wallet.y>=exitCost),'PAPER_SNAPSHOT_WALLET_OR_EXIT_RESERVE');
    const p=opened?principal(a.map,r.rows):zero();
    const pt=samplePoint({slot:a.i.slot,received:a.received,price:a.price,wallet,principal:p,fees:zero(),initial,hold:initial,peak:initial,cost,status:base.status});
-   return {...base,points:[pt]};
+   return {...base,points:[pt],pointsDropped:0,maxDrawdownBps:pt.drawdownBps,claimedFeeXRaw:'0',claimedFeeYRaw:'0'};
   }catch(e){return {...base,status:'BLOCKED',reason:errorCode(e,'PAPER_SNAPSHOT_OPEN_FAILED')}}
  });
- return {schemaVersion:1,scope:'PAPER_SNAPSHOT_FIXED_SHARE_ONLY',status:'SNAPSHOT_RESEARCH_UNVERIFIED',id,pool:a.i.pool,mintX:a.i.mintX,mintY:a.i.mintY,decimalsX:a.i.sides[0].decimals,decimalsY:9,frozenAt,backendHash,policy:{...policy,exitCostSolRaw:s(exitCost),maxLossSolRaw:s(maxLoss)},capital:{xRaw:s(capital.x),yRaw:s(capital.y)},opening:{slot:a.i.slot,proof:a.proof},last:{slot:a.i.slot,proof:a.proof},snapshotCount:1,rows,decisionReady:false,executionReady:false,pnlReady:false,protocolExact:false,coverageVerified:false,calibrated:false,limitations:['Observed-share principal and cumulative observed fee entitlement on the external market path; not an added-liquidity counterfactual. No dilution fees or swap replay fees added.','Constant supply at each observed endpoint only; intervening changes, trade paths and execution prices unknown.','Active Bin Q64 mark in raw Y units; not independent reference or executable exit value.','Virtual exits are same-snapshot accounting marks minus declared cost; no actual realized PnL, liquidation guarantee or strategy rebalance.','Initial plan frozen locally; capture timestamps and local archive integrity do not prove independent causal provenance.']};
+ return {schemaVersion:1,scope:'PAPER_SNAPSHOT_FIXED_SHARE_ONLY',status:'SNAPSHOT_RESEARCH_UNVERIFIED',id,pool:a.i.pool,mintX:a.i.mintX,mintY:a.i.mintY,decimalsX:a.i.sides[0].decimals,decimalsY:9,frozenAt,backendHash,policy:{...policy,exitCostSolRaw:s(exitCost),maxLossSolRaw:s(maxLoss)},capital:{xRaw:s(capital.x),yRaw:s(capital.y)},opening:{slot:a.i.slot,proof:a.proof},last:{slot:a.i.slot,proof:a.proof},snapshotCount:1,rows,decisionReady:false,executionReady:false,pnlReady:false,protocolExact:false,coverageVerified:false,calibrated:false,limitations:['Observed-share principal and cumulative observed fee entitlement on the external market path; not an added-liquidity counterfactual. No dilution fees or swap replay fees added.','Constant supply at each observed endpoint only; intervening changes, trade paths and execution prices unknown.','Active Bin Q64 mark in raw Y units; not independent reference or executable exit value.','Virtual exits are same-snapshot accounting marks minus declared cost; no actual realized PnL, liquidation guarantee or strategy rebalance.','Initial plan frozen locally; capture timestamps and local archive integrity do not prove independent causal provenance.','Latest 1000 points retained per strategy; lifetime peak, max sampled drawdown and claimed fees retained. Not a complete historical series.']};
 }
 export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,exit=false,segmentOpenings={}}){
- assert(state?.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.status==='SNAPSHOT_RESEARCH_UNVERIFIED'&&state.backendHash===backendHash&&state.executionReady===false&&state.pnlReady===false&&Number.isSafeInteger(state.snapshotCount)&&state.snapshotCount<1000&&Array.isArray(state.rows)&&state.rows.length===8&&state.rows.every((r,i)=>r.mode===modes[i]),'PAPER_SNAPSHOT_CHECKPOINT_SCOPE');
+ assert(state?.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.status==='SNAPSHOT_RESEARCH_UNVERIFIED'&&state.backendHash===backendHash&&state.executionReady===false&&state.pnlReady===false&&Number.isSafeInteger(state.snapshotCount)&&state.snapshotCount<PAPER_SNAPSHOT_LIMIT&&Array.isArray(state.rows)&&state.rows.length===8&&state.rows.every((r,i)=>r.mode===modes[i]),'PAPER_SNAPSHOT_CHECKPOINT_SCOPE');
  const a=facts(opening),b=facts(previous),c=facts(snapshot);scope(a,b);scope(b,c);
  assert(state.opening.slot===a.i.slot&&state.opening.proof.manifestHash===a.proof.manifestHash&&state.opening.proof.accountsHash===a.proof.accountsHash&&state.last.slot===b.i.slot&&state.last.proof.manifestHash===b.proof.manifestHash&&state.last.proof.accountsHash===b.proof.accountsHash&&state.pool===c.i.pool&&state.mintX===c.i.mintX&&state.mintY===c.i.mintY,'PAPER_SNAPSHOT_CHECKPOINT_BINDING');
  assert(c.i.slot>b.i.slot&&c.requested>state.frozenAt&&c.requested>=b.received&&c.received<=now,'PAPER_SNAPSHOT_ORDER_OR_LOOKAHEAD');
@@ -64,7 +67,7 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
   const last=r.points.at(-1),block=reason=>({...r,status:'BLOCKED',reason,blockedAtSlot:c.i.slot});
   try{
    assert(last&&last.slot===b.i.slot,'PAPER_SNAPSHOT_ROW_STALE');
-   let wallet={x:raw(last.walletXRaw),y:raw(last.walletYRaw)},p=zero(),fees=zero(),cost=raw(last.costYRaw),status=r.status,reason=r.reason;
+   let wallet={x:raw(last.walletXRaw),y:raw(last.walletYRaw)},p=zero(),fees=zero(),cost=raw(last.costYRaw),status=r.status,reason=r.reason,claimedX=raw(r.claimedFeeXRaw??'0'),claimedY=raw(r.claimedFeeYRaw??'0');
    if(status==='OPEN_PROXY'){
     assert(!gap,'PAPER_SNAPSHOT_GAP');
     const anchor=r.segmentOpening?segmentOpenings[r.mode]:opening,segment=facts(anchor);scope(a,segment);
@@ -78,11 +81,11 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
     const loss=initial-nav,dd=high?(high-nav)*10000n/high:0n;
     if(exit||loss>=raw(state.policy.maxLossSolRaw)||dd>=BigInt(state.policy.maxDrawdownBps)){
      const feeCost=raw(state.policy.exitCostSolRaw);assert(wallet.y+p.y+fees.y>=feeCost,'PAPER_SNAPSHOT_EXIT_COST_UNFUNDED');
-     wallet={x:wallet.x+p.x+fees.x,y:wallet.y+p.y+fees.y-feeCost};cost+=feeCost;p=zero();fees=zero();status='EXITED_PROXY';reason=exit?'MANUAL_VIRTUAL_EXIT':'RISK_VIRTUAL_EXIT';
+     claimedX+=fees.x;claimedY+=fees.y;wallet={x:wallet.x+p.x+fees.x,y:wallet.y+p.y+fees.y-feeCost};cost+=feeCost;p=zero();fees=zero();status='EXITED_PROXY';reason=exit?'MANUAL_VIRTUAL_EXIT':'RISK_VIRTUAL_EXIT';
     }
    }
    const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet,principal:p,fees,initial,hold,peak:raw(last.peakYRaw),cost,status});
-   return {...r,status,reason,points:[...r.points,point]};
+   return {...r,status,reason,claimedFeeXRaw:s(claimedX),claimedFeeYRaw:s(claimedY),...appendPoint(r,point)};
   }catch(e){return block(errorCode(e,'PAPER_SNAPSHOT_UPDATE_FAILED'))}
  });
  return {...state,last:{slot:c.i.slot,proof:c.proof},snapshotCount:state.snapshotCount+1,rows};
@@ -103,7 +106,7 @@ export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHa
    const initial=raw(row.initialNavYRaw),hold=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),c.price);
    const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet:{x:r.walletX,y:r.walletY},principal:{x:r.principalX,y:r.principalY},fees:zero(),initial,hold,peak:raw(last.peakYRaw),cost:raw(last.costYRaw)+r.cost,status:r.status});
    assert(BigInt(point.navYRaw)<=BigInt(last.navYRaw),'PAPER_ADAPTIVE_NAV_INCREASE_ON_ACTION');
-   next={...next,mapping:r.mapping,status:r.status,reason:r.status==='EXITED_PROXY'?'VIRTUAL_T10_REMOVE':null,pendingAdaptive:null,segmentOpening:{slot:c.i.slot,proof:c.proof},lastActionTime:reviewed.latest.t,rebalances:(row.rebalances??0)+(r.status==='OPEN_PROXY'?1:0),turnoverYRaw:s(r.turnover),claimedFeeXRaw:s(raw(row.claimedFeeXRaw??'0')+raw(last.feeXRaw)),claimedFeeYRaw:s(raw(row.claimedFeeYRaw??'0')+raw(last.feeYRaw)),points:[...row.points.slice(0,-1),point],adaptiveReason:'VIRTUAL_T10_'+intent.apply.action.type};
+   next={...next,mapping:r.mapping,status:r.status,reason:r.status==='EXITED_PROXY'?'VIRTUAL_T10_REMOVE':null,pendingAdaptive:null,segmentOpening:{slot:c.i.slot,proof:c.proof},lastActionTime:reviewed.latest.t,rebalances:(row.rebalances??0)+(r.status==='OPEN_PROXY'?1:0),turnoverYRaw:s(r.turnover),claimedFeeXRaw:s(raw(row.claimedFeeXRaw??'0')+raw(last.feeXRaw)),claimedFeeYRaw:s(raw(row.claimedFeeYRaw??'0')+raw(last.feeYRaw)),points:[...row.points.slice(0,-1),point],maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps),adaptiveReason:'VIRTUAL_T10_'+intent.apply.action.type};
   }catch(e){next={...next,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REMAP_BLOCKED')}}
  }
  return {...state,rows:state.rows.map(r=>r===row?next:r)};

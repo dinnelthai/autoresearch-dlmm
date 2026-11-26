@@ -3,7 +3,7 @@ import {mkdir,open,writeFile,rename,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createPaperSnapshotReader} from './paper-snapshot.mjs';
-import {openSnapshotExperiment,advanceSnapshotExperiment,updateAdaptiveSnapshot} from './paper-snapshot-run-core.mjs';
+import {openSnapshotExperiment,advanceSnapshotExperiment,updateAdaptiveSnapshot,PAPER_SNAPSHOT_LIMIT} from './paper-snapshot-run-core.mjs';
 import {nextPaperCapture,paperPublic} from './paper-auto-core.mjs';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
@@ -47,6 +47,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
    const a=await active();if(!a?.running)return;
    try{
     const state=await checkpoint(a);await verifyCode();assert(state.backendHash===backendHash,'PAPER_AUTO_CODE_CHANGED');
+    if(state.snapshotCount>=PAPER_SNAPSHOT_LIMIT){await atomic(pointer,{...a,running:false,finalStatus:'SNAPSHOT_LIMIT_REACHED'});job={id:a.id,status:'SNAPSHOT_LIMIT_REACHED',running:false};return}
     const m=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs);
     if(!nextPaperCapture(state,m)){if(job?.id!==a.id||job.status!=='UPDATED_UNVERIFIED')job={id:a.id,status:'WAITING_FOR_OBSERVATION',running:true};return}
     const load=await reader(),snapshot=await load(await io.safeDataPath(m.capture));
@@ -69,6 +70,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
      }catch(e){next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}:r)}}
     }
     await verifyCode();await save(next);
+    if(next.snapshotCount>=PAPER_SNAPSHOT_LIMIT){await atomic(pointer,{...a,running:false,finalStatus:'SNAPSHOT_LIMIT_REACHED'});job={id:a.id,status:'SNAPSHOT_LIMIT_REACHED',running:false};return}
     if(!next.rows.some(r=>r.status==='OPEN_PROXY')){await atomic(pointer,{...a,running:false,finalStatus:'FINISHED_OR_BLOCKED'});job={id:a.id,status:'FINISHED_OR_BLOCKED',running:false};return}
     job={id:a.id,status:'UPDATED_UNVERIFIED',running:true};
    }catch(e){job={id:a.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_UPDATE_FAILED'),running:true}}

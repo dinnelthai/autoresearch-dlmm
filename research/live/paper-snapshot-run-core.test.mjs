@@ -35,3 +35,6 @@ test('virtual reposition freezes new segment, credits old fees once and preserve
  const s4=advanceSnapshotExperiment(s3,{opening:a,previous:c,snapshot:d,backendHash,now:1000000,segmentOpenings:{adaptive:c}});
  assert.equal(s4.rows[7].points.at(-1).feeXRaw,'5');assert.equal(s4.rows[7].claimedFeeXRaw,'20');assert.equal(s4.rows[7].points.at(-1).excessVsHoldYRaw,'25');assert.equal(s4.rows[1].points.at(-1).feeXRaw,'30');
 });
+
+test('long experiment retains bounded recent points and lifetime drawdown',()=>{const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);const row=state.rows[1];row.points=Array.from({length:1000},()=>({...row.points[0]}));row.maxDrawdownBps=777;state.snapshotCount=1000;const s2=advance(state,a,a,b);assert.equal(s2.snapshotCount,1001);assert.equal(s2.rows[1].points.length,1000);assert.equal(s2.rows[1].pointsDropped,1);assert.equal(s2.rows[1].maxDrawdownBps,777);const s3=advance(s2,a,b,c);assert.equal(s3.rows[1].pointsDropped,2);assert.equal(s3.rows[1].maxDrawdownBps,777)});
+test('exit retains lifetime fee totals separately from current fee balance',()=>{const {a,state}=fixture(),b=snapshot(2,1n),c=snapshot(3,2n),s2=advance(state,a,a,b,true),s3=advance(s2,a,b,c);assert.equal(s3.rows[1].claimedFeeXRaw,'10');assert.equal(s3.rows[1].points.at(-1).feeXRaw,'0');assert.equal(s3.rows[1].points.at(-1).excessVsHoldYRaw,'9')});
