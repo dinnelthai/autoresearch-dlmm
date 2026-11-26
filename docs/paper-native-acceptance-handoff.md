@@ -37,8 +37,11 @@ node research/live/terminal-server.mjs --config data/terminal-config.json --port
 ```
 If these are not the existing config filenames (for example a .local.json config), use the real filenames and pass --live-config and --terminal-config to check-local accordingly. Do not create guessed configs or expose credentials. Check both /health endpoints and rerun check-local. HTTP health is not market readiness.
 
+## Independent SDK evidence
+The independent Linux build workflow is `.github/workflows/sdk-independent-build.yml`. It checks the pinned upstream source blobs, uses the recorded Node/pnpm versions, disables install lifecycle scripts, and fails closed if the rebuilt tarball or existing consumer lock differs. Only an identical artifact can enter the consumer test; no registry downgrade or lock rewrite. Even an exact rebuild and successful ESM check would not independently close the dependency/security or protocol gates. No RPC or wallet operations in this workflow.
+
 ## Acceptance gates remaining
-1. C02: installed pinned SDK adapter and actual CLI import pass.
+1. C02: installed pinned SDK adapter and actual CLI import pass **and** the required direct ESM contract passes, artifact integrity is verified, and the outstanding dependency risk/compatibility review is resolved or explicitly approved by the risk owner. Adapter success alone does not pass C02. See docs/c02-source-build-results-2026-11-26.md and docs/c02-runtime-security-review.md. No new T01–T06 capture before formal C02 acceptance.
 2. C03: fresh finalized market account capture with verified SDK/IDL provenance, same pool/mints/slot/raw hash and decoded bitmap/bin coverage.
 3. C04: both services, current state and input diagnostic agree; collect independently reviewed reference/flow/risk inputs as required by the existing engine. No readiness promotion on missing evidence.
 4. Paper: start virtual capital only; verify eight strategy rows, at least three distinct finalized snapshots, fees/costs and HODL accounting, audit the archive. Retain blocked strategies. Complete seven-day window before a window-level conclusion. See docs/paper-final-local-acceptance.md.
