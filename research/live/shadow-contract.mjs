@@ -6,7 +6,7 @@ const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 const address=v=>typeof v==='string'&&/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
 const proof=v=>v&&typeof v.path==='string'&&hash(v.sha256);
 export function validateFreeze(f){
- assert(f?.schemaVersion===1&&f.policy==='T09_T10_RESEARCH_PREVIEW_V1'&&ts(f.frozenAt)&&f.codeHashes&&['engine','plans','management','contract','policy','runner'].every(k=>hash(f.codeHashes[k])),'invalid frozen policy');
+ assert(f?.schemaVersion===1&&f.policy==='T09_T10_RESEARCH_PREVIEW_V1'&&ts(f.frozenAt)&&f.codeHashes&&['engine','plans','management','contract','policy','runner','summary'].every(k=>hash(f.codeHashes[k])),'invalid frozen policy');
  assert(Array.isArray(f.windows)&&f.windows.length&&f.windows.length<=100,'invalid windows');
  const ids=new Set(),groups=new Map(),mintSplits=new Map(),mintGroups=new Map(),poolIdentity=new Map();
  for(const w of f.windows){
