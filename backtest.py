@@ -17,6 +17,7 @@ import importlib
 import json
 import time
 from datetime import datetime
+from uuid import uuid4
 from pathlib import Path
 
 from tabulate import tabulate
@@ -298,6 +299,7 @@ def save_results(
 
     log_entry = {
         "timestamp": run_id,
+        "research_scope": "LEGACY_EXPLORATORY_NOT_OUT_OF_SAMPLE",
         "run_id": run_id,
         "pool_address": pool_address,
         "pool_name": pool_config.name,
@@ -356,7 +358,7 @@ def main():
     )
 
     pool_config = make_pool_config(pool_info)
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:12]
 
     print(
         f"Pool: {pool_config.name} | Bin Step: {pool_config.bin_step_bps} bps | "
@@ -381,10 +383,11 @@ def main():
     import strategy
 
     importlib.reload(strategy)
+    # Current top-LP statistics are not causal historical features. Display only.
     if hasattr(strategy, "set_benchmark"):
-        strategy.set_benchmark(lper_features)
+        strategy.set_benchmark({})
     else:
-        strategy.BENCHMARK = lper_features or {}
+        strategy.BENCHMARK = {}
     if hasattr(strategy, "set_runtime_context"):
         strategy.set_runtime_context(run_config)
     strategy_fn = strategy.strategy
