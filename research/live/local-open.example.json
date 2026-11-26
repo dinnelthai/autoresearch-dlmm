@@ -15,5 +15,6 @@
   "slippageBps": null,
   "feeCapRaw": null,
   "rentCapRaw": null,
-  "positionRentReferenceBytes": null
+  "positionRentReferenceBytes": null,
+  "simulationEnabled": false
 }
