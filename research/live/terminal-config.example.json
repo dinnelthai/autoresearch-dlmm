@@ -2,5 +2,9 @@
   "pool": "REPLACE_WITH_POOL_ADDRESS",
   "review": "data/research-evidence.json",
   "maxAgeSeconds": 180,
-  "managementPolicies": {}
+  "managementPolicies": {},
+  "monitoring": {
+    "enabled": false,
+    "intervalSeconds": 30
+  }
 }
