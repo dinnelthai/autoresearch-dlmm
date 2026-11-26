@@ -10,6 +10,7 @@ import {mergeHistory,streamHealth,pendingStream,historyBatch} from './state-core
 import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
 import {repairPlan,advanceRepair,failedRepair,historyCoverage} from './history-repair.mjs';
 import {dependencyPlan,sameAccounts} from './account-dependency-plan.mjs';
+import {diagnosticLog} from './diagnostic-log.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url));
 const RAW=resolve(ROOT,'data/raw');
 const assert=(v,m)=>{if(!v)throw Error(m);};
@@ -158,7 +159,7 @@ try{
   const startedAt=Date.now(),before=state.streams[name];
   const superseded=()=>name.startsWith('position:')&&state.streams[name]!==before&&state.streams[name]?.status==='CAPTURED_UNVERIFIED'&&state.streams[name].evidence?.commonMarketCapture===true;
   try{const evidence=await fn();if(superseded())return;const partial=['OVERLAP_MISSING','BACKFILL_PENDING','UNRESOLVED_GAP','DECODE_PARTIAL','EMPTY_OR_UNAVAILABLE','CAPTURE_PARTIAL'].includes(evidence.historyStatus)||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:evidence.commonMarketCapture===true?Math.min(startedAt,evidence.commonReceivedAt):startedAt,completedAt:Date.now(),evidence};}
-  catch{if(superseded())return;state.streams[name]={status:'BLOCKED',startedAt,receivedAt:Date.now(),reason:'CAPTURE_OR_VALIDATION_FAILED',previousEvidence:state.streams[name]?.evidence??state.streams[name]?.previousEvidence??null};}
+  catch(e){if(superseded())return;const reason=/^[A-Z0-9_]{1,96}$/.test(e.message)?e.message:'CAPTURE_OR_VALIDATION_FAILED';state.streams[name]={status:'BLOCKED',startedAt,receivedAt:Date.now(),reason,previousEvidence:state.streams[name]?.evidence??state.streams[name]?.previousEvidence??null};diagnosticLog({component:'COLLECTOR',event:'STREAM_CAPTURE',status:'BLOCKED',reason,stream:name,durationMs:Date.now()-startedAt})}
   if(name==='market'&&state.streams.market.status==='CAPTURED_UNVERIFIED'){
    const m=state.streams.market;for(const [address,report] of Object.entries(m.evidence.positionReports??{})){
     if(report.status!=='POSITION_CALCULATED_UNVERIFIED')continue;

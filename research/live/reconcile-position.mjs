@@ -11,6 +11,7 @@ import {TOKEN_PROGRAM_ID,getAssociatedTokenAddressSync} from '@solana/spl-token'
 import bs58 from 'bs58';
 import {PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 import {reconcilePositionTransaction,assembleLedger} from './position-ledger-core.mjs';
+import {resolveReadMessage} from './transaction-version.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m)},sha=v=>createHash('sha256').update(v).digest('hex');
 const key=v=>{const a=new PublicKey(v).toBase58();assert(a===v,'PUBLIC_KEY_INVALID');return a};
 const raw=v=>{assert(typeof v==='string'&&/^\d{1,20}$/.test(v)&&BigInt(v)<=18446744073709551615n,'TOKEN_AMOUNT_INVALID');return v};
@@ -56,7 +57,7 @@ async function main(){
     const record=decoded.transactions.find(t=>t.signature===s.signature);
     assert(record&&record.slot===slot&&Number.isSafeInteger(record.txIndex)&&record.success===(tx.meta.err===null),'DECODED_TRANSACTION_MISSING');txIndex=record.txIndex;
     assert(!(decoded.gaps??[]).some(g=>g.signature===s.signature||g.slot===slot&&!g.signature),'TRANSACTION_EVIDENCE_GAP');
-    const meta=tx.meta,msg=tx.transaction.message,keys=[...msg.accountKeys,...(meta.loadedAddresses?.writable??[]),...(meta.loadedAddresses?.readonly??[])];
+    const {meta,msg,keys}=resolveReadMessage(tx);
     assert(keys.every(k=>key(k)===k)&&new Set(keys).size===keys.length&&keys[0]===owner&&keys.includes(position),'OWNER_FEEPAYER_SCOPE_REQUIRED');
     const sigCount=msg.header.numRequiredSignatures;
     assert(Number.isInteger(sigCount)&&sigCount>=1&&sigCount<=2&&keys.slice(0,sigCount).every(k=>k===owner||k===position),'SIGNER_SCOPE_UNSUPPORTED');

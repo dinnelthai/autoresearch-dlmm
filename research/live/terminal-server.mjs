@@ -29,6 +29,8 @@ import {researchCatalog} from './research-catalog.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 import {positionObservation,ledgerProjection,windowLedger} from './position-observation-workflow.mjs';
 import {assembleLedger} from './position-ledger-core.mjs';
+import {incrementalLedgerStore,nextLedgerPage,appendLedgerPage} from './incremental-ledger.mjs';
+import {diagnosticLog} from './diagnostic-log.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
 if(values.help){console.log('node research/live/terminal-server.mjs --config data/terminal-config.json [--port 8790]');process.exit(0)}
@@ -409,6 +411,7 @@ async function buildResearchCandidate(body){
  else replayReason=body.draft?'MATCHED_REVIEW_REQUIRED':'EXPLICIT_RESEARCH_BUDGET_REQUIRED';
  return {...candidate,capture:relative(ROOT,dest),replay,replayReason};
 }
+const ledgerStore=incrementalLedgerStore(DATA,async(path,limit)=>boundedRead(await safeDataPath(path),limit));
 let positionReadBusy=false,positionAccountingBusy=false,lastAccountingAttempt=0;
 const indexes=new Map(),positionObservations=new Map();
 async function readPositionIndex(body){
@@ -461,12 +464,20 @@ async function positionAccounting(body){
  const bytes=await boundedRead(await safeDataPath(obs.reportPath),8*1024*1024);assert(sha(bytes)===obs.reportHash,'POSITION_REPORT_CHANGED');
  const closing=JSON.parse(bytes);
  assert(sha(await boundedRead(await safeDataPath(join(obs.capture,'accounts.json')),32*1024*1024))===obs.rawHash,'POSITION_RAW_HASH_MISMATCH');
- const raw=await run(['--pool',scope,'--position',position,'--provider',previewCfg.provider??'solana-rpc','--pages','1','--limit','10'],'capture-swaps.mjs',120000);
+ const prior=await ledgerStore.load(obs),plan=nextLedgerPage(prior);
+ const raw=await run(['--pool',scope,'--position',position,'--provider',previewCfg.provider??'solana-rpc','--pages','1','--limit','10',...(plan.before?['--before',plan.before]:[])],'capture-swaps.mjs',120000);
  const capture=await safeDataPath(raw.directory),mb=await boundedRead(await safeDataPath(join(capture,'manifest.json')),8*1024*1024),cm=JSON.parse(mb);
- assert(cm.pool===scope&&cm.position===position&&cm.indexAddress===position&&cm.commitment==='finalized'&&cm.before===null&&Array.isArray(cm.signatures)&&cm.signatures.length<=10,'POSITION_HISTORY_SCOPE_INVALID');
+ assert(cm.pool===scope&&cm.position===position&&cm.indexAddress===position&&cm.commitment==='finalized'&&cm.before===plan.before&&Array.isArray(cm.signatures)&&cm.signatures.length<=10,'POSITION_HISTORY_SCOPE_INVALID');
+ const pointer={capture:relative(ROOT,capture),sha256:sha(mb)},next=appendLedgerPage(prior,obs,cm,pointer,plan);
+ const sources=new Map(next.pages.map(p=>[p.capture,p.sha256]));sources.set(pointer.capture,pointer.sha256);
+ const args=[];for(const [path,hash] of sources){const p=await safeDataPath(path);assert(sha(await boundedRead(await safeDataPath(join(p,'manifest.json')),8*1024*1024))===hash,'LEDGER_SOURCE_MANIFEST_CHANGED');args.push('--capture',p)}
  const poolCapture=await safeDataPath(market.capture);
- const ledger=await run(['--capture',capture,'--pool-capture',poolCapture,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--owner',wallet,'--position',position],'reconcile-position.mjs',120000);
- const summary=ledgerProjection(ledger,obs),base=join(DATA,'position-accounting',scope,position);await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'run-'));
+ const ledger=await run([...args,'--pool-capture',poolCapture,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--owner',wallet,'--position',position],'reconcile-position.mjs',120000);
+ // Never treat separately retained but potentially disjoint pages as a clean valuation window.
+ const coverage={mode:plan.mode,pages:next.pages.length,gapObserved:next.gapObserved,retentionTruncated:next.retentionTruncated,backfillExhausted:next.backfillExhausted,historyComplete:false};
+ if(next.gapObserved||next.retentionTruncated){assert(Array.isArray(ledger.archiveGaps),'LEDGER_ARCHIVE_GAPS_REQUIRED');ledger.archiveGaps.push({reason:next.gapObserved?'INCREMENTAL_HISTORY_GAP_OBSERVED':'INCREMENTAL_RETENTION_TRUNCATED'});ledger.status='PARTIAL_LEDGER'}
+ ledger.incrementalCoverage=coverage;
+ const summary={...ledgerProjection(ledger,obs),incrementalCoverage:coverage},base=join(DATA,'position-accounting',scope,position);await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'run-'));
  const ledgerBytes=JSON.stringify(ledger);await writeFile(join(dir,'ledger.json'),ledgerBytes,{mode:0o600,flag:'wx'});await writeFile(join(dir,'closing.json'),bytes,{mode:0o600,flag:'wx'});
  let performance={status:'BLOCKED',reason:'WINDOW_OPENING_AND_REVIEWED_MARKS_REQUIRED',decisionReady:false,executionReady:false,pnlReady:false};
  const map=cfg.performanceWindows,policy=map&&Object.hasOwn(map,position)?map[position]:null;
@@ -492,9 +503,12 @@ async function positionAccounting(body){
  const perfBytes=JSON.stringify(performance);await writeFile(join(dir,'performance.json'),perfBytes,{mode:0o600,flag:'wx'});
  const out={scope:'POSITION_ACCOUNTING_DIAGNOSTIC_ONLY',pool:scope,owner:wallet,position,observation:obs,historyCapture:relative(ROOT,capture),historyManifestHash:sha(mb),ledgerHash:sha(ledgerBytes),performanceHash:sha(perfBytes),ledger:summary,performance,createdAt:Date.now(),historyComplete:false,pnlReady:false,decisionReady:false,executionReady:false};
  await writeFile(join(dir,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});
+ await ledgerStore.save(obs,prior,next);
  return {...out,capture:relative(ROOT,dir)};
 }
 const server=createServer(async(req,res)=>{
+ const requestId=randomUUID(),startedAt=Date.now();res.setHeader('X-Request-Id',requestId);
+ res.once('finish',()=>{if(res.statusCode>=400)diagnosticLog({component:'TERMINAL',event:'HTTP_REQUEST',status:'FAILED',reason:'HTTP_'+res.statusCode,requestId,durationMs:Date.now()-startedAt})});
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
  try{
@@ -576,7 +590,7 @@ const server=createServer(async(req,res)=>{
    try{const mode=req.url.endsWith('/management')?'management':'plans';send(res,200,rememberReport(await preview(await jsonBody(req),mode),mode))}finally{busy=false}return
   }
   send(res,404,blocked('NOT_FOUND'));
- }catch(e){const m=String(e.message);send(res,400,blocked(/^[A-Z0-9_]+$/.test(m)?m:'INPUT_OR_EVIDENCE_VALIDATION_FAILED'))}
+ }catch(e){const m=String(e.message),reason=/^[A-Z0-9_]{1,96}$/.test(m)?m:'INPUT_OR_EVIDENCE_VALIDATION_FAILED';diagnosticLog({component:'TERMINAL',event:'REQUEST_VALIDATION',status:'BLOCKED',reason,requestId,durationMs:Date.now()-startedAt});send(res,400,{...blocked(reason),requestId})}
 });
 server.requestTimeout=45000;server.headersTimeout=10000;server.keepAliveTimeout=2000;server.maxConnections=16;
 await new Promise((ok,fail)=>{server.once('error',fail);server.listen(port,'127.0.0.1',ok)});
