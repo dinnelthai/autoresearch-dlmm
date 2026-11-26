@@ -118,6 +118,44 @@ jobs:
           if(path){const r=JSON.parse(readFileSync('data/acceptance/'+path,'utf8'));for(const f of r.records.filter(x=>x.status!=='PASS'))console.log(JSON.stringify({id:f.id,status:f.status,exitCode:f.exitCode,error:f.error,tapError:f.tapError,stdout:f.stdout?.slice(0,2500),stderr:f.stderr?.slice(0,1000)}))}
           JS
           exit "$rc"
+      - name: Start actual terminal process with empty local evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e data/live
+          test ! -e data/paper-auto
+          config="$(mktemp)"
+          trap 'rm -f "$config"' EXIT
+          printf '%s\n' '{"pool":"EXWUUH9Au6XimBjgaJ5RxP1ZfWz6JVxzjs8cNRyyxLNr","monitoring":{"enabled":false},"dynamicCapture":{"enabled":false},"walletEvidence":{"enabled":false}}' > "$config"
+          SOLANA_RPC_URL=http://127.0.0.1:1 node research/live/terminal-server.mjs --config "$config" --port 8790 > data/acceptance/terminal-process-smoke.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$config"' EXIT
+          for i in $(seq 1 30); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:8790/health > /dev/null; then break; fi
+            if ! kill -0 "$pid" 2>/dev/null; then cat data/acceptance/terminal-process-smoke.log; exit 1; fi
+            sleep 1
+          done
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {writeFileSync} from 'node:fs';
+          const origin='http://127.0.0.1:8790';
+          const get=async path=>{const r=await fetch(origin+path,{signal:AbortSignal.timeout(5000)});assert.equal(r.status,200,path);return r.json()};
+          const health=await get('/health');
+          assert.equal(health.status,'RUNNING');assert.equal(health.apiVersion,'flow-data-v12');
+          assert.equal(health.pool,'EXWUUH9Au6XimBjgaJ5RxP1ZfWz6JVxzjs8cNRyyxLNr');
+          assert.equal(health.executionReady,false);
+          const html=await fetch(origin+'/',{signal:AbortSignal.timeout(5000)});
+          assert.equal(html.status,200);assert.match(await html.text(),/Flow DLMM Terminal/);
+          const state=await get('/api/terminal/state');
+          assert.equal(state.status,'BLOCKED');assert.equal(state.reason,'STATE_UNAVAILABLE');assert.equal(state.market,null);
+          const paper=await get('/api/terminal/paper-status');
+          assert.equal(paper.status,'NO_EXPERIMENT');assert.equal(paper.running,false);assert.equal(paper.pnlReady,false);
+          const pools=await get('/api/terminal/paper-pools');assert.equal(pools.pools.length,1);assert.equal(pools.pools[0].pool,health.pool);
+          const report={scope:'ACTUAL_TERMINAL_PROCESS_EMPTY_EVIDENCE_ONLY',health:health.status,apiVersion:health.apiVersion,state:state.status,paper:paper.status,poolCount:pools.pools.length,liveAcceptance:false,executionReady:false};
+          writeFileSync('data/acceptance/terminal-process-smoke.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
+          JS
+          kill -TERM "$pid"
+          wait "$pid"
       - name: Verify required direct ESM contract without fallback
         id: direct-esm
         if: ${{ always() && steps['consumer-install'].outcome == 'success' }}
@@ -211,5 +249,6 @@ jobs:
             data/acceptance/sdk-esm-candidate.json
             data/acceptance/sdk-consumer-audit*.json
             data/acceptance/offline-*.json
+            data/acceptance/terminal-process-smoke.*
           if-no-files-found: warn
           retention-days: 7
