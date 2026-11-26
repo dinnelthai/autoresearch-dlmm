@@ -32,3 +32,27 @@ export function reviewMatches(review,m,now){
  assert(Number.isSafeInteger(review.asOf)&&Number.isSafeInteger(review.maxAgeSeconds)&&review.maxAgeSeconds>0&&review.maxAgeSeconds<=600&&review.asOf<=t&&t-review.asOf<=review.maxAgeSeconds,'REVIEW_STALE_OR_INVALID');
  const latest=review.observations?.at(-1);assert(Number.isSafeInteger(review.marketObservedAt)&&review.marketObservedAt<=t&&t-review.marketObservedAt<=review.maxAgeSeconds&&Number.isSafeInteger(latest?.t)&&latest.t<=t&&t-latest.t<=review.maxAgeSeconds,'REVIEW_OBSERVATION_STALE');
 }
+
+/** Status-only monitoring. No price or action inference from a range alone. */
+export function positionCapture(state,m,address,now,maxAgeMs){
+ assert(poolAddress(address),'INVALID_POSITION_ADDRESS');
+ const stream=state?.streams?.['position:'+address],p=stream?.evidence?.report;
+ assert(stream?.status==='CAPTURED_UNVERIFIED'&&p?.status==='POSITION_CALCULATED_UNVERIFIED'&&p.position===address&&p.pool===state.pool,'POSITION_CAPTURE_UNAVAILABLE');
+ assert(Number.isSafeInteger(stream.receivedAt)&&stream.receivedAt<=now&&now-stream.receivedAt<maxAgeMs,'POSITION_CAPTURE_STALE');
+ const snap=p.snapshot;
+ assert(poolAddress(p.owner)&&Number.isSafeInteger(p.slot)&&/^[0-9a-f]{64}$/.test(p.rawHash)&&snap?.position===address&&snap.pool===state.pool&&snap.slot===p.slot&&snap.tokenOrientation==='MEME_X_SOL_Y'&&snap.tokenExtensions===false&&Number.isInteger(snap.decimalsX)&&snap.decimalsX>=0&&snap.decimalsX<=18&&snap.decimalsY===9,'POSITION_IDENTITY_MISMATCH');
+ assert(Number.isSafeInteger(p.lowerBinId)&&Number.isSafeInteger(p.upperBinId)&&p.lowerBinId<=p.upperBinId,'POSITION_RANGE_INVALID');
+ const common=!!m&&p.slot===m.slot&&p.rawHash===m.rawHash&&snap.decimalsX===m.decimalsX&&snap.binStep===String(m.binStep)&&stream.evidence.commonMarketCapture===true;
+ const rangeState=common?(m.activeId<p.lowerBinId?'BELOW_RANGE':m.activeId>p.upperBinId?'ABOVE_RANGE':'IN_RANGE'):'UNKNOWN';
+ return {report:p,commonMarketCapture:common,rangeState,expiresAt:stream.receivedAt+maxAgeMs};
+}
+export function managementRequest(policy,m,p){
+ assert(policy?.schemaVersion===1&&policy.pool===m.pool&&policy.position===p.position&&policy.owner===p.owner&&policy.capitalScope==='USER_DECLARED_ALLOCATION'&&policy.allowDispose===false,'MANAGEMENT_POLICY_IDENTITY_MISMATCH');
+ assert(['balanced','defensive','growth'].includes(policy.goal)&&Number.isSafeInteger(policy.horizonSeconds)&&policy.horizonSeconds>0&&policy.horizonSeconds<=30*86400,'INVALID_MANAGEMENT_HORIZON');
+ const solRaw=toRaw(policy.extraSolHuman,m.decimalsY),memeRaw=toRaw(policy.extraMemeHuman,m.decimalsX);
+ // These are expressly declared additional assets, not current position principal or wallet balance.
+ const bounds={maxInventoryRatio:[0,1],maxInventoryTokens:[0],minSolReserve:[0],maxLossSol:[0],stressDrop:[0,1],maxBinShare:[Number.MIN_VALUE,1],operationCostSol:[0],feeBps:[0,9999],protocolShare:[0,1],slippageBps:[0,9999],cooldownSeconds:[0],maxRebalances:[0],maxTurnoverSol:[0]};
+ const riskConfig={};for(const [k,[lo,hi]] of Object.entries(bounds)){const v=policy.riskConfig?.[k];assert(finite(v,lo,hi),'INVALID_RISK_'+k);riskConfig[k]=v}
+ assert(Number.isSafeInteger(riskConfig.cooldownSeconds)&&Number.isSafeInteger(riskConfig.maxRebalances),'INVALID_MANAGEMENT_COUNTER_LIMIT');
+ return {pool:m.pool,position:p.position,entry:'position',goal:policy.goal,horizonSeconds:policy.horizonSeconds,capitalScope:'USER_DECLARED_ALLOCATION',allowDispose:false,solRaw,memeRaw,riskConfig};
+}
