@@ -26,7 +26,7 @@ export function mark(m,l,time,slot,policy){
 export function calculateWindow({ledger:l,opening,closing,marks,policy,bindings}){
  const blocked=reason=>({status:'BLOCKED',reason,decisionReady:false,executionReady:false,pnlReady:false});
  try{
-  assert(l?.schemaVersion===1&&l.status==='BOUNDED_LEDGER_UNVERIFIED'&&l.historyComplete===false&&l.pnlReady===false&&l.decisionReady===false&&l.executionReady===false&&Array.isArray(l.rows)&&l.rows.length>0&&l.rows.length<=20000&&l.rows.length===l.acceptedCount&&!l.gaps?.length&&!l.archiveGaps?.length,'PERF_LEDGER_INCOMPLETE');
+  assert(l?.schemaVersion===1&&l.status==='BOUNDED_LEDGER_UNVERIFIED'&&l.historyComplete===false&&l.pnlReady===false&&l.decisionReady===false&&l.executionReady===false&&Array.isArray(l.rows)&&l.rows.length>0&&l.rows.length<=20000&&l.rows.length===l.acceptedCount&&Array.isArray(l.gaps)&&!l.gaps.length&&Array.isArray(l.archiveGaps)&&!l.archiveGaps.length,'PERF_LEDGER_INCOMPLETE');
   assert(Number.isInteger(l.decimalsX)&&l.decimalsX>=0&&l.decimalsX<=18&&l.decimalsY===9,'PERF_DECIMALS');
   assert(policy?.scope==='EXISTING_POSITION_WINDOW_RETAIN_DISTRIBUTIONS'&&Number.isInteger(policy.maxAgeSeconds)&&policy.maxAgeSeconds>0&&policy.maxAgeSeconds<=600&&Number.isInteger(policy.maxSpreadBps)&&policy.maxSpreadBps>=0&&policy.maxSpreadBps<=10000,'PERF_POLICY_REQUIRED');
   assert(bindings&&['ledgerHash','openingHash','closingHash','marksHash'].every(k=>hash(bindings[k])),'PERF_BINDINGS_REQUIRED');
@@ -34,17 +34,18 @@ export function calculateWindow({ledger:l,opening,closing,marks,policy,bindings}
   assert(opening.slot<closing.slot&&marks?.opening?.snapshotRawHash===opening.rawHash&&marks?.closing?.snapshotRawHash===closing.rawHash&&Number.isSafeInteger(marks.opening.asOf)&&Number.isSafeInteger(marks.closing.asOf)&&marks.opening.asOf<marks.closing.asOf,'PERF_WINDOW_BOUNDARY');
   const op=mark(marks.opening,l,marks.opening.asOf,opening.slot,policy),cp=mark(marks.closing,l,marks.closing.asOf,closing.slot,policy);
   const scale=18+l.decimalsX,ys=10n**BigInt(scale-9),value=(x,y,p)=>x*p+y*ys;
-  const sums=Object.fromEntries(fields.map(k=>[k,0n])),seen=new Set(),orders=new Set(),flowMarks=new Map();
+  const sums=Object.fromEntries(fields.map(k=>[k,0n])),seen=new Set(),flowMarks=new Map();
   assert(Array.isArray(marks.flows)&&marks.flows.length<=l.rows.length,'PERF_FLOW_MARKS');
   for(const m of marks.flows){assert(typeof m.signature==='string'&&!flowMarks.has(m.signature),'PERF_FLOW_MARK_DUPLICATE');flowMarks.set(m.signature,m)}
   let costBasis=value(o.principalX+o.feeX,o.principalY+o.feeY,op),depositBasis=0n,failedFee=0n,priorSlot=opening.slot,priorIndex=-1,priorTime=marks.opening.asOf;
   for(const r of l.rows){
    assert(r.status==='TRANSACTION_DELTA_RECONCILED_UNVERIFIED'&&hash(r.transactionHash)&&typeof r.signature==='string'&&!seen.has(r.signature)&&Number.isSafeInteger(r.slot)&&r.slot>opening.slot&&r.slot<=closing.slot&&Number.isSafeInteger(r.txIndex)&&r.txIndex>=0&&(r.slot>priorSlot||r.slot===priorSlot&&r.txIndex>priorIndex)&&Number.isSafeInteger(r.blockTime)&&r.blockTime>=priorTime&&r.blockTime<=marks.closing.asOf,'PERF_FLOW_ORDER_OR_BOUNDARY');
-   assert(!r.created&&!r.closed&&['ADD','REMOVE','CLAIM','FAILED_FEE_ONLY'].includes(r.kind),'PERF_LIFECYCLE_UNSUPPORTED');
+   assert(r.created===false&&r.closed===false&&r.decisionReady===false&&r.executionReady===false&&['ADD','REMOVE','CLAIM','FAILED_FEE_ONLY'].includes(r.kind)&&r.success===(r.kind!=='FAILED_FEE_ONLY'),'PERF_LIFECYCLE_UNSUPPORTED');
    seen.add(r.signature);priorSlot=r.slot;priorIndex=r.txIndex;priorTime=r.blockTime;
-   for(const k of fields)sums[k]+=raw(r[k]);
-   assert(raw(r.rentLockedRaw)===0n&&raw(r.rentRecoveredRaw)===0n,'PERF_RENT_CHANGE_UNSUPPORTED');
-   const dx=raw(r.depositXRaw),dy=raw(r.depositYRaw);
+   const q=Object.fromEntries(fields.map(k=>[k,raw(r[k])]));for(const k of fields){assert(q[k]<=18446744073709551615n,'PERF_ROW_U64_OVERFLOW');sums[k]+=q[k]}
+   assert(q.rentLockedRaw===0n&&q.rentRecoveredRaw===0n,'PERF_RENT_CHANGE_UNSUPPORTED');
+   const dx=q.depositXRaw,dy=q.depositYRaw,wx=q.withdrawXRaw,wy=q.withdrawYRaw,cx=q.claimedXRaw,cy=q.claimedYRaw;
+   assert((r.kind==='ADD'?dx+dy>0n:dx+dy===0n)&&(r.kind==='REMOVE'?wx+wy>0n:wx+wy===0n)&&(r.kind==='CLAIM'?cx+cy>0n:cx+cy===0n),'PERF_FLOW_AMOUNT_KIND');
    if(dx||dy){const m=flowMarks.get(r.signature);assert(m?.transactionHash===r.transactionHash,'PERF_FLOW_MARK_MISSING');const p=mark(m,l,r.blockTime,r.slot,policy);depositBasis+=value(dx,dy,p);flowMarks.delete(r.signature)}
    if(r.kind==='FAILED_FEE_ONLY')failedFee+=raw(r.networkFeeRaw);
   }
@@ -54,10 +55,13 @@ export function calculateWindow({ledger:l,opening,closing,marks,policy,bindings}
   costBasis+=depositBasis;assert(costBasis>0n,'PERF_ZERO_CAPITAL');
   const nav=value(c.principalX+c.feeX,c.principalY+c.feeY,cp),principal=value(c.principalX,c.principalY,cp);
   const withdrawn=value(sums.withdrawXRaw,sums.withdrawYRaw,cp),claimed=value(sums.claimedXRaw,sums.claimedYRaw,cp);
-  const feeContribution=value(c.feeX+sums.claimedXRaw-o.feeX,c.feeY+sums.claimedYRaw-o.feeY,cp);
+  const earnedX=c.feeX+sums.claimedXRaw-o.feeX,earnedY=c.feeY+sums.claimedYRaw-o.feeY;
+  assert(earnedX>=0n&&earnedY>=0n,'PERF_NEGATIVE_FEE_ACCRUAL');
+  const feeContribution=value(earnedX,earnedY,cp);
   const hodl=value(o.principalX+o.feeX+sums.depositXRaw,o.principalY+o.feeY+sums.depositYRaw,cp);
-  const cost=sums.networkFeeRaw*ys,wealth=nav+withdrawn+claimed-cost,pnl=wealth-costBasis,alpha=wealth-hodl,pricePnl=hodl-costBasis,inventoryEffect=alpha-feeContribution+cost;
+  const cost=sums.networkFeeRaw*ys,wealth=nav+withdrawn+claimed-cost,pnl=wealth-costBasis,alpha=wealth-hodl,pricePnl=hodl-costBasis,inventoryEffect=value(c.principalX+sums.withdrawXRaw-o.principalX-sums.depositXRaw,c.principalY+sums.withdrawYRaw-o.principalY-sums.depositYRaw,cp);
+  assert(pnl===pricePnl+inventoryEffect+feeContribution-cost,'PERF_ATTRIBUTION_MISMATCH');
   const metrics=Object.fromEntries(Object.entries({openingValue:costBasis-depositBasis,depositValue:depositBasis,capitalBasis:costBasis,closingNav:nav,closingPrincipal:principal,withdrawnValue:withdrawn,claimedValue:claimed,feeContribution,networkCost:cost,failedNetworkCost:failedFee*ys,terminalWealth:wealth,hodlTerminal:hodl,netPnl:pnl,hodlPnl:pricePnl,alpha,inventoryEffect,attributionResidual:pnl-pricePnl-inventoryEffect-feeContribution+cost}).map(([k,v])=>[k,decimal(v,scale)]));
-  return {schemaVersion:1,status:'BOUNDED_WINDOW_ACCOUNTING_DIAGNOSTIC',decisionReady:false,executionReady:false,pnlReady:false,historyComplete:false,pool:l.pool,position:l.position,owner:l.owner,mintX:l.mintX,mintY:l.mintY,openingSlot:opening.slot,closingSlot:closing.slot,openingRawHash:opening.rawHash,closingRawHash:closing.rawHash,openingTime:marks.opening.asOf,closingTime:marks.closing.asOf,bindings,observedCount:l.rows.length,metrics,limitations:['Conditional window only; history completeness, reference evidence semantics and protocol accounting not accepted.','All withdrawn assets and claimed fees retained to end mark; no off-position trades included. Opening pending fees belong to opening capital.','Rent excluded from this existing-position window; changes block. No capital-hour, annualized return or realized cash PnL claim.']};
+  return {schemaVersion:1,status:'BOUNDED_WINDOW_ACCOUNTING_DIAGNOSTIC',decisionReady:false,executionReady:false,pnlReady:false,historyComplete:false,pool:l.pool,position:l.position,owner:l.owner,mintX:l.mintX,mintY:l.mintY,openingSlot:opening.slot,closingSlot:closing.slot,openingRawHash:opening.rawHash,closingRawHash:closing.rawHash,openingTime:marks.opening.asOf,closingTime:marks.closing.asOf,bindings,observedCount:l.rows.length,metrics,earnedFeeRaw:{x:earnedX.toString(),y:earnedY.toString()},attributionBasis:'TERMINAL_MARK_PRINCIPAL_DELTA_AND_NET_FEE_ACCRUAL',limitations:['Conditional window only; history completeness, reference evidence semantics and protocol accounting not accepted.','All withdrawn assets and claimed fees retained to end mark; no off-position trades included. Opening pending fees belong to opening capital. Fee accrual must be nonnegative per token in this narrow supported scope; unexplained decreases block. Each deposit is treated as fresh external contribution, distributions are retained; recycled or sold distributions are outside scope. Inventory effect is terminal-mark principal delta, not a separately measured impermanent-loss metric.','Rent excluded from this existing-position window; changes block. No capital-hour, annualized return or realized cash PnL claim.']};
  }catch(e){return blocked(/^[A-Z0-9_]+$/.test(e.message)?e.message:'PERF_VALIDATION_FAILED')}
 }
