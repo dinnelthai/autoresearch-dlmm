@@ -1,5 +1,5 @@
 // B5b isolated local-validator SDK construction. Never signs or submits.
-import DLMM,{deriveBinArray,deriveEventAuthority,binIdToBinArrayIndex,toWeightDistribution,MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX,DEFAULT_BIN_PER_POSITION} from '@meteora-ag/dlmm';
+import DLMM,{deriveBinArray,deriveEventAuthority,binIdToBinArrayIndex,toWeightDistribution,MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX,DEFAULT_BIN_PER_POSITION} from './sdk-runtime.mjs';
 import anchor from '@coral-xyz/anchor';
 import {Connection,PublicKey,SystemProgram,SYSVAR_RENT_PUBKEY} from '@solana/web3.js';
 import {TOKEN_PROGRAM_ID,NATIVE_MINT,getAssociatedTokenAddressSync,unpackAccount,unpackMint,getExtensionTypes} from '@solana/spl-token';

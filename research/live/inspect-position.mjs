@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {parseArgs} from 'node:util';
 import anchor from '@coral-xyz/anchor';
 import {Connection,PublicKey} from '@solana/web3.js';
-import {createProgram,wrapPosition,getBinArrayIndexesCoverage,deriveBinArray,getBinArrayLowerUpperBinId,POSITION_MAX_LENGTH} from '@meteora-ag/dlmm';
+import {createProgram,wrapPosition,getBinArrayIndexesCoverage,deriveBinArray,getBinArrayLowerUpperBinId,POSITION_MAX_LENGTH} from './sdk-runtime.mjs';
 import {TOKEN_PROGRAM_ID,NATIVE_MINT,unpackMint,getExtensionTypes} from '@solana/spl-token';
 import {readCapture,PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 import {IntegerKernel as K} from '../integer.mjs';

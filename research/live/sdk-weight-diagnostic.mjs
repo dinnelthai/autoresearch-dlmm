@@ -14,7 +14,7 @@ export async function sdkWeightDiagnostic(d,market,config,captureDirectory){
  try{
   const entry=require.resolve('@meteora-ag/dlmm'),pkg=JSON.parse(await readFile(join(dirname(entry),'..','package.json'),'utf8'));
   if(pkg.name!=='@meteora-ag/dlmm'||pkg.version!=='1.9.15')return blocked('SDK_VERSION_MISMATCH');
-  const sdk=await import('@meteora-ag/dlmm'),anchor=await import('@coral-xyz/anchor'),BN=anchor.BN??anchor.default?.BN;
+  const sdk=await import('./sdk-runtime.mjs'),anchor=await import('@coral-xyz/anchor'),BN=anchor.BN??anchor.default?.BN;
   if(typeof sdk.toWeightDistribution!=='function'||typeof BN!=='function')return blocked('SDK_WEIGHT_HELPER_UNAVAILABLE');
   const positionLimit=Number(sdk.DEFAULT_BIN_PER_POSITION?.toString()),singleMessageExclusiveLimit=sdk.MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX;
   let sdkWeights=null;

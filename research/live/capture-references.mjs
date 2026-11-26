@@ -6,7 +6,7 @@ import {parseArgs} from 'node:util';
 import anchor from '@coral-xyz/anchor';
 import {Connection,PublicKey} from '@solana/web3.js';
 import {NATIVE_MINT,TOKEN_PROGRAM_ID,getExtensionTypes} from '@solana/spl-token';
-import DLMM from '@meteora-ag/dlmm';
+import DLMM from './sdk-runtime.mjs';
 import {PROGRAM,SDK_COMMIT} from './inspect-pool.mjs';
 import {quoteMath} from './reference-math.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m);};

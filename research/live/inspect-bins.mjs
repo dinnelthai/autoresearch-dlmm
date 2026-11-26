@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {parseArgs} from 'node:util';
 import anchor from '@coral-xyz/anchor';
 import {PublicKey} from '@solana/web3.js';
-import {deriveBinArray,deriveBinArrayBitmapExtension,getBinArrayLowerUpperBinId} from '@meteora-ag/dlmm';
+import {deriveBinArray,deriveBinArrayBitmapExtension,getBinArrayLowerUpperBinId} from './sdk-runtime.mjs';
 import {readCapture,PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 import {bitmapIndexes} from './bitmap.mjs';
 const assert=(v,msg)=>{if(!v)throw Error(msg);};

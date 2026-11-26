@@ -1,0 +1,22 @@
+# C02 SDK source build — 2026-11-26
+
+Status: **BLOCKED**, not live acceptance. Baseline main `565c33e975a87898d57dc9c34430ecfdbc4cff05`, initially clean. Node 22.23.4, pnpm 10.33.1, npm 10.9.9 (Node 22's bundled npm). The system Node 23 was not used for build acceptance.
+
+## Source and artifacts
+
+- Clean detached source checkout: `1532e540db41ac405dbf4c5bb2ddfceaa1f98ff1`. Git blobs verified: package `6b0040e267f19f7dffa287b6768e5a660f6087cb`; pnpm lock `8c589f3f8f595f12ad930a407863b933df7dc6cb`; workspace `7177be995327f3f2fc77ca128020a72cb084bbfa`; IDL `6715f5cf19dffa8651a185ac0dd823218c6a2a75`; tsup config `ac58e23edc91a079dacc429e8a7b905964029c63`.
+- Official Node archive SHA256 `efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819`, matched downloaded official checksum listing. `pnpm install --frozen-lockfile --ignore-scripts` and `pnpm run build` succeeded; upstream tracked files remained unchanged. Build generated ESM, CJS and declarations.
+- A subsequent repeat build log is `data/acceptance/sdk-build-2026-11-26.log`, SHA256 `67b86e695b4969142d59f5a12871ff74b73b18ab20a7b626d4119f0a9ba02047`; it is not an independent rebuild.
+- `npm pack --ignore-scripts`: local `data/vendor/meteora-ag-dlmm-1.9.15.tgz`, SHA256 `7e8da2ee2e528a5aba4c1efd3909dcd74ac94cfed380fa9636f256ade1a41b3b`, SHA512 integrity `sha512-e0+grfpHQpcDark5yN6jAYbptZExmNas0+T1ix71R7WeR48knco0cdeG2E1vPCdKTkbquXME1q8KHgHjh1R5BA==`; seven files, including package metadata and dist. Lock's integrity matches tarball. No independent reproducibility claim. `data/vendor` is ignored; the local tarball must be retained in approved immutable storage or independently rebuilt and hash checked before `npm ci` elsewhere.
+- Consumer `research/live/package-lock.json` SHA256 `dad5c239e5da6b8bb3efe2a59de814a234fd2b1b16fee347f9e96c361b2bd197`; all 178 non-root lock entries carry integrity. `npm ci --ignore-scripts` succeeded. Four packages advertise install scripts; native bigint binding was not built and runtime reported JS fallback. Consumer resolves `rpc-websockets` 9.3.9, whereas upstream build overrides 9.3.8; compatibility beyond import/CLI smoke remains unverified. No override was silently added.
+
+## Audit and runtime
+
+- Upstream `pnpm audit --json`: metadata 1 low, 5 moderate, 7 high; workspace contains upstream GHSA exceptions, and newly reported esbuild, tsup and toml advisories must not be treated as resolved. Record `data/acceptance/sdk-upstream-audit-2026-11-26.json`, SHA256 `542f625c5033ad27af4e1b9d18022d490a051005b7a0e75a737f13ba52380b1a`.
+- Consumer `npm audit --json`: 7 moderate, 6 high, zero critical (affected packages, not independent vulnerability count). Direct advisory roots include bigint-buffer, stream-json, toml and uuid; the audit reports no automatic fix for several dependency paths. Risk reachability and remediation remain unreviewed for the actual application. `data/acceptance/sdk-consumer-audit-2026-11-26.json`, SHA256 `d8e0e4f3af539da9e280b69504c32d17662d28369e58420c2f4d44a5d9b55317`.
+- Required direct ESM import command fails on Node 22 with `ERR_UNSUPPORTED_DIR_IMPORT`: SDK dist imports `@coral-xyz/anchor/dist/cjs/utils/bytes`, which resolves to a directory. `node research/live/inspect-bins.mjs --help` reproduced the same error before adaptation. SDK CJS distribution loads; project adapter uses unmodified CJS and regression confirms 15 helper functions, three constants, `DLMM.create` and CLI startup. This mitigates project CLI startup; it does **not** make the prescribed direct ESM import pass or validate protocol behavior. Native bigint warning and websocket compatibility are not cleared by this check.
+- Complete `node research/live/verify-offline.mjs` after the adapter change on Node 22: 88 modules, 34 test files, 135 records passed, zero failed or blocked, including the SDK adapter regression and legacy suite. `data/acceptance/offline-1795675625107.json`, SHA256 `155c069fdccb2f11e7e04ded4b3bf635c706ef21520080af411f3393df34bf73`; offline evidence only.
+
+## Gates and next action
+
+C02 remains blocked on the prescribed direct ESM runtime check and unresolved dependency risk/compatibility review. T01–T06 **NOT RUN** this session: the user required C02 pass first. No new pool snapshot, genesis assertion, live decode or reference was fabricated. Resolve/review the upstream ESM packaging defect and consumer dependency risk without changing SDK version or weakening acceptance; then rerun C02 and freshly capture evidence in order. No UI, strategy math, or business scope was changed.

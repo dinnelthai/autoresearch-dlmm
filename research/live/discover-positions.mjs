@@ -4,7 +4,7 @@ import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {PublicKey} from '@solana/web3.js';
-import {positionV2Filter,positionLbPairFilter,positionOwnerFilter} from '@meteora-ag/dlmm';
+import {positionV2Filter,positionLbPairFilter,positionOwnerFilter} from './sdk-runtime.mjs';
 import {PROGRAM,SDK_COMMIT} from './inspect-pool.mjs';
 async function main(){
  const {values}=parseArgs({options:{pool:{type:'string'},owner:{type:'string'},provider:{type:'string',default:'solana-rpc'},help:{type:'boolean'}}});
