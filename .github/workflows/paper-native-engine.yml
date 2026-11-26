@@ -19,6 +19,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
@@ -47,11 +50,19 @@ jobs:
             research/live/paper-core.test.mjs \
             research/live/paper-event-core.test.mjs \
             research/live/paper-interval-core.test.mjs | tee native-engine.tap
+      - name: Compare pinned baseline on identical runtime
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          node research/engine-parity-runtime.mjs | tee native-parity.jsonl
       - name: Retain test output
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: native-engine-tap
-          path: native-engine.tap
+          path: |
+            native-engine.tap
+            native-parity.jsonl
           if-no-files-found: warn
           retention-days: 7
