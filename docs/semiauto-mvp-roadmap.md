@@ -21,7 +21,7 @@
 | T14 | Human-confirmed execution | Wallet, preview, simulation, limits, explicit signing and confirmation | Phase A–B4 research diagnostics, B5a/B5b local unsigned OPEN build and cost checks, B6 opt-in exact-message local simulation/reconciliation code draft ready; actual SDK/RPC/simulation acceptance, production management, signing and confirmation pending |
 | T15 | Execution reconciliation | Confirmed on-chain outcomes; failure/idempotency checks | Narrow direct finalized transaction/position cashflow ledger code draft ready; historical coverage, full transfer/ownership semantics and live acceptance pending |
 | T16 | Performance | Actual net PnL, fees, costs and HODL-relative attribution | Phase A/B1 window and series diagnostics plus B2 closed lifecycle, rent and observed provider page-chain diagnostic code ready with V4.5 archive imports; independent complete coverage, verified marks, zero-flow intervals, actual cash realization/utilization and live acceptance pending |
-| T17 | End-to-end acceptance | Safety and evidence; any funded trial requires separate approval | Pending |
+| T17 | End-to-end acceptance | Safety and evidence; any funded trial requires separate approval | Ordered runbook and offline verifier code ready; targeted history/valuation binding fixes committed; all live gates pending |
 
 ## Gates
 T01–T06 implement the v0.8/v1.1 raw-data and reconciliation requirements; do not assert full Gate A until T02–03 pass, nor B/C until T04–05 pass. Implementation may proceed in dependency order using explicit contracts even if live environment evidence is blocked. Runtime activation, live acceptance, and funded operations still require accepted upstream evidence. T11 requires out-of-sample evaluation and quality thresholds; successful software execution does not prove profitability. Missing or unsupported data stops dependent decisions rather than producing invented metrics. No unauthorized signing, no private keys in logs or repository. Preserve research engine and old Python heuristic separately.
@@ -41,3 +41,5 @@ First obtain a real read-only finalized Pool snapshot, then derive and validate 
 - Maintain two independent statuses: implementation (pending / in progress / code ready) and live integration (pending / blocked / pass / fail). Code ready is not live pass.
 - Centralize all environment-dependent work in [integration-handoff.md](integration-handoff.md) for Codex. Continue code in dependency order with no fabricated production data.
 - Before modifying business UI (T12–T13), produce a separate prototype, review it, and keep the official research interface unchanged until the business layout is accepted.
+
+T17 entry point: [acceptance runbook](t17-acceptance-runbook.md). Stop feature expansion; run offline verification and resolve local evidence blockers in order.
