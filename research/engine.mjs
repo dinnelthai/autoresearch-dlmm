@@ -165,29 +165,32 @@ function createResearchEngine() {
   }
   function swap(s,c,e){
     const p=price(c,e.bin),q=finite(e.baseQty,"swap baseQty"),ext=finite(e.externalLiquiditySol??s.poolBins[e.bin],"external liquidity",EPS),fx=finite(e.mmFeeX,"MM fee X"),fy=finite(e.mmFeeY,"MM fee Y");assert(["LP_BUY","LP_SELL"].includes(e.side),"invalid swap direction");
-    const b=s.bins.find(b=>b.id===e.bin);if(!b||b.liquidity<EPS||q===0)return;
+    const b=s.bins.find(b=>b.id===e.bin);if(!b||b.liquidity<EPS||q===0)return {status:'NO_ACTIVE_EXPOSURE',requestedBaseQty:0,filledBaseQty:0};
     const share=b.liquidity/(ext+b.liquidity);
-    if(share>c.maxBinShare+EPS){s.quality.push({id:e.id,reason:"FROZEN_PATH_SHARE_LIMIT",share});return;}
+    if(share>c.maxBinShare+EPS){s.quality.push({id:e.id,reason:"FROZEN_PATH_SHARE_LIMIT",share});return {status:'SHARE_LIMIT',requestedBaseQty:0,filledBaseQty:0,share};}
     const requested=q*share,amount=Math.min(requested,e.side==="LP_BUY"?b.y/p:b.x);
-    if(amount<EPS)return;
+    if(amount<EPS)return {status:'INVENTORY_UNAVAILABLE',requestedBaseQty:requested,filledBaseQty:0,share};
     const d=e.side==="LP_BUY"?amount:-amount,ratio=amount/q,feeX=fx*ratio,feeY=fy*ratio;
     b.x=Math.max(0,b.x+d);b.y=Math.max(0,b.y-d*p);s.pendingFees.x+=feeX;s.pendingFees.y+=feeY;s.feesEarned.x+=feeX;s.feesEarned.y+=feeY;
     const ref=fresh(s,c,e.t)?s.market.ref.price:null;
-    s.fills.push({id:e.id,t:e.t,kind:"LP",bin:e.bin,q:d,price:p,reference:ref,feeX,feeY,share});
+    s.fills.push({id:e.id,t:e.t,kind:"LP",bin:e.bin,q:d,price:p,reference:ref,feeX,feeY,share,requestedBaseQty:requested,filledBaseQty:amount,inventoryLimited:amount+EPS<requested});
+    return {status:amount+EPS<requested?'INVENTORY_LIMITED':'FILLED_PROXY',requestedBaseQty:requested,filledBaseQty:amount,share};
   }
   function record(s,p,t){
     const v=nav(s,p),adjusted=v-s.externalFlows,peak=Math.max(s.initialNav,...s.curve.map(x=>x.adjusted),adjusted);
     s.curve.push({t,nav:v,adjusted,drawdown:peak>EPS?(peak-adjusted)/peak:0,...balances(s)});
   }
   function event(s,c,e){
+    let fillResult;
     assert(typeof e.id==="string"&&e.id.length,"event id required");finite(e.t,"event time");assert(e.t>=s.lastTime,"out of order event");assert(!s.seen.includes(e.id),"duplicate event");s.seen.push(e.id);s.lastTime=e.t;
     if(e.type==="MARKET"){assert(typeof e.pool==="string"&&e.pool.length>0,"market pool required");assert(!s.pool||s.pool===e.pool,"market pool mismatch");if(!s.pool)s.pool=e.pool;const ref=reference(e,c);s.market={...e,ref};if(ref.valid){s.history.push(s.market);mature(s,c,s.market)}else s.quality.push({id:e.id,reason:ref.reason})}
-    else if(e.type==="SWAP"){assert(!e.pool||e.pool===s.pool,"swap pool mismatch");swap(s,c,e);}
+    else if(e.type==="SWAP"){assert(!e.pool||e.pool===s.pool,"swap pool mismatch");fillResult=swap(s,c,e);}
     else if(e.type==="POOL_STATE"){assert(Array.isArray(e.bins),"pool snapshot bins required");s.poolBins={};for(const b of e.bins){assert(Number.isInteger(b.id)&&!(b.id in s.poolBins),"invalid snapshot bin");s.poolBins[b.id]=finite(b.externalLiquiditySol,"external liquidity",EPS);}}
     else if(e.type==="LIQUIDITY_UPDATE"){assert(Number.isInteger(e.bin),"invalid update bin");s.poolBins[e.bin]=finite(e.externalLiquiditySol,"external liquidity",EPS);}
     else if(e.type==="REWARD"){const x=finite(e.x??0,"reward x"),y=finite(e.y??0,"reward y");if(s.bins.length){s.pendingFees.x+=x;s.pendingFees.y+=y;s.rewardsEarned.x+=x;s.rewardsEarned.y+=y;}}
     else assert(false,"unknown event type");
     if(fresh(s,c,e.t)){record(s,s.market.ref.price,e.t);const r=risk(s,c,s.market.ref.price);if(r.violations.length)s.riskLog.push({t:e.t,event:e.id,...r});}
+    return fillResult;
   }
   function executePending(s,c,t){
     if(!s.pending)return;
@@ -225,20 +228,23 @@ function createResearchEngine() {
     const drift=g.regime==="UPTREND"?1:g.regime==="DOWNTREND"?-1:0;
     const patterns=[{name:"range",f:i=>Math.round(amp*Math.sin(i*Math.PI/2))},{name:"up",f:i=>i},{name:"down",f:i=>-i},{name:"whipsaw",f:i=>i<c.forecastSteps/2?i:-i},{name:"stress",f:i=>-Math.round(i*amp/2)}];
     return patterns.map((pat,j)=>{
-      const events=[];let modeledVolumeSol=0,missingLiquiditySteps=0;
+      const events=[];let modeledVolumeSol=0,missingLiquiditySteps=0,crossedBins=0,missingCrossedBins=0;const missingIds=new Set();
       for(let i=1;i<=c.forecastSteps;i++){
         const id=mid+pat.f(i)+(j===0?drift*i:0),px=price(c,id),t=s.lastTime+c.forecastHorizonSeconds*i/c.forecastSteps;
         events.push({type:"MARKET",id:"f"+j+"m"+i,t,pool:m.pool,references:[{pool:"scenario-a",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t},{pool:"scenario-b",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t}],exitDepth:m.exitDepth,tokenSafe:m.tokenSafe,holderShare:m.holderShare,holderOutflow:m.holderOutflow,buyImbalance:m.buyImbalance,flowSol:m.flowSol,flowWindowSeconds:flowWindow});
         // Frozen target-bin liquidity, never independent-reference quote depth.
         // Only the explicit built-in demo uses its declared synthetic liquidity proxy.
-        const ext=s.poolBins[id]??(m.pool==="DEMO_POOL"&&m.syntheticFixture===true?80:null);
+        const targetLiquidity=k=>s.poolBins[k]??(m.pool==="DEMO_POOL"&&m.syntheticFixture===true?80:null);
+        const ext=targetLiquidity(id),previous=mid+pat.f(i-1)+(j===0?drift*(i-1):0);
+        // Endpoint fills are only a proxy. Check crossed-bin evidence but never infer their trades.
+        for(let k=Math.min(previous,id)+1;k<Math.max(previous,id);k++){crossedBins++;const l=targetLiquidity(k);if(!Number.isFinite(l)||l<=0){missingCrossedBins++;missingIds.add(k)}}
         if(!(stepVolume>0))continue;
-        if(!Number.isFinite(ext)||ext<=0){missingLiquiditySteps++;continue;}
+        if(!Number.isFinite(ext)||ext<=0){missingLiquiditySteps++;missingIds.add(id);continue;}
         const qty=stepVolume/px,side=pat.f(i)+(j===0?drift*i:0)>=pat.f(i-1)+(j===0?drift*(i-1):0)?"LP_SELL":"LP_BUY",fee=qty*c.feeBps/10000*(1-c.protocolShare);
         events.push({type:"SWAP",id:"f"+j+"s"+i,t,bin:id,side,baseQty:qty,externalLiquiditySol:ext,mmFeeX:side==="LP_BUY"?fee:0,mmFeeY:side==="LP_SELL"?fee*px:0});
         modeledVolumeSol+=stepVolume;
       }
-      return {name:pat.name,events,volumeDiagnostic:{flowWindowSeconds:flowWindow,projectedVolumeSol:stepVolume*c.forecastSteps,modeledVolumeSol,missingLiquiditySteps,liquidityBasis:"FROZEN_TARGET_BIN_VALUE_PROXY",calibrated:false}};
+      return {name:pat.name,events,volumeDiagnostic:{flowWindowSeconds:flowWindow,projectedVolumeSol:stepVolume*c.forecastSteps,modeledVolumeSol,missingLiquiditySteps,crossedBins,missingCrossedBins,missingBinIds:[...missingIds].sort((a,b)=>a-b),fillBasis:'ENDPOINT_ONLY_NO_INFERRED_CROSSING_FILLS',liquidityBasis:"FROZEN_TARGET_BIN_VALUE_PROXY",calibrated:false}};
     });
   }
   function evaluate(s,c,action,scenarios){
@@ -252,6 +258,7 @@ function createResearchEngine() {
       if(["OPEN","ADD","REPOSITION"].includes(action.type)){
         if(!start.bins.length)throw Error("EMPTY_DEPLOYMENT");
         if(scenarios.some(v=>v.volumeDiagnostic&&(!v.volumeDiagnostic.flowWindowSeconds||v.volumeDiagnostic.modeledVolumeSol<=0)))throw Error("FORECAST_VOLUME_EVIDENCE_UNAVAILABLE");
+        if(scenarios.some(v=>v.volumeDiagnostic&&(v.volumeDiagnostic.missingLiquiditySteps>0||v.volumeDiagnostic.missingCrossedBins>0)))throw Error('FORECAST_LIQUIDITY_COVERAGE_INCOMPLETE');
         if(start.turnover+start.rebalanceTurnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances)throw Error("REBALANCE_BUDGET");
         if(["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION"))throw Error("MARKET_ADMISSION");
         if(g.flags.includes("TOXIC_BID")&&sum(start.bins.map(b=>b.y))>EPS)throw Error("TOXIC_BID");
@@ -264,7 +271,7 @@ function createResearchEngine() {
         // Observe pre/post-action path, not just the terminal mark. Existing passive
         // exposure remains a comparator even when a hypothetical shock violates limits.
         let minNav=base,peakNav=base,maxDrawdownSol=0,maxInventoryRatio=0,maxInventoryTokens=0,minWalletSol=Infinity,maxStressLossSol=0,minExitHeadroomSol=Infinity,observations=0,unobserved=0;
-        const pathViolations=new Set();
+        const pathViolations=new Set(),fillStats={swapCount:0,eligibleCount:0,filledCount:0,inventoryLimitedCount:0,requestedNotionalSol:0,filledNotionalSol:0};
         function observe(){
           if(!fresh(sim,c)){unobserved++;return;}
           const px=sim.market.ref.price,v=nav(sim,px),r=risk(sim,c,px),headroom=sim.market.exitDepth-r.postX*px;
@@ -275,7 +282,7 @@ function createResearchEngine() {
           for(const v of r.violations)pathViolations.add(v);
         }
         observe();
-        for(const e of scenario.events){event(sim,c,e);observe();executePending(sim,c,e.t);observe();}
+        for(const e of scenario.events){const fill=event(sim,c,e);if(e.type==='SWAP'&&fill){fillStats.swapCount++;if(fill.requestedBaseQty>0){fillStats.eligibleCount++;const px=price(c,e.bin);fillStats.requestedNotionalSol+=fill.requestedBaseQty*px;fillStats.filledNotionalSol+=fill.filledBaseQty*px;if(fill.filledBaseQty>0)fillStats.filledCount++;if(['INVENTORY_LIMITED','INVENTORY_UNAVAILABLE'].includes(fill.status))fillStats.inventoryLimitedCount++;}}observe();executePending(sim,c,e.t);observe();}
 
         if(sim.pending||sim.receipts.slice(s.receipts.length).some(r=>["REJECTED","FAILED","EXPIRED"].includes(r.status)))throw Error("SCENARIO_EXECUTION_UNAVAILABLE");
         assert(fresh(sim,c),'SCENARIO_END_REFERENCE_UNAVAILABLE');
@@ -283,11 +290,11 @@ function createResearchEngine() {
         const end=reportAt(sim,sim.market.ref.price),before=reportAt(s,sim.market.ref.price);
         assert([end.nav,end.alpha,end.ratio,end.fee,end.cost,before.alpha,before.fee,before.cost].every(Number.isFinite),'SCENARIO_NONFINITE_OUTPUT');
         if(sim.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT"))throw Error("FROZEN_PATH_SHARE_LIMIT");
-        out.push({name:scenario.name,incrementalAlpha:end.alpha-before.alpha,pnl:end.nav-base,loss:Math.max(0,base-minNav),terminalLoss:Math.max(0,base-end.nav),ratio:end.ratio,fee:end.fee-before.fee,cost:end.cost-before.cost,pathRisk:{minNav,maxDrawdownSol,maxInventoryRatio,maxInventoryTokens,minWalletSol,maxStressLossSol,minExitHeadroomSol,observations,violations:[...pathViolations]}});
+        out.push({name:scenario.name,incrementalAlpha:end.alpha-before.alpha,pnl:end.nav-base,loss:Math.max(0,base-minNav),terminalLoss:Math.max(0,base-end.nav),ratio:end.ratio,fee:end.fee-before.fee,cost:end.cost-before.cost,fillDiagnostics:{...fillStats,filledNotionalFraction:fillStats.requestedNotionalSol>0?fillStats.filledNotionalSol/fillStats.requestedNotionalSol:null,basis:'SYNTHETIC_PARTICIPATION_NOT_PROBABILITY'},pathRisk:{minNav,maxDrawdownSol,maxInventoryRatio,maxInventoryTokens,minWalletSol,maxStressLossSol,minExitHeadroomSol,observations,violations:[...pathViolations]}});
       }
       const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),terminalCvar=cvar(out.map(a=>a.terminalLoss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
       assert(Number.isFinite(utility)&&Number.isFinite(tail),'SCENARIO_NONFINITE_SCORE');
-      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},volumeDiagnostics:scenarios.map(v=>v.volumeDiagnostic??null),scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
+      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},volumeDiagnostics:scenarios.map(v=>v.volumeDiagnostic??null),fillDiagnostics:out.map(v=>({name:v.name,...v.fillDiagnostics})),scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
     }catch(err){return {action,feasible:false,reason:err.message}}
   }
   function candidatePlans(s,c,mode="adaptive"){
