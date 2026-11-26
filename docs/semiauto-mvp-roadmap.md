@@ -6,7 +6,7 @@
 | ID | Task | Acceptance | State |
 |---|---|---|---|
 | T01 | Raw RPC account acquisition | Real finalized Pool response, raw bytes, context slot, hash, timing and explicit gaps | CLI tests passed; BLOCKED on real RPC evidence |
-| T02 | SDK/IDL pinned pool/mint/vault decoding | Verified owner, mint orientation, decimals, extensions and vaults | Pending |
+| T02 | SDK/IDL pinned pool/mint/vault decoding | Verified owner, mint orientation, decimals, extensions and vaults | Code draft; live integration pending |
 | T03 | Bin arrays and bitmap | Complete declared snapshot and consistency checks | Pending |
 | T04 | Swap and dynamic fee events | Raw transaction ordering, fee and vault deltas reconcile, gaps explicit | Pending |
 | T05 | Position ledger | Shares, principal, pending/claimed fees and lifecycle reconcile | Pending |
@@ -16,7 +16,7 @@
 | T09 | Candidate LP plans | Budget, bins, strategy comparison, executable constraints | Pending |
 | T10 | Inventory, rebalance and exit decisions | Risk limits, no-LP, removal vs disposal, cost-aware decisions | Pending |
 | T11 | Live shadow validation | Real events, frozen test, risk and costs versus fair baselines | Pending |
-| T12 | Single-pool terminal | Manual pool entry and plan preview | Pending |
+| T12 | Single-pool terminal | Manual pool entry and plan preview | Separate prototype ready for review; implementation pending |
 | T13 | Position monitoring | Actual position, suggestions, alerts and recovery | Pending |
 | T14 | Human-confirmed execution | Wallet, preview, simulation, limits, explicit signing and confirmation | Pending |
 | T15 | Execution reconciliation | Confirmed on-chain outcomes; failure/idempotency checks | Pending |
