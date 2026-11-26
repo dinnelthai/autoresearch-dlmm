@@ -40,7 +40,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   assert(capture.identity.slot===m.slot&&capture.identity.rawHash===m.rawHash&&b.expiresAt>Date.now(),'PAPER_AUTO_OPENING_CHANGED');
   const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,report:r,budget:b.researchBudget,policy:body.policy,backendHash,frozenAt:Date.now()});
   if(body.policy.adaptive){const request=requestFromDraft(body.draft,m);state.adaptiveRequest={...request,riskConfig:{...request.riskConfig,...adaptivePolicy(body.policy.adaptive)}}}
-  state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);
+  state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:b.requestHash,reviewHash:b.reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:b.marketSlot,marketRawHash:b.marketRawHash};
   assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
   await verifyCode();await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};return get();
  })}

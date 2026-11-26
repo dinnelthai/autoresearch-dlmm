@@ -14,13 +14,14 @@ export function createPaperHistoryStore({read,atomic}){
   return {...state,historyHead:{sequence:record.sequence,recordHash:record.recordHash}};
  }
  async function verify(dir,state){
-  let previousHash=null,lastSlot=-1;const head=state.historyHead;assert(head?.sequence===state.snapshotCount,'PAPER_HISTORY_CHECKPOINT_LINK');
+  let previousHash=null,lastSlot=-1,lastRecord=null;const head=state.historyHead;assert(head?.sequence===state.snapshotCount,'PAPER_HISTORY_CHECKPOINT_LINK');
   for(let n=1;n<=head.sequence;){
    const records=await shard(dir,n),size=Math.min(HISTORY_SHARD_SIZE,head.sequence-n+1);
    assert(Array.isArray(records)&&records.length===size,'PAPER_HISTORY_MISSING_OR_EXTRA');
-   for(const r of records){previousHash=validateHistoryRecord(r,{id:state.id,pool:state.pool,sequence:n,previousHash});assert(Number.isSafeInteger(r.slot)&&r.slot>lastSlot,'PAPER_HISTORY_SLOT');lastSlot=r.slot;n++}
+   for(const r of records){previousHash=validateHistoryRecord(r,{id:state.id,pool:state.pool,sequence:n,previousHash});assert(Number.isSafeInteger(r.slot)&&r.slot>lastSlot,'PAPER_HISTORY_SLOT');lastSlot=r.slot;lastRecord=r;n++}
   }
-  assert(previousHash===head.recordHash&&lastSlot===state.last.slot,'PAPER_HISTORY_HEAD_MISMATCH');
+  assert(previousHash===head.recordHash&&lastSlot===state.last.slot&&JSON.stringify(lastRecord)===JSON.stringify(historyRecord(state,lastRecord.previousHash)),'PAPER_HISTORY_HEAD_MISMATCH');
+  if(head.sequence%HISTORY_SHARD_SIZE===0)assert((await shard(dir,head.sequence+1)).length===0,'PAPER_HISTORY_MISSING_OR_EXTRA');
   return {status:'LOCAL_HISTORY_CHAIN_VERIFIED',records:head.sequence,headHash:previousHash,coverageVerified:false,pnlReady:false};
  }
  return {append,verify};
