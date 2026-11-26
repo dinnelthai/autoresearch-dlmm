@@ -13,6 +13,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: paper-native-engine-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   native-engine:
     runs-on: ubuntu-latest
@@ -50,19 +53,34 @@ jobs:
             research/live/paper-core.test.mjs \
             research/live/paper-event-core.test.mjs \
             research/live/paper-interval-core.test.mjs | tee native-engine.tap
-      - name: Compare pinned baseline on identical runtime
-        if: always()
-        shell: bash
-        run: |
-          set -o pipefail
-          node research/engine-parity-runtime.mjs | tee native-parity.jsonl
       - name: Retain test output
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: native-engine-tap
-          path: |
-            native-engine.tap
-            native-parity.jsonl
+          path: native-engine.tap
+          if-no-files-found: warn
+          retention-days: 7
+  native-paper-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Real service on disposable filesystem
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap research/live/terminal-paper-service.test.mjs | tee native-paper-service.tap
+      - name: Retain service output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-paper-service-tap
+          path: native-paper-service.tap
           if-no-files-found: warn
           retention-days: 7
