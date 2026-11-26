@@ -286,9 +286,12 @@ function createResearchEngine() {
     const sell=Math.min(b.x,depth/p),remaining=b.x-sell,proceeds=sell*p*(1-c.slippageBps/10000);
     return {status:remaining>EPS?"PARTIAL":"ESTIMATE",value:remaining>EPS?null:b.y+proceeds,solProceeds:b.y+proceeds,unsoldMeme:remaining};
   }
+  function requestConfig(request,overrides={}){
+    const goals={defensive:{lambda:1,kappaSol:.3,targetRatio:.25},balanced:{},growth:{lambda:.25,kappaSol:.4,targetRatio:.65}};assert(Object.hasOwn(goals,request.goal??"balanced"),"invalid goal");
+    return config({...goals[request.goal??"balanced"],...(request.horizonSeconds!=null?{forecastHorizonSeconds:finite(request.horizonSeconds,"horizon",1)}:{}),...overrides});
+  }
   function createSession(request,overrides={},mode="adaptive"){
-    const goals={defensive:{lambda:1,kappaSol:.3,targetRatio:.25},balanced:{},growth:{lambda:.25,kappaSol:.4,targetRatio:.65}};assert((request.goal??"balanced") in goals,"invalid goal");
-    const c=config({...goals[request.goal??"balanced"],...(request.horizonSeconds!=null?{forecastHorizonSeconds:finite(request.horizonSeconds,"horizon",1)}:{}),...overrides}),s=newState(request,c);
+    const c=requestConfig(request,overrides),s=newState(request,c);
     assert(["adaptive","spot","curve","bid_ask","hybrid","asymmetric","hodl","sol_hold","manual"].includes(mode),"invalid mode");
     const staticMode=!["adaptive","hodl","sol_hold","manual"].includes(mode);
     let lastDecision=-Infinity,staticAttempted=false;
@@ -390,7 +393,7 @@ function createResearchEngine() {
   function scenarioSuite(request,overrides={}){
     return evaluateSamples(["range","up","down","crash"].map(name=>({id:name,group:name,split:"scenario",request,events:demo(name,overrides)})),overrides);
   }
-  return {DEFAULTS,config,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest,evaluateSamples,scenarioSuite};
+  return {DEFAULTS,config,requestConfig,candidatePlans,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest,evaluateSamples,scenarioSuite};
 }
 export const Engine=createResearchEngine();
 export {createResearchEngine};
