@@ -33,16 +33,17 @@ export function reconcilePositionTransaction(o){
 }
 export function assembleLedger({pool,position,owner,mintX,mintY,observations}){
  assert(Array.isArray(observations)&&observations.length<=20000,'LEDGER_INPUT_INVALID');
- const bySig=new Map(),gaps=[];
+ const bySig=new Map(),conflicts=new Set(),gaps=[];
  for(const x of observations){
   if(typeof x?.signature!=='string'){gaps.push({reason:'SIGNATURE_MISSING'});continue}
   const old=bySig.get(x.signature);
-  if(old&&JSON.stringify(old)!==JSON.stringify(x)){gaps.push({signature:x.signature,reason:'DUPLICATE_EVIDENCE_CONFLICT'});continue}
+  if(old&&JSON.stringify(old)!==JSON.stringify(x)){conflicts.add(x.signature);gaps.push({signature:x.signature,reason:'DUPLICATE_EVIDENCE_CONFLICT'});continue}
   bySig.set(x.signature,x);
  }
  const rows=[...bySig.values()].sort((a,b)=>a.slot-b.slot||a.txIndex-b.txIndex);
  for(const x of rows)if(x.status!=='TRANSACTION_DELTA_RECONCILED_UNVERIFIED')gaps.push({signature:x.signature,reason:x.reason??'TRANSACTION_BLOCKED'});
- const accepted=rows.filter(x=>x.status==='TRANSACTION_DELTA_RECONCILED_UNVERIFIED'),fields=['depositXRaw','depositYRaw','withdrawXRaw','withdrawYRaw','claimedXRaw','claimedYRaw','networkFeeRaw','rentLockedRaw','rentRecoveredRaw'];
+ const order=new Map();for(const x of rows){const k=x.slot+':'+x.txIndex;if(order.has(k)&&order.get(k)!==x.signature){conflicts.add(x.signature);conflicts.add(order.get(k));gaps.push({signature:x.signature,reason:'BLOCK_ORDER_CONFLICT'})}else order.set(k,x.signature)}
+ const accepted=rows.filter(x=>x.status==='TRANSACTION_DELTA_RECONCILED_UNVERIFIED'&&!conflicts.has(x.signature)),fields=['depositXRaw','depositYRaw','withdrawXRaw','withdrawYRaw','claimedXRaw','claimedYRaw','networkFeeRaw','rentLockedRaw','rentRecoveredRaw'];
  const totals=Object.fromEntries(fields.map(k=>[k,accepted.reduce((n,x)=>n+raw(x[k]),0n).toString()]));
- return {schemaVersion:1,status:gaps.length?'PARTIAL_LEDGER':'BOUNDED_LEDGER_UNVERIFIED',pool,position,owner,mintX,mintY,decisionReady:false,executionReady:false,historyComplete:false,pnlReady:false,observedCount:rows.length,acceptedCount:accepted.length,rows,gaps,totals,limitations:['Bounded finalized RPC evidence only. Totals are observed flows, not full history or realized profit.','Rent lock/recovery separate from network cost. Failed transactions may incur network fee.']};
+ return {schemaVersion:1,status:gaps.length?'PARTIAL_LEDGER':'BOUNDED_LEDGER_UNVERIFIED',pool,position,owner,mintX,mintY,decisionReady:false,executionReady:false,historyComplete:false,pnlReady:false,observedCount:rows.length,acceptedCount:accepted.length,rows:rows.map(x=>conflicts.has(x.signature)?{signature:x.signature,slot:x.slot,txIndex:x.txIndex,status:'BLOCKED',reason:'CONFLICTING_EVIDENCE'}:x),gaps,totals,limitations:['Bounded finalized RPC evidence only. Totals are observed flows, not full history or realized profit.','Rent lock/recovery separate from network cost. Failed transactions may incur network fee.']};
 }
