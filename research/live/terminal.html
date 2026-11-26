@@ -440,7 +440,7 @@ $('connectWallet').addEventListener('click',async()=>{
   const provider=window.phantom?.solana;
   if(!provider?.isPhantom||typeof provider.connect!=='function'){put('walletIdentity','未检测到 Phantom 扩展');return}
   if(walletProvider!==provider){
-   walletProvider=provider;provider.on?.('accountChanged',()=>setWallet(walletKey(provider)));provider.on?.('disconnect',()=>setWallet(null));
+   walletProvider=provider;provider.on?.('accountChanged',()=>{if(walletProvider===provider&&(walletAddress||walletBusy))setWallet(walletKey(provider))});provider.on?.('disconnect',()=>{if(walletProvider===provider)setWallet(null)});
   }
   await provider.connect();const key=walletKey(provider);if(!key)throw Error('钱包公钥不可用');setWallet(key);
  }catch{setWallet(null);put('walletIdentity','钱包连接未完成')}
@@ -449,8 +449,8 @@ $('connectWallet').addEventListener('click',async()=>{
 function reviewSelection(mode){
  if(!walletAddress||!serviceMarket)return null;
  if(mode==='plans'){
-  const b=report?.terminalBinding,i=report?.planPreview?.families?.findIndex(f=>f.best===selected);
-  if(!report?.reviewId||!selected?.feasible||!Number.isInteger(i)||i<0||!canAnalyze()||b?.expiresAt<=Date.now()||b?.marketSlot!==serviceMarket.slot||b?.marketRawHash!==serviceMarket.rawHash||b?.reviewHash!==serviceReview?.reviewHash)return null;
+  const b=report?.terminalBinding,i=report?.planPreview?.families?.findIndex(f=>f.best===selected||JSON.stringify(f.best)===JSON.stringify(selected));
+  if(!b||!report?.reviewId||!selected?.feasible||!Number.isInteger(i)||i<0||!canAnalyze()||b?.expiresAt<=Date.now()||b?.marketSlot!==serviceMarket.slot||b?.marketRawHash!==serviceMarket.rawHash||b?.reviewHash!==serviceReview?.reviewHash)return null;
   return {report,row:selected,rowIndex:i,wallet:walletAddress,mode};
  }
  const o=positions.get(positionSelected),r=o?.management,i=r?.managementPreview?.candidates?.indexOf(managementSelected);
