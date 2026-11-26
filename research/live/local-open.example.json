@@ -16,5 +16,10 @@
   "feeCapRaw": null,
   "rentCapRaw": null,
   "positionRentReferenceBytes": null,
-  "simulationEnabled": false
+  "simulationEnabled": false,
+  "paperCalibration": {
+    "shareErrorBps": null,
+    "principalErrorBps": null,
+    "costErrorBps": null
+  }
 }

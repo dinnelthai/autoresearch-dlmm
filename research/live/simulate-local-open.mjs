@@ -2,6 +2,7 @@
 import {PublicKey,SystemProgram,VersionedTransaction} from '@solana/web3.js';
 import {TOKEN_PROGRAM_ID,unpackAccount} from '@solana/spl-token';
 import {reconcileOpenSimulation} from './simulation-core.mjs';
+import {calibratePaperOpening} from './paper-calibration-core.mjs';
 import {createHash} from 'node:crypto';
 const assert=(v,m)=>{if(!v)throw Error(m)},sha=v=>createHash('sha256').update(v).digest('hex');
 const number=v=>{assert(Number.isSafeInteger(v)&&v>=0,'SIM_RPC_INTEGER_UNSAFE');return v};
@@ -60,10 +61,11 @@ export async function simulateLocalOpen({endpoint,genesis,msg,messageHash,market
    assert(b.version===3&&a.version===3&&b.index.toString()===index.toString()&&a.index.toString()===index.toString()&&new PublicKey(b.lb_pair).equals(lp)&&new PublicKey(a.lb_pair).equals(lp)&&b.bins.length===70&&a.bins.length===70,'SIM_ARRAY_INVALID');
    for(let j=0;j<70;j++){
     const id=Number(index.toString())*70+j,old=b.bins[j],next=a.bins[j],offset=id-pos.lower_bin_id;
-    bins.push({binId:id,beforeX:raw(old.amount_x),beforeY:raw(old.amount_y),afterX:raw(next.amount_x),afterY:raw(next.amount_y),beforeSupply:raw(old.liquidity_supply),supply:raw(next.liquidity_supply),share:offset>=0&&offset<allocation.rangeWidth?raw(pos.liquidity_shares[offset]):'0'});
+    bins.push({binId:id,beforeX:raw(old.amount_x),beforeY:raw(old.amount_y),afterX:raw(next.amount_x),afterY:raw(next.amount_y),beforeSupply:raw(old.liquidity_supply),supply:raw(next.liquidity_supply),version:Number(b.version),priceQ64Raw:raw(old.price),openOrderAmountRaw:old.open_order_amount==null?null:raw(old.open_order_amount),totalProcessingOrderAmountRaw:old.total_processing_order_amount==null?null:raw(old.total_processing_order_amount),processedOrderRemainingAmountRaw:old.processed_order_remaining_amount==null?null:raw(old.processed_order_remaining_amount),share:offset>=0&&offset<allocation.rangeWidth?raw(pos.liquidity_shares[offset]):'0'});
    }
   }
   const result=reconcileOpenSimulation({before:balances(pre),after:balances(post),bins,expected:{amountXRaw:allocation.totalMemeRaw,amountYRaw:allocation.totalSolRaw,rows:allocation.rows},feeRaw:String(fee.value),rentCapRaw:funding.rentCapRaw,reserveRaw:funding.fee.minReserveRaw,maxAmountErrorBps:cfg.maxAmountErrorBps});
-  return {result:{...result,slot:sim.context.slot,unitsConsumed:sim.value.unitsConsumed??null,messageHash,positionDataLength:post[1].data.length,signatureVerification:false,blockhashReplaced:false,limitations:[...result.limitations,'Same reported RPC slot and stable requested prestate; program binary and complete CPI semantics are not independently verified.']},calls};
+  const paperCalibration=cfg.paperCalibration?calibratePaperOpening({simulation:result,bins,activeId:market.activeId,tolerance:cfg.paperCalibration,declaredCostRaw:allocation.modelCostReserveRaw}):{status:'NOT_REQUESTED',calibrated:false,protocolExact:false,pnlReady:false,executionReady:false};
+  return {result:{...result,paperCalibration,slot:sim.context.slot,unitsConsumed:sim.value.unitsConsumed??null,messageHash,positionDataLength:post[1].data.length,signatureVerification:false,blockhashReplaced:false,limitations:[...result.limitations,'Same reported RPC slot and stable requested prestate; program binary and complete CPI semantics are not independently verified.']},calls};
  }catch(e){return {result:{status:'SIMULATION_BLOCKED',reason:/^[A-Z0-9_]+$/.test(e.message)?e.message:'SIMULATION_VALIDATION_FAILED',decisionReady:false,executionReady:false,signingAvailable:false},calls}}
 }
