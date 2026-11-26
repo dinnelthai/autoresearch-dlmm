@@ -21,6 +21,17 @@ function normalize(e,pool){
  else Object.assign(row,{legacyFeeRaw:u(d.fee),mmFeeRaw:null,feeToken:null});
  return row;
 }
+function positionEvent(e,pool,position){
+ if(!position)return null;
+ const d=e.data;
+ if(!['PositionCreate','PositionClose','AddLiquidity','RemoveLiquidity','ClaimFee','ClaimFee2','Rebalancing'].includes(e.name)||key(d.position)!==position)return null;
+ if(e.name!=='PositionClose'&&key(d.lb_pair)!==pool)throw Error('position event pool mismatch');
+ const r={event:e.name,position,pool:e.name==='PositionClose'?null:pool,actor:key(d.owner??d.from),amountsStatus:'EVENT_FIELDS_NOT_TRANSFER_RECONCILED'};
+ if(e.name==='AddLiquidity'||e.name==='RemoveLiquidity'){assert(Array.isArray(d.amounts)&&d.amounts.length===2,'invalid lifecycle amounts');r.amountXRaw=u(d.amounts[0]);r.amountYRaw=u(d.amounts[1]);}
+ if(e.name==='ClaimFee'||e.name==='ClaimFee2'){r.feeXRaw=u(d.fee_x);r.feeYRaw=u(d.fee_y);}
+ if(e.name==='Rebalancing'){Object.assign(r,{withdrawXRaw:u(d.x_withdrawn_amount),withdrawYRaw:u(d.y_withdrawn_amount),addXRaw:u(d.x_added_amount),addYRaw:u(d.y_added_amount),feeXRaw:u(d.x_fee_amount),feeYRaw:u(d.y_fee_amount),rewardAmountsRaw:d.rewards.map(v=>u(v))});}
+ return r;
+}
 function balances(meta,keys,address){
  const idx=keys.indexOf(address);if(idx<0)return null;
  const pre=meta.preTokenBalances?.filter(b=>b.accountIndex===idx),post=meta.postTokenBalances?.filter(b=>b.accountIndex===idx);
@@ -34,6 +45,7 @@ async function main(){
  const bytes=await readFile(values.idl);assert(blob(bytes)===IDL_BLOB,'pinned IDL mismatch');const idl=JSON.parse(bytes);
  const coder=new anchor.BorshCoder(idl);const parser=new anchor.EventParser(PROGRAM,coder);
  const m=JSON.parse(await readFile(join(values.capture,'manifest.json'),'utf8'));assert(m.schemaVersion===1&&m.commitment==='finalized'&&key(m.pool)===m.pool&&Array.isArray(m.files)&&Array.isArray(m.signatures),'invalid capture manifest');
+ const position=m.position?key(m.position):null;
  const identity=values.identity?JSON.parse(await readFile(values.identity,'utf8')):null;
  if(identity)assert(identity.pool===m.pool&&identity.sdkCommit===SDK_COMMIT&&identity.idlBlob===IDL_BLOB,'identity report mismatch');
  const files=new Map();for(const f of m.files){assert(typeof f.file==='string'&&/^(signatures-\d+|block-\d+|tx-[1-9A-HJ-NP-Za-km-z]{64,88})\.json$/.test(f.file)&&!files.has(f.file),'invalid or duplicate evidence path');files.set(f.file,f);}
@@ -41,7 +53,7 @@ async function main(){
   const f=files.get(file);assert(f&&f.method===method&&f.params?.[0]===param,'missing/mismatched request evidence');
   const b=await readFile(join(values.capture,file));assert(sha(b)===f.sha256,'evidence hash mismatch');const p=JSON.parse(b);assert(p.jsonrpc==='2.0'&&p.id===f.requestId&&!p.error&&p.result!=null,'invalid evidence payload');return p.result;
  }
- const report={pool:m.pool,sdkCommit:SDK_COMMIT,idlBlob:IDL_BLOB,status:'PARTIAL',events:[],transactions:[],gaps:[...(m.gaps??[])],limitations:['Supplied evidence only; no live or complete history claim.','CPI events preferred over log mirror; log-only evidence has no instruction path.','Transaction-level vault deltas are observations, not per-swap reconciliation.','No inferred per-bin fill, fee rate units or legacy MM fee.']};
+ const report={pool:m.pool,sdkCommit:SDK_COMMIT,idlBlob:IDL_BLOB,status:'PARTIAL',position,events:[],positionEvents:[],transactions:[],gaps:[...(m.gaps??[])],limitations:['Supplied evidence only; no live or complete history claim.','CPI events preferred over log mirror; log-only evidence has no instruction path.','Transaction-level vault deltas are observations, not per-swap reconciliation.','No inferred per-bin fill, fee rate units or legacy MM fee.']};
  const seen=new Set(),blocks=new Map();
  for(const s of m.signatures){
   try{
@@ -53,7 +65,7 @@ async function main(){
    const record={signature:s.signature,slot:s.slot,txIndex,blockTime:tx.blockTime,success:meta.err===null,networkFeeLamports:Number.isSafeInteger(meta.fee)?String(meta.fee):null,eventCount:0};
    if(identity){record.vaultX=balances(meta,keys,identity.vaultX);record.vaultY=balances(meta,keys,identity.vaultY);if(record.vaultX&&record.vaultX.mint!==identity.mintX||record.vaultY&&record.vaultY.mint!==identity.mintY)throw Error('vault mint mismatch');record.vaultStatus=record.vaultX&&record.vaultY?'DELTA_OBSERVED_NOT_RECONCILED':'MISSING';}
    if(!record.success){report.transactions.push(record);continue;}
-   const cpi=[],logs=[];
+   const cpi=[],logs=[],posCpi=[],posLogs=[];
    for(const group of meta.innerInstructions??[]){
     for(const [innerIndex,ix] of group.instructions.entries()){
      if(keys[ix.programIdIndex]!==PROGRAM.toBase58()||typeof ix.data!=='string')continue;
@@ -61,10 +73,11 @@ async function main(){
      const e=coder.events.decode(raw.subarray(8).toString('base64'));
      if(!e){report.gaps.push({signature:s.signature,reason:'UNKNOWN_CPI_EVENT'});continue;}
      const row=normalize(e,m.pool);if(row)cpi.push({...row,outerIndex:group.index,innerIndex,source:'CPI'});
+     const life=positionEvent(e,m.pool,position);if(life)posCpi.push({...life,outerIndex:group.index,innerIndex,source:'CPI'});
     }
    }
    if(Array.isArray(meta.logMessages)){
-    for(const e of parser.parseLogs(meta.logMessages)){const row=normalize(e,m.pool);if(row)logs.push({...row,outerIndex:null,innerIndex:null,source:'LOG'});}
+    for(const e of parser.parseLogs(meta.logMessages)){const row=normalize(e,m.pool);if(row)logs.push({...row,outerIndex:null,innerIndex:null,source:'LOG'});const life=positionEvent(e,m.pool,position);if(life)posLogs.push({...life,outerIndex:null,innerIndex:null,source:'LOG'});}
    }else report.gaps.push({signature:s.signature,reason:'LOGS_UNAVAILABLE'});
    const fingerprint=r=>JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k])=>!['outerIndex','innerIndex','source'].includes(k))));
    if(cpi.length&&logs.length&&JSON.stringify(cpi.map(fingerprint))!==JSON.stringify(logs.map(fingerprint)))report.gaps.push({signature:s.signature,reason:'CPI_LOG_EVENT_MISMATCH'});
@@ -80,12 +93,17 @@ async function main(){
    if(calls!==rows.length)report.gaps.push({signature:s.signature,reason:'SWAP_CALL_EVENT_COUNT_MISMATCH',calls,events:rows.length});
    if(meta.innerInstructions==null)report.gaps.push({signature:s.signature,reason:'INNER_INSTRUCTIONS_UNAVAILABLE'});
    for(const [eventIndex,row] of rows.entries())report.events.push({...row,signature:s.signature,slot:s.slot,txIndex,eventIndex,blockTime:tx.blockTime,id:s.signature+':'+row.source+':'+(row.outerIndex??'unknown')+':'+(row.innerIndex??eventIndex)});
+   if(posCpi.length&&posLogs.length&&JSON.stringify(posCpi.map(fingerprint))!==JSON.stringify(posLogs.map(fingerprint)))report.gaps.push({signature:s.signature,reason:'POSITION_CPI_LOG_MISMATCH'});
+   if(!posCpi.length&&posLogs.length)report.gaps.push({signature:s.signature,reason:'POSITION_LOG_ONLY_NO_INSTRUCTION_PATH'});
+   for(const [eventIndex,row] of (posCpi.length?posCpi:posLogs).entries())report.positionEvents.push({...row,signature:s.signature,slot:s.slot,txIndex,eventIndex,blockTime:tx.blockTime,id:s.signature+':position:'+row.source+':'+(row.outerIndex??'unknown')+':'+(row.innerIndex??eventIndex)});
    record.eventCount=rows.length;record.swapCalls=calls;report.transactions.push(record);
   }catch(e){report.gaps.push({signature:s.signature,reason:'TRANSACTION_INSPECTION_FAILED',detail:e.message.slice(0,180)});}
  }
  report.events.sort((a,b)=>a.slot-b.slot||a.txIndex-b.txIndex||a.eventIndex-b.eventIndex);
+ report.positionEvents.sort((a,b)=>a.slot-b.slot||a.txIndex-b.txIndex||a.eventIndex-b.eventIndex);
  report.transactions.sort((a,b)=>a.slot-b.slot||a.txIndex-b.txIndex);
- report.status=report.events.length&&!report.gaps.length?'EVENTS_DECODED_UNVERIFIED':'PARTIAL';
+ report.status=(position?report.positionEvents.length:report.events.length)&&!report.gaps.length?'EVENTS_DECODED_UNVERIFIED':'PARTIAL';
+ if(position)report.limitations.push('Position lifecycle is bounded event evidence, not transfer-reconciled ledger; no inference of missing deposits, withdrawals, claim balances, ownership history or PnL.');
  console.log(JSON.stringify(report,null,2));if(report.status!=='EVENTS_DECODED_UNVERIFIED')process.exitCode=1;
 }
 main().catch(e=>{console.error('T04 inspection blocked: '+e.message);process.exitCode=1;});
