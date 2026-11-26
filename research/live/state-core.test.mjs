@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {mergeHistory,streamHealth} from './state-core.mjs';
+const a=mergeHistory(null,[{signature:'a',slot:1}]);
+const b=mergeHistory(a,[{signature:'b',slot:2},{signature:'a',slot:1}]);
+assert.equal(b.records.length,2);assert.equal(b.added,1);assert.equal(b.overlap,1);
+const c=mergeHistory(b,[{signature:'c',slot:4}]);assert.equal(c.status,'OVERLAP_MISSING');
+assert.equal(mergeHistory(c,[{signature:'c',slot:4}]).status,'OVERLAP_MISSING');
+assert.throws(()=>mergeHistory(b,[{signature:'a',slot:3}]));
+assert.throws(()=>mergeHistory(b,[{signature:'b',slot:2},{signature:'b',slot:2}]));
+assert.equal(streamHealth({status:'CAPTURED_UNVERIFIED',receivedAt:10},20,5),'UNAVAILABLE_OR_STALE');
+assert.equal(streamHealth({status:'CAPTURED_UNVERIFIED',receivedAt:10},20,15),'RECENT_UNVERIFIED');
+assert.equal(streamHealth({status:'PARTIAL',receivedAt:10},20,15),'UNAVAILABLE_OR_STALE');
+assert.equal(streamHealth({status:'CAPTURED_UNVERIFIED',receivedAt:30},20,15),'UNAVAILABLE_OR_STALE');
+console.log('State core fixture assertions passed; no live integration evidence.');
