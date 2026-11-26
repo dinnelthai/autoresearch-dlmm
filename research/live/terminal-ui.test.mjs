@@ -2,8 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {createContext,runInContext} from 'node:vm';
+import {terminalScriptNames} from './terminal-assets.mjs';
 const html=readFileSync(new URL('./terminal.html',import.meta.url),'utf8');
-const script=['state.js','dom.js','api.js','app.js'].map(n=>readFileSync(new URL('./terminal-assets/'+n,import.meta.url),'utf8')).join('\n');
+const sources=terminalScriptNames.map(n=>readFileSync(new URL('./terminal-assets/'+n,import.meta.url),'utf8'));
 function mount(){
  const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(x=>x[1]);assert.equal(new Set(ids).size,ids.length);
  function element(){return {value:'',textContent:'',hidden:false,open:false,disabled:false,style:{},dataset:{},classList:{add(){},remove(){}},children:[],listeners:{},addEventListener(k,fn){(this.listeners[k]??=[]).push(fn)},setAttribute(){},removeAttribute(){},append(...v){this.children.push(...v)},replaceChildren(...v){this.children=v},querySelector(){return element()},scrollIntoView(){},showModal(){this.open=true},close(){this.open=false}}}
@@ -21,10 +23,15 @@ function mount(){
   choosePosition:i=>{$('positionRows').children[i].children.at(-1).children[0].listeners.click[0]();return positionGeneration},
   ready:manageReady,
   matchesReviewResponse,
-  reviewScope:()=>target
+  reviewScope:()=>target,
+  accountingEpoch:()=>accountingGeneration,
+  refreshIndexOnly:()=>clearWalletPositions({preserveAccounting:true}),
+  resetIndex:()=>clearWalletPositions()
  };
  `;
- const api=new Function('document','window','fetch','setInterval','AbortSignal',script+extra)(document,{scrollTo(){}},()=>new Promise(()=>{}),()=>0,{timeout:()=>null});
+ const context=createContext({document,window:{scrollTo(){}},fetch:()=>new Promise(()=>{}),setInterval:()=>0,AbortSignal:{timeout:()=>null}});
+ for(const [i,source] of sources.entries())runInContext(source,context,{filename:terminalScriptNames[i]});
+ const api=runInContext('(function(){'+extra+'})()',context);
  return {api,elements};
 }
 test('asset startup and Pool A-B-A invalidate old request scope',()=>{
@@ -39,3 +46,5 @@ test('management disabled when common market expires before position',()=>{
  const {api}=mount(),h='a'.repeat(64),o={source:'service',snapshot:{slot:1,rawHash:h}},x={status:'CAPTURED_UNVERIFIED',commonMarketCapture:true,slot:1,rawHash:h,expiresAt:2000,rangeExpiresAt:1200,managementGate:{status:'PREFLIGHT_MATCHED_UNVERIFIED',expiresAt:2000,reviewHash:h,policyHash:h}};
  assert.equal(api.ready(x,o,1100),true);assert.equal(api.ready(x,o,1300),false);assert.equal(api.ready({...x,commonMarketCapture:false},o,1100),false);
 });
+
+test('index expiration does not invalidate ongoing accounting, explicit scope reset does',()=>{const {api}=mount(),g=api.accountingEpoch();api.refreshIndexOnly();assert.equal(api.accountingEpoch(),g);api.resetIndex();assert.equal(api.accountingEpoch(),g+1)});

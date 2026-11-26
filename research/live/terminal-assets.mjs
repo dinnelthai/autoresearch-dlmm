@@ -2,7 +2,7 @@
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-export const terminalScriptNames=Object.freeze(['state.js','dom.js','api.js','app.js']);
+export const terminalScriptNames=Object.freeze(["state.js","dom.js","api.js","session.js","strategy.js","navigation.js","position.js","shadow.js","scope.js","research.js","market.js","strategy-report.js","market-state.js","strategy-request.js","monitor.js","wallet.js","wallet-position.js","external.js","review.js","performance.js","app.js"]);
 export const terminalAssetNames=Object.freeze(['terminal.css',...terminalScriptNames]);
 const sha=b=>createHash('sha256').update(b).digest('hex');
 export async function loadTerminalAssets(root){

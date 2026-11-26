@@ -10,6 +10,7 @@ import {once} from 'node:events';
 import {createServer} from 'node:net';
 import {createHash,randomBytes} from 'node:crypto';
 import {PublicKey} from '@solana/web3.js';
+import {terminalAssetNames} from './terminal-assets.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url)),sha=b=>createHash('sha256').update(b).digest('hex');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function freePort(){const s=createServer();s.listen(0,'127.0.0.1');await once(s,'listening');const p=s.address().port;await new Promise((ok,fail)=>s.close(e=>e?fail(e):ok()));return p}
@@ -37,7 +38,7 @@ test('real localhost server: stale/missing state, scoped fixture, request guards
   assert.equal(health.body.htmlHash,sha(await readFile(join(dir,'research/live/terminal.html'))));
   assert.equal(health.body.executionReady,false);assert.match(health.body.assetHash,/^[0-9a-f]{64}$/);
   const page=await fetch(base+'/');assert.match(page.headers.get('content-security-policy'),/script-src 'self'/);assert.match(await page.text(),/src="\/assets\/app.js"/);
-  for(const name of ['terminal.css','state.js','dom.js','api.js','app.js']){const a=await fetch(base+'/assets/'+name);assert.equal(a.status,200);assert.equal(sha(Buffer.from(await a.arrayBuffer())),sha(await readFile(join(dir,'research/live/terminal-assets',name))));assert.match(a.headers.get('content-type'),name.endsWith('.css')?/text\/css/:/text\/javascript/)}
+  for(const name of terminalAssetNames){const a=await fetch(base+'/assets/'+name);assert.equal(a.status,200);assert.equal(sha(Buffer.from(await a.arrayBuffer())),sha(await readFile(join(dir,'research/live/terminal-assets',name))));assert.match(a.headers.get('content-type'),name.endsWith('.css')?/text\/css/:/text\/javascript/)}
   const unknown=await fetch(base+'/assets/missing.js');assert.notEqual(unknown.status,200);
   const missing=await get('/api/terminal/state');assert.equal(missing.body.status,'BLOCKED');assert.equal(missing.body.market,null);
   const preview=await get('/api/terminal/state?pool='+other);assert.equal(preview.body.pool,other);assert.equal(preview.body.reason,'DYNAMIC_CAPTURE_DISABLED');assert.equal(preview.body.executionReady,false);
