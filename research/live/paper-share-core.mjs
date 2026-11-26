@@ -31,8 +31,8 @@ export function mapPaperPlans({snapshot,report,budget}){
   function mapping(mode,row){
    const blocked=reason=>({mode,status:'BLOCKED',reason,allocation:null,rows:[]});
    if(!row||row.feasible!==true)return blocked('NO_FEASIBLE_PLAN');
-   if(row.family==='NO_LP'&&row.action?.type==='NO_LP')return {mode,status:'NO_LP',reason:null,allocation:null,rows:[]};
    if(!modes.includes(row.family)||mode!=='adaptive'&&mode!==row.family)return blocked('PAPER_SHARE_FAMILY_MISMATCH');
+   if(row.family==='NO_LP'&&row.action?.type==='NO_LP')return {mode,status:'NO_LP',reason:null,allocation:null,rows:[]};
    const d=allocationDiagnostic({row,market,budget});
    if(d.status!=='INTEGER_DIAGNOSTIC_ONLY')return blocked(d.reason??'INTEGER_MAPPING_UNAVAILABLE');
    try{
