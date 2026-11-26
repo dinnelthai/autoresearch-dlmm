@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {quoteMath} from './reference-math.mjs';
+const bid={inRaw:'100',outRaw:'1000'},ask={inRaw:'1100',outRaw:'100'};
+const full=(inRaw,outRaw,minOutRaw)=>({inRaw,outRaw,minOutRaw,status:'FULL_QUOTE'});
+const result=quoteMath(bid,ask,[full('100','1000','990'),full('200','1800','1750')],1000);
+assert.equal(result.bestTestedExit.inRaw,'100');
+assert.equal(result.samples[1].withinBudget,false);
+assert.equal(quoteMath(bid,ask,[{inRaw:'100',status:'QUOTE_UNAVAILABLE'}],100).bestTestedExit,null);
+assert.throws(()=>quoteMath({...bid,outRaw:'1200'},ask,[],100));
+assert.throws(()=>quoteMath(bid,ask,[full('100','10','20')],100));
+assert.throws(()=>quoteMath(bid,ask,[full('100','1000','990'),full('100','1000','990')],1000));
+console.log('Quote math fixtures passed; no live quote acceptance.');
