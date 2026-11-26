@@ -1,6 +1,8 @@
-# Native acceptance complete for targeted suites; local integration handoff
+# Full offline acceptance; local integration handoff
 
 ## Recorded evidence
+- Full independent offline verifier at commit 5b0e08f05b716b321862cea2931682f8da9a4d57: 341/341 records passed, 217 modules, 85 test files, zero failed/blocked. Node 22.23.4, Linux x64, exact rebuilt SDK and unchanged consumer lock. See https://github.com/dinnelthai/autoresearch-dlmm/actions/runs/45873160236. This is not live acceptance.
+- The same run retains the original ESM failure and a passing temporary candidate, and the fresh audit reports 6 high and 7 moderate affected packages. Formal C02 remains blocked; see docs/sdk-independent-acceptance.md.
 - Latest native CI run: https://github.com/dinnelthai/autoresearch-dlmm/actions/runs/45870937661
 - Tested commit: 1cfa4c70b330b19f3aceeca033da8f627aa7fd9b (Node 22.16.0, Linux x64).
 - Native engine: 65 pass, 0 fail, 0 skip. Native paper service/local HTTP probe: 7 pass, 0 fail, 0 skip.
@@ -28,7 +30,7 @@ If SDK test fails, inspect the installed dependency tree and vendor tarball agai
 lsof -nP -iTCP:8788 -sTCP:LISTEN
 lsof -nP -iTCP:8790 -sTCP:LISTEN
 ```
-Identify existing processes first; do not kill unidentified listeners. Confirm the actual config filenames and that both target the same intended pool. For absent listeners only, use two separate terminals from the repository root with the existing RPC environment:
+Identify existing processes first; do not kill unidentified listeners. Confirm the actual config filenames and that both target the same intended pool. Only after formal C02 approval, for absent listeners use two separate terminals from the repository root with the existing RPC environment. Until then, do not start the collector or any scheduler that could resume an existing paper experiment. The isolated CI terminal process smoke uses empty evidence and disabled external capture; this is distinct from starting a local configured instance with active experiments.
 ```sh
 node research/live/state-service.mjs --config data/live-config.json --port 8788
 ```
@@ -36,6 +38,19 @@ node research/live/state-service.mjs --config data/live-config.json --port 8788
 node research/live/terminal-server.mjs --config data/terminal-config.json --port 8790
 ```
 If these are not the existing config filenames (for example a .local.json config), use the real filenames and pass --live-config and --terminal-config to check-local accordingly. Do not create guessed configs or expose credentials. Check both /health endpoints and rerun check-local. HTTP health is not market readiness.
+
+## Minimal local evidence to return before any further changes
+Run these read-only commands on the Mac; do not paste configs, environment variables, wallet keys, RPC URLs or raw account archives:
+```sh
+node --version
+node --test research/live/sdk-runtime.test.mjs
+lsof -nP -iTCP:8788 -sTCP:LISTEN
+lsof -nP -iTCP:8790 -sTCP:LISTEN
+curl --max-time 5 -sS -o /dev/null -w 'terminal HTTP %{http_code}\n' http://127.0.0.1:8790/health
+curl --max-time 5 -sS -o /dev/null -w 'collector HTTP %{http_code}\n' http://127.0.0.1:8788/health
+node research/live/check-local.mjs
+```
+If a listener is absent, report that separately from a JSON or market-data error. If configuration filenames differ, rerun check-local with the actual config paths. Browser Failed to fetch alone is not proof of a specific cause.
 
 ## Independent SDK evidence
 The independent Linux build workflow is `.github/workflows/sdk-independent-build.yml`. It checks the pinned upstream source blobs, uses the recorded Node/pnpm versions, disables install lifecycle scripts, and fails closed if the rebuilt tarball or existing consumer lock differs. Only an identical artifact can enter the consumer test; no registry downgrade or lock rewrite. Even an exact rebuild and successful ESM check would not independently close the dependency/security or protocol gates. No RPC or wallet operations in this workflow.
