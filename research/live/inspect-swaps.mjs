@@ -50,7 +50,7 @@ async function main(){
  if(identity)assert(identity.pool===m.pool&&identity.sdkCommit===SDK_COMMIT&&identity.idlBlob===IDL_BLOB,'identity report mismatch');
  const files=new Map();for(const f of m.files){assert(typeof f.file==='string'&&/^(signatures-\d+|block-\d+|tx-[1-9A-HJ-NP-Za-km-z]{64,88})\.json$/.test(f.file)&&!files.has(f.file),'invalid or duplicate evidence path');files.set(f.file,f);}
  async function load(file,method,param){
-  const f=files.get(file);assert(f&&f.method===method&&f.params?.[0]===param,'missing/mismatched request evidence');
+  const f=files.get(file);assert(f&&f.method===method&&f.params?.[0]===param&&f.params?.[1]?.commitment==='finalized','missing/mismatched finalized request evidence');
   const b=await readFile(join(values.capture,file));assert(sha(b)===f.sha256,'evidence hash mismatch');const p=JSON.parse(b);assert(p.jsonrpc==='2.0'&&p.id===f.requestId&&!p.error&&p.result!=null,'invalid evidence payload');return p.result;
  }
  const report={pool:m.pool,sdkCommit:SDK_COMMIT,idlBlob:IDL_BLOB,status:'PARTIAL',position,events:[],positionEvents:[],transactions:[],gaps:[...(m.gaps??[])],limitations:['Supplied evidence only; no live or complete history claim.','CPI events preferred over log mirror; log-only evidence has no instruction path.','Transaction-level vault deltas are observations, not per-swap reconciliation.','No inferred per-bin fill, fee rate units or legacy MM fee.']};
@@ -58,7 +58,7 @@ async function main(){
  for(const s of m.signatures){
   try{
    assert(typeof s.signature==='string'&&/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(s.signature)&&Number.isSafeInteger(s.slot)&&s.slot>=0&&!seen.has(s.signature),'invalid or duplicate signature');seen.add(s.signature);
-   const tx=await load('tx-'+s.signature+'.json','getTransaction',s.signature);assert(tx.slot===s.slot&&tx.transaction.signatures[0]===s.signature&&tx.meta,'transaction identity mismatch');
+   const tx=await load('tx-'+s.signature+'.json','getTransaction',s.signature);assert(tx.slot===s.slot&&tx.transaction.signatures[0]===s.signature&&tx.meta&&'err' in s&&'err' in tx.meta&&JSON.stringify(s.err)===JSON.stringify(tx.meta.err)&&s.blockTime===tx.blockTime,'transaction identity or outcome mismatch');
    if(!blocks.has(s.slot)){const b=await load('block-'+s.slot+'.json','getBlock',s.slot);assert(Array.isArray(b.signatures)&&new Set(b.signatures).size===b.signatures.length,'invalid block signature order');blocks.set(s.slot,b.signatures);}
    const txIndex=blocks.get(s.slot).indexOf(s.signature);assert(txIndex>=0,'transaction missing in block');
    const meta=tx.meta,msg=tx.transaction.message,keys=[...msg.accountKeys,...(meta.loadedAddresses?.writable??[]),...(meta.loadedAddresses?.readonly??[])];assert(keys.every(k=>typeof k==='string'),'unexpected account key format');
