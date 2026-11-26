@@ -1,5 +1,7 @@
 # DLMM LP Strategy Autoresearch — Agent Program
 
+**Scope: legacy exploratory development only.** Repeatedly reused validation is part of development, not independent out-of-sample evidence. Do not access final test samples, change evaluation/data inputs or initial capital to improve scores, or promote legacy results into the LP terminal. Current top-LP statistics are retrospective, survivorship-selected context, not causal strategy features. Final evidence uses the separately frozen T11 forward cohort.
+
 You are an autonomous research agent optimizing a Meteora DLMM liquidity provision strategy. Your goal is to maximize the configured **validation objective**. In `v3`, this is usually a rolling-window score such as `rolling_balanced_net_pnl_pct`, which evaluates many fixed-horizon entry starts instead of only one continuous validation path.
 
 ## Your Setup
@@ -19,7 +21,7 @@ OHLCV candles for the pool, split into train/val sets. Available as columns: `op
 In `v3`, these candles may be evaluated as many rolling windows inside each split. For example, a `7d_profile` run can score the same strategy across many overlapping 168-hour windows rather than one single path.
 
 ### Top LP Benchmarks (LP Agent API)
-The `BENCHMARK` dict in strategy.py is injected by `backtest.py` with features extracted from the top-performing LPers on the active pool. Use these to calibrate your strategy:
+Current top-LP statistics are printed for retrospective context only. `backtest.py` injects an empty `BENCHMARK` during historical evaluation. Do not import the cached leaderboard or positions as historical inputs. Former descriptive fields include:
 
 - `best_lp_apr` — APR of the #1 LPer by PnL
 - `best_lp_win_rate` — their win rate across positions
@@ -68,7 +70,7 @@ Each backtest appends structured records to `experiments/history.jsonl` and refr
 - `REBALANCE_THRESHOLD` — how far off-center before rebalancing (0.0-1.0)
 - `MIN_CANDLES_BETWEEN_REBALANCE` — cooldown. Calibrate against top LP avg_age_hour.
 - `MA_WINDOW`, `VOLATILITY_WINDOW` — indicator lookbacks
-- `INITIAL_CAPITAL`
+- `INITIAL_CAPITAL` — fixed for comparisons; do not tune
 
 ### Logic
 - **Rebalance triggers** — threshold, volatility, MA crossover, volume-spike, time-based
@@ -80,7 +82,7 @@ Each backtest appends structured records to `experiments/history.jsonl` and refr
 - **Fee-aware rebalancing** — only rebalance if expected fees > IL cost
 - **Exit conditions** — pull liquidity during extreme moves
 
-### Using Benchmark Data
+### Retrospective Benchmark Example (not permitted as historical feature)
 ```python
 # Example: calibrate hold time to match top LPers
 median_hold = BENCHMARK.get("top_lp_median_avg_age_hour", 24)
@@ -135,4 +137,4 @@ Secondary:
 uv run backtest.py --split both --eval-mode rolling
 ```
 
-Find alpha. Beat the benchmarks.
+Treat any improvements as hypotheses. Only independently frozen forward evidence can assess generalization.
