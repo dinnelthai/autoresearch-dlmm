@@ -1,6 +1,7 @@
 // Read-only T02 adapter. No RPC, signing or execution. Consumes T01 captures.
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import anchor from '@coral-xyz/anchor';
@@ -69,4 +70,5 @@ async function main(){
  result.limitations=['Input evidence is a supplied T01 capture, not independent RPC verification.','Token-2022 and reverse token orientation are not supported by the current strategy adapter.','No BinArray, historical state, execution or income validation.'];
  console.log(JSON.stringify(result,null,2));if(!supported)process.exitCode=1;
 }
-main().catch(e=>{console.error('T02 blocked: '+e.message);process.exitCode=1;});
+export {readCapture,PROGRAM,SDK_COMMIT,IDL_BLOB,blob};
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(e=>{console.error('T02 blocked: '+e.message);process.exitCode=1;});
