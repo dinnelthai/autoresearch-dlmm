@@ -1,9 +1,9 @@
-// Minimal DOM stub exercises actual inline script and handlers, not a real browser test.
+// Minimal DOM stub exercises the ordered frontend asset scripts and handlers, not a real browser test.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const html=readFileSync(new URL('./terminal.html',import.meta.url),'utf8');
-const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const script=['state.js','dom.js','api.js','app.js'].map(n=>readFileSync(new URL('./terminal-assets/'+n,import.meta.url),'utf8')).join('\n');
 function mount(){
  const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(x=>x[1]);assert.equal(new Set(ids).size,ids.length);
  function element(){return {value:'',textContent:'',hidden:false,open:false,disabled:false,style:{},dataset:{},classList:{add(){},remove(){}},children:[],listeners:{},addEventListener(k,fn){(this.listeners[k]??=[]).push(fn)},setAttribute(){},removeAttribute(){},append(...v){this.children.push(...v)},replaceChildren(...v){this.children=v},querySelector(){return element()},scrollIntoView(){},showModal(){this.open=true},close(){this.open=false}}}
@@ -27,7 +27,7 @@ function mount(){
  const api=new Function('document','window','fetch','setInterval','AbortSignal',script+extra)(document,{scrollTo(){}},()=>new Promise(()=>{}),()=>0,{timeout:()=>null});
  return {api,elements};
 }
-test('inline startup and Pool A-B-A invalidate old request scope',()=>{
+test('asset startup and Pool A-B-A invalidate old request scope',()=>{
  const {api,elements}=mount(),epoch=api.changePool('A');assert.equal(api.scope(epoch,'A'),true);
  api.changePool('B');api.changePool('A');assert.equal(api.scope(epoch,'A'),false);assert.equal(api.currentScope(),'[null,null]');assert.equal(elements.get('reviewDialog').open,false);
 });

@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {parseArgs} from 'node:util';
 import {classifyLocal} from './local-check-core.mjs';
+import {loadTerminalAssets} from './terminal-assets.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const {values}=parseArgs({options:{terminal:{type:'string',default:'8790'},collector:{type:'string',default:'8788'},'terminal-config':{type:'string',default:'data/terminal-config.json'},'live-config':{type:'string',default:'data/live-config.json'}}});
@@ -24,7 +25,8 @@ async function main(){
  const tp=port(values.terminal),cp=port(values.collector);
  const [tc,lc]=await Promise.all([readConfig(values['terminal-config']),readConfig(values['live-config'])]);
  const pool=tc?.pool??null;
- const hashes={htmlHash:sha(await readFile(join(root,'research/live/terminal.html'))),serverHash:sha(await readFile(join(root,'research/live/terminal-server.mjs')))};
+ const {assetHash}=await loadTerminalAssets(root);
+ const hashes={assetHash,htmlHash:sha(await readFile(join(root,'research/live/terminal.html'))),serverHash:sha(await readFile(join(root,'research/live/terminal-server.mjs')))};
  const git=spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',timeout:5000});
  const dirty=spawnSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8',timeout:5000});
  const vendorPath=join(root,'data/vendor/meteora-ag-dlmm-1.9.15.tgz');

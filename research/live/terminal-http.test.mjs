@@ -33,9 +33,12 @@ test('real localhost server: stale/missing state, scoped fixture, request guards
   child=spawn(process.execPath,[join(dir,'research/live/terminal-server.mjs'),'--config',join(dir,'data/config.json'),'--port',String(port)],{cwd:dir,env:{...process.env,SOLANA_RPC_URL:'http://127.0.0.1:1',JUPITER_API_KEY:''},stdio:['ignore','ignore','pipe']});
   let stderr='';child.stderr.on('data',b=>{if(stderr.length<2000)stderr+=b.toString().slice(0,2000-stderr.length)});done=once(child,'close');
   async function get(path,options={}){const r=await fetch(base+path,{...options,signal:AbortSignal.timeout(5000)});return {status:r.status,body:await r.json()}}
-  let health=null;for(let i=0;i<60;i++){if(child.exitCode!==null)throw Error('server exited: '+stderr);try{health=await get('/health');break}catch{await pause(150)}}assert.ok(health,'server did not start');assert.equal(health.body.apiVersion,'flow-data-v10');
+  let health=null;for(let i=0;i<60;i++){if(child.exitCode!==null)throw Error('server exited: '+stderr);try{health=await get('/health');break}catch{await pause(150)}}assert.ok(health,'server did not start');assert.equal(health.body.apiVersion,'flow-data-v11');
   assert.equal(health.body.htmlHash,sha(await readFile(join(dir,'research/live/terminal.html'))));
-  assert.equal(health.body.executionReady,false);
+  assert.equal(health.body.executionReady,false);assert.match(health.body.assetHash,/^[0-9a-f]{64}$/);
+  const page=await fetch(base+'/');assert.match(page.headers.get('content-security-policy'),/script-src 'self'/);assert.match(await page.text(),/src="\/assets\/app.js"/);
+  for(const name of ['terminal.css','state.js','dom.js','api.js','app.js']){const a=await fetch(base+'/assets/'+name);assert.equal(a.status,200);assert.equal(sha(Buffer.from(await a.arrayBuffer())),sha(await readFile(join(dir,'research/live/terminal-assets',name))));assert.match(a.headers.get('content-type'),name.endsWith('.css')?/text\/css/:/text\/javascript/)}
+  const unknown=await fetch(base+'/assets/missing.js');assert.notEqual(unknown.status,200);
   const missing=await get('/api/terminal/state');assert.equal(missing.body.status,'BLOCKED');assert.equal(missing.body.market,null);
   const preview=await get('/api/terminal/state?pool='+other);assert.equal(preview.body.pool,other);assert.equal(preview.body.reason,'DYNAMIC_CAPTURE_DISABLED');assert.equal(preview.body.executionReady,false);
   const invalid=await get('/api/terminal/state?pool=invalid');assert.equal(invalid.status,400);

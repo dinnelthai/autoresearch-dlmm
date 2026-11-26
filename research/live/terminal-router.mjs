@@ -2,7 +2,7 @@
 import {randomUUID} from 'node:crypto';
 import {currentMarket,scopedTerminalRequest} from './terminal-core.mjs';
 import {diagnosticLog} from './diagnostic-log.mjs';
-export function createTerminalHandler({pool,port,origin,html,startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}){
+export function createTerminalHandler({pool,port,origin,html,assets=new Map(),startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}){
  function blocked(reason){return {schemaVersion:1,pool,status:'BLOCKED',decisionReady:false,executionReady:false,gaps:[reason]}}
  const postRoutes=new Map([
   ['/api/terminal/position-accounting',{lock:"positionAccounting",reason:"POSITION_ACCOUNTING_BUSY",handle:positionAccounting}],
@@ -23,10 +23,11 @@ export function createTerminalHandler({pool,port,origin,html,startup,isStopping,
 return async function handle(req,res){
  const requestId=randomUUID(),startedAt=Date.now();res.setHeader('X-Request-Id',requestId);
  res.once('finish',()=>{if(res.statusCode>=400)diagnosticLog({component:'TERMINAL',event:'HTTP_REQUEST',status:'FAILED',reason:'HTTP_'+res.statusCode,requestId,durationMs:Date.now()-startedAt})});
- res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+ res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
  try{
   if(isStopping()){send(res,503,blocked('SERVICE_STOPPING'));return}
+  if(req.method==='GET'&&assets.has(req.url)){const a=assets.get(req.url);res.writeHead(200,{'Content-Type':a.type});res.end(a.bytes);return}
   const scoped=req.method==='GET'?scopedTerminalRequest(req.url,pool):{path:req.url,pool};
   const scope=validateScope(scoped.pool);
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
