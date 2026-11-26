@@ -17,6 +17,8 @@ import {getPriceHistory} from './price-history.mjs';
 import {getPoolInfo,cachedLoader} from './market-api.mjs';
 import {observeExternalMarket} from './external-market.mjs';
 import {inputStatus} from './research-input-status.mjs';
+import {captureHolderFeatures} from './capture-holder-features.mjs';
+import {cohortChange} from './market-features.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
@@ -257,13 +259,26 @@ async function observeWallet(body){
  return {pool:scope,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
-let externalBusy=false,externalLast=null;
+let externalBusy=false,externalLast=null,holderBusy=false,holderLastAttempt=0;
+const holderCache=new Map();
+async function holderObservation(body){
+ const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),key=scope+':'+m.mintX,now=Date.now(),old=holderCache.get(key);
+ if(old&&now-old.public.receivedAt<60000)return old.public;
+ if(now-holderLastAttempt<60000)throw Error('HOLDER_RETRY_COOLDOWN');holderLastAttempt=now;
+ const base=join(DATA,'raw');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'holder-'));
+ const x=await captureHolderFeatures(m,{archive:(name,raw)=>writeFile(join(dir,name),raw,{mode:0o600,flag:'wx'})});
+ const cohort=cohortChange(old?.internal,x,Date.now());
+ const {ownerBalances,topOwners,...distribution}=x.distribution;
+ const archived={...x,distribution:{...distribution,topOwners},cohort};const bytes=JSON.stringify(archived,null,2)+'\n';await writeFile(join(dir,'manifest.json'),bytes,{mode:0o600,flag:'wx'});
+ const {files,...summary}=x,p={...summary,distribution,cohort,evidenceHash:sha(bytes),capture:relative(ROOT,dir)};
+ holderCache.delete(key);holderCache.set(key,{public:p,internal:x});while(holderCache.size>4)holderCache.delete(holderCache.keys().next().value);return p;
+}
 async function researchInputs(scope){
  const now=Date.now();let state=null,m=null,review=null,reason=null;
  try{state=await loadState(scope);m=currentMarket(state,scope,now,maxAgeMs)}catch{reason='MARKET_CAPTURE_UNAVAILABLE'}
  if(m&&scope===pool){try{review=(await loadReview(m,now)).review}catch(e){reason=e.message}}
  else if(m)reason='POOL_RESEARCH_NOT_CONFIGURED';
- return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:externalLast,review,reviewReason:reason,now,maxAgeMs});
+ return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:externalLast,holder:m?holderCache.get(scope+':'+m.mintX)?.public:null,review,reviewReason:reason,now,maxAgeMs});
 }
 async function externalObservation(body){
  const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),now=Date.now();
@@ -320,6 +335,11 @@ const server=createServer(async(req,res)=>{
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(positionReadBusy){send(res,409,blocked('POSITION_CAPTURE_BUSY'));return}positionReadBusy=true;
    try{const body=await jsonBody(req);send(res,200,await (req.url.endsWith('-detail')?readPositionDetail(body):readPositionIndex(body)))}finally{positionReadBusy=false}return
+  }
+  if(req.method==='POST'&&req.url==='/api/terminal/holder-features'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   if(holderBusy){send(res,409,blocked('HOLDER_CAPTURE_BUSY'));return}holderBusy=true;
+   try{send(res,200,await holderObservation(await jsonBody(req)))}finally{holderBusy=false}return
   }
   if(req.method==='POST'&&req.url==='/api/terminal/external-market'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
