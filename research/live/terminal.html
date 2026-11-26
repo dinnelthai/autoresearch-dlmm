@@ -234,7 +234,7 @@ function drawPositionBins(chart,p,r,ref,val){
  chart.append(svg);const note=document.createElement('small');note.textContent='青绿 SOL / 紫色 MEME · 本金估值 '+fmt(val)+' SOL · 非实际退出价值';chart.append(note);
 }
 function renderPosition(){
- const body=$('positionRows');body.replaceChildren();put('positionCount',String(positions.size));for(const [id,o] of positions){const p=o.snapshot,tr=document.createElement('tr');if(id===positionSelected)tr.classList.add('viewing');cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;cell(tr,o.source==='service'?'本地采集':'手动归档');cell(tr,p.slot);cell(tr,p.lowerBinId+' 至 '+p.upperBinId);cell(tr,exactAmount(p.currentPrincipalRaw.y,9));cell(tr,exactAmount(p.currentPrincipalRaw.x,p.snapshot.decimalsX));const td=cell(tr,'');const b=document.createElement('button');b.textContent='查看';b.setAttribute('aria-pressed',String(id===positionSelected));b.addEventListener('click',()=>{positionSelected=id;clearManagementView();renderPosition()});td.append(b);body.append(tr)}
+ const body=$('positionRows');body.replaceChildren();put('positionCount',String(positions.size));for(const [id,o] of positions){const p=o.snapshot,tr=document.createElement('tr');if(id===positionSelected)tr.classList.add('viewing');cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;cell(tr,o.source==='service'?'本地采集':'手动归档');cell(tr,p.slot);cell(tr,p.lowerBinId+' 至 '+p.upperBinId);cell(tr,exactAmount(p.currentPrincipalRaw.y,9));cell(tr,exactAmount(p.currentPrincipalRaw.x,p.snapshot.decimalsX));const td=cell(tr,'');const b=document.createElement('button');b.textContent='查看';b.setAttribute('aria-pressed',String(id===positionSelected));b.addEventListener('click',()=>{positionSelected=id;put('managementStatus','');clearManagementView();renderPosition()});td.append(b);body.append(tr)}
  if(!positions.size){const tr=document.createElement('tr');cell(tr,'尚无该 Pool 的可查看仓位').colSpan=7;body.append(tr)}
  put('positionListStatus',positions.size?'显示采集与导入的快照，不代表钱包全部仓位。':'尚未导入仓位快照。');
  const o=positions.get(positionSelected),p=o?.snapshot,r=o?.management,m=r?.managementPreview;
@@ -248,7 +248,7 @@ function renderPosition(){
  drawPositionBins(chart,p,r,ref,val)}
  renderManageRows();renderMonitorSelection();
 }
-function resetPositions(){monitoring.clear();monitorSignature='';renderMonitorRows();put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择');positionGeneration++;positions.clear();positionSelected=null;clearManagementView();$('positionFile').value='';$('managementFile').value='';put('positionImportStatus','先选择 Pool，再导入快照。');renderPosition()}
+function resetPositions(){monitoring.clear();monitorSignature='';renderMonitorRows();put('managementStatus','');put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择');positionGeneration++;positions.clear();positionSelected=null;clearManagementView();$('positionFile').value='';$('managementFile').value='';put('positionImportStatus','先选择 Pool，再导入快照。');renderPosition()}
 $('clearPositions').addEventListener('click',resetPositions);
 async function readJson(file){if(!file)throw Error('未选择文件');if(file.size>8*1024*1024)throw Error('文件超过 8 MB');return JSON.parse(await file.text())}
 $('positionFile').addEventListener('change',async()=>{const g=++positionGeneration;try{if(!target)throw Error('先设置目标池');const p=validatePosition(await readJson($('positionFile').files[0]),target);if(g!==positionGeneration)return;const previous=positions.get(p.position);if(previous?.source==='service')throw Error('该仓位正在由本地服务采集；请使用采集快照，避免覆盖');positions.set(p.position,{source:'archive',snapshot:p,management:previous?.snapshot.rawHash===p.rawHash&&previous.snapshot.slot===p.slot&&previous.snapshot.owner===p.owner&&previous.snapshot.snapshot.decimalsX===p.snapshot.decimalsX?previous.management:null});positionSelected=p.position;clearManagementView();renderPosition();put('positionImportStatus','已导入未验收的仓位快照。')}catch(e){if(g===positionGeneration)put('positionImportStatus','导入失败：'+e.message)}});
@@ -340,6 +340,7 @@ $('request').addEventListener('submit',async e=>{
 
 const rangeLabels={IN_RANGE:'区间内',BELOW_RANGE:'低于区间',ABOVE_RANGE:'高于区间',UNKNOWN:'未知'};
 function monitorFresh(x,now=Date.now()){return x?.status==='CAPTURED_UNVERIFIED'&&Number.isSafeInteger(x.expiresAt)&&x.expiresAt>now}
+function rangeFresh(x,now=Date.now()){return monitorFresh(x,now)&&x.commonMarketCapture===true&&Number.isSafeInteger(x.rangeExpiresAt)&&x.rangeExpiresAt>now}
 function manageReady(x,o,now=Date.now()){
  const g=x?.managementGate,b=o?.snapshot;
  return !!b&&o.source==='service'&&monitorFresh(x,now)&&x.commonMarketCapture===true&&x.slot===b.slot&&x.rawHash===b.rawHash&&g?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&Number.isSafeInteger(g.expiresAt)&&g.expiresAt>now&&hash(g.reviewHash)&&hash(g.policyHash);
@@ -348,12 +349,12 @@ function matchesManagementBinding(b,x,o,market,now=Date.now()){
  return !!b&&manageReady(x,o,now)&&b.scope==='RESEARCH_ONLY'&&b.position===x.position&&b.positionSlot===x.slot&&b.positionRawHash===x.rawHash&&b.marketSlot===market?.slot&&b.marketRawHash===market?.rawHash&&b.reviewHash===x.managementGate.reviewHash&&b.policyHash===x.managementGate.policyHash&&hash(b.requestHash)&&Number.isSafeInteger(b.expiresAt)&&b.expiresAt>now;
 }
 function renderMonitorRows(){
- const body=$('monitorRows');body.replaceChildren();for(const [id,x] of monitoring){const tr=document.createElement('tr');cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;cell(tr,monitorFresh(x)?'采集未验收':reasonText(x.reason??'POSITION_CAPTURE_STALE'));cell(tr,monitorFresh(x)?rangeLabels[x.rangeState]??'未知':'未知');cell(tr,manageReady(x,positions.get(id))?'证据预检查匹配':reasonText(x.managementGate?.reason??'REVIEW_STALE_OR_INVALID'));body.append(tr)}
+ const body=$('monitorRows');body.replaceChildren();for(const [id,x] of monitoring){const tr=document.createElement('tr');cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;cell(tr,monitorFresh(x)?'采集未验收':reasonText(x.reason??'POSITION_CAPTURE_STALE'));cell(tr,rangeFresh(x)?rangeLabels[x.rangeState]??'未知':'未知');cell(tr,manageReady(x,positions.get(id))?'证据预检查匹配':reasonText(x.managementGate?.reason??'REVIEW_STALE_OR_INVALID'));body.append(tr)}
  if(!monitoring.size){const tr=document.createElement('tr');cell(tr,'暂无配置的仓位采集状态').colSpan=4;body.append(tr)}
 }
 function renderMonitorSelection(){
  const x=monitoring.get(positionSelected),o=positions.get(positionSelected),g=x?.managementGate,ready=manageReady(x,o);
- put('posRangeState',monitorFresh(x)?rangeLabels[x.rangeState]??'未知':'—');put('posCaptureState',o?.source==='archive'?'手动归档':monitorFresh(x)?(x.commonMarketCapture?'同源快照 · 未验收':'独立快照 · 未验收'):'—');
+ put('posRangeState',rangeFresh(x)?rangeLabels[x.rangeState]??'未知':'未知');if(o?.source==='service'&&!o.management)put('posActive',rangeFresh(x)?x.activeId:'—');put('posCaptureState',o?.source==='archive'?'手动归档':monitorFresh(x)?(rangeFresh(x)?'同源快照 · 未验收':'未匹配当前市场 · 未验收'):'—');
  $('manageGateDot').dataset.ready=String(ready);put('manageGateText',!o?'选择采集仓位':o.source!=='service'?'归档仓位仅可审阅':ready?'证据预检查匹配 · 仍需引擎校验':reasonText(g?.reason??'REVIEW_STALE_OR_INVALID'));
  $('evaluatePosition').disabled=!ready||managementBusy||planBusy;$('evaluatePosition').textContent=managementBusy?'正在评估…':'✦ 评估管理方案';$('evaluatePosition').setAttribute('aria-busy',String(managementBusy));
  const dl=$('managementPolicyView');dl.replaceChildren();
@@ -362,10 +363,10 @@ function renderMonitorSelection(){
  for(const [k,v] of Object.entries(fields)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=labels[k]??k;dd.textContent=String(v);dl.append(dt,dd)}
 }
 function applyMonitoring(rows){
- const next=new Map();for(const x of Array.isArray(rows)?rows:[]){if(addr(x?.position)&&['BLOCKED','CAPTURED_UNVERIFIED'].includes(x.status))next.set(x.position,{...x,activeId:x.commonMarketCapture?serviceMarket?.activeId:null})}
+ const next=new Map();for(const x of Array.isArray(rows)?rows:[]){if(addr(x?.position)&&['BLOCKED','CAPTURED_UNVERIFIED'].includes(x.status))next.set(x.position,{...x,activeId:x.commonMarketCapture?serviceMarket?.activeId:null,rangeExpiresAt:x.commonMarketCapture?Math.min(x.expiresAt,serviceMarket?.expiresAt??0):0})}
  monitoring=next;let invalidated=false;
  for(const [id,o] of positions){if(o.management?.terminalBinding&&!matchesManagementBinding(o.management.terminalBinding,monitoring.get(id),o,serviceMarket)){o.management=null;if(id===positionSelected){clearManagementView();invalidated=true}}}
- const sig=JSON.stringify([...monitoring].map(([id,x])=>[id,x.status,x.slot,x.rawHash,x.rangeState,x.reason,x.managementGate?.status,x.managementGate?.reason,x.managementGate?.reviewHash,x.managementGate?.policyHash,monitorFresh(x),manageReady(x,positions.get(id))]));
+ const sig=JSON.stringify([...monitoring].map(([id,x])=>[id,x.status,x.slot,x.rawHash,x.rangeState,x.reason,x.managementGate?.status,x.managementGate?.reason,x.managementGate?.reviewHash,x.managementGate?.policyHash,monitorFresh(x),rangeFresh(x),manageReady(x,positions.get(id))]));
  if(sig!==monitorSignature){monitorSignature=sig;renderMonitorRows();renderMonitorSelection()}
  if(invalidated){renderPosition();put('managementStatus','仓位、证据或配置已变化，旧研究结果已失效。')}
 }
