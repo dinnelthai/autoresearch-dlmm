@@ -465,6 +465,10 @@ function updateReviewButtons(){
  $('reviewPlan').disabled=!reviewSelection('plans');$('reviewManagement').disabled=!reviewSelection('management');
  if(activeReview){const cur=reviewSelection(activeReview.mode);if(!cur||cur.report!==activeReview.report||cur.row!==activeReview.row||cur.wallet!==activeReview.wallet){closeResearchReview();}}
 }
+function matchesReviewResponse(r,ctx){
+ const b=ctx.report.terminalBinding,management=ctx.mode==='management';
+ return r.reviewId===ctx.report.reviewId&&r.mode===ctx.mode&&r.rowIndex===ctx.rowIndex&&r.pool===target&&r.wallet===ctx.wallet&&r.requestHash===b.requestHash&&r.marketSlot===b.marketSlot&&r.marketRawHash===b.marketRawHash&&r.reviewHash===b.reviewHash&&r.position===(management?b.position:null)&&r.policyHash===(management?b.policyHash:null)&&r.positionSlot===(management?b.positionSlot:null)&&r.positionRawHash===(management?b.positionRawHash:null)&&Number.isSafeInteger(r.expiresAt)&&r.expiresAt>Date.now()&&r.expiresAt<=b.expiresAt;
+}
 async function openResearchReview(mode){
  const ctx=reviewSelection(mode);if(!ctx)return;const epoch=++reviewEpoch,accountEpoch=walletEpoch;activeReview=ctx;reviewVerified=false;walletEvidenceResult=null;$('readWalletEvidence').disabled=true;$('walletEvidenceFields').replaceChildren();put('walletEvidenceStatus','主动读取时会向配置的 RPC 提供公开钱包地址。');
  $('reviewFields').replaceChildren();$('reviewBlockers').replaceChildren();$('integerFields').replaceChildren();$('integerRows').replaceChildren();put('integerStatus','等待服务端整数预检');$('weightFields').replaceChildren();$('weightRows').replaceChildren();put('weightStatus','等待 SDK 权重诊断');$('inverseFields').replaceChildren();$('inverseRows').replaceChildren();put('inverseStatus','等待同源采集证据');put('reviewMessage','正在核对当前仓位、钱包身份及研究证据…');$('reviewDialog').showModal();
@@ -473,7 +477,7 @@ async function openResearchReview(mode){
   if(epoch!==reviewEpoch||accountEpoch!==walletEpoch||!$('reviewDialog').open)return;
   const current=reviewSelection(mode);if(!current||current.report!==ctx.report||current.row!==ctx.row){closeResearchReview();return}
   if(!res.ok)throw Error(reasonText(r.gaps?.[0]));
-  if(r.status!=='RESEARCH_REVIEW_ONLY'||r.signingAvailable!==false||r.executionReady!==false||r.decisionReady!==false||r.wallet!==ctx.wallet||r.pool!==target||r.mode!==mode||r.requestHash!==ctx.report.terminalBinding.requestHash||r.expiresAt<=Date.now())throw Error('审阅结果身份不符');
+  if(r.status!=='RESEARCH_REVIEW_ONLY'||r.signingAvailable!==false||r.executionReady!==false||r.decisionReady!==false||!matchesReviewResponse(r,ctx))throw Error('审阅结果身份不符');
   const fields={钱包:r.wallet,Pool:r.pool,Position:r.position??'尚未创建',研究动作:r.action,策略:r.strategy??'—',模型选中:r.modelSelected?'是':'否',模型SOL分配:fmt(r.modelAllocation?.sol),模型MEME分配:fmt(r.modelAllocation?.meme),Bin区间:r.modelAllocation?.lowerBinId==null?'无 LP':r.modelAllocation.lowerBinId+' 至 '+r.modelAllocation.upperBinId,快照Slot:r.marketSlot,有效期:new Date(r.expiresAt).toLocaleTimeString()};
   for(const [k,v] of Object.entries(fields)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=String(v);$('reviewFields').append(dt,dd)}
   for(const code of r.blockers??[]){const li=document.createElement('li');li.textContent=reasonText(code);$('reviewBlockers').append(li)}
@@ -496,7 +500,7 @@ $('readWalletEvidence').addEventListener('click',async()=>{
   if(epoch!==reviewEpoch||!$('reviewDialog').open)return;
   const cur=reviewSelection(ctx.mode);if(!cur||cur.report!==ctx.report||cur.row!==ctx.row||cur.wallet!==ctx.wallet){closeResearchReview();return}
   if(!res.ok)throw Error(reasonText(r.gaps?.[0]));
-  if(r.status!=='OBSERVED_NOT_SPENDABILITY_CHECK'||r.decisionReady!==false||r.executionReady!==false||r.signingAvailable!==false||r.wallet!==ctx.wallet||r.requestHash!==ctx.report.terminalBinding.requestHash||!Number.isSafeInteger(r.slot)||r.slot<ctx.report.terminalBinding.marketSlot||!Number.isSafeInteger(r.expiresAt)||r.expiresAt<=Date.now()||!hash(r.rawHash))throw Error('余额观测与审阅身份或时效不匹配');
+  if(r.status!=='OBSERVED_NOT_SPENDABILITY_CHECK'||r.decisionReady!==false||r.executionReady!==false||r.signingAvailable!==false||!matchesReviewResponse(r,ctx)||!Number.isSafeInteger(r.slot)||r.slot<ctx.report.terminalBinding.marketSlot||!Number.isSafeInteger(r.expiresAt)||r.expiresAt<=Date.now()||!hash(r.rawHash))throw Error('余额观测与审阅身份或时效不匹配');
   const tokenState=a=>a?.status==='MISSING'?'未创建 ATA':a?.frozen?'已冻结':a?.delegated?'存在委托':'已观测';
   const fields={'原生 SOL':exactAmount(r.nativeSolRaw,9),'MEME · ATA':exactAmount(r.memeAta?.amountRaw,r.decimalsX),'MEME 账户状态':tokenState(r.memeAta),'WSOL · ATA':exactAmount(r.wsolAta?.amountRaw,9),'WSOL 账户状态':tokenState(r.wsolAta),'单个经典 SPL 账户租金参考 SOL':exactAmount(r.classicTokenAccountRentRaw,9),'交易手续费':'待真实消息报价','账户观测 Slot':r.slot,'观测有效期':new Date(r.expiresAt).toLocaleTimeString()};
   for(const [k,v] of Object.entries(fields)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=String(v);$('walletEvidenceFields').append(dt,dd)}
