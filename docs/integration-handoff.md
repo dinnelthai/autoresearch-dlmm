@@ -156,3 +156,6 @@ Test: set a real pool address; edit SOL/MEME, horizon, risk and cost values; ver
 
 ### T12 V2 review follow-up
 Open `docs/prototypes/terminal-v2.html` instead of V1 for the current prototype. See `docs/prototypes/terminal-review-v2.md` for source-level findings and browser acceptance. JS parse/static ID checks and 8 isolated report validator assertions passed; no actual rendered interaction QA. Formal UI must replace manual archive workflow with request-bound backend report generation. V2 remains offline, does not enable transactions, and cannot authenticate archive evidence.
+
+### T12 V3 visual direction
+Use docs/prototypes/terminal-v3.html for the latest independent prototype. Native DeFi layout, chart-first workspace, compact right-hand asset/risk panel, diagnostic archive import/export separated from primary flow. Temporary Flow wordmark is a visual placeholder, not a branding decision. V2 archive validation and draft-only contract retained. Verify actual browser at 1440/1024/390 widths, sticky sidebar and keyboard access, chart legend and candidate viewing, diagnostics toggle, file clearing, blocked execution, and draft export. JS parse and 51 literal DOM ID checks passed; no browser screenshot or interaction validation in chat. No formal frontend changes or live service/transaction integration.
