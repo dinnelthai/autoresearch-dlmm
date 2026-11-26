@@ -15,7 +15,8 @@ export function advanceRepair(previous,rows,manifest,plan){
   if(!valid||manifest.nextBefore===plan.before||rows.some(n=>n.signature===plan.before)||attempts>=8||['SHORT_PAGE','EMPTY_PAGE'].includes(manifest.stopReason))return {...r,status:'REPAIR_LIMIT_OR_NO_PROGRESS',attempts,cursor:null};
   return {...r,cursor:manifest.nextBefore,attempts};
  }
- if(!old.length||!rows.length||overlap||!valid)return r;
+ if(!old.length||!rows.length||overlap)return r;
+ if(!valid)return r?{...r,additionalGapObserved:true}:null;
  if(r?.status==='PENDING')return {...r,additionalGapObserved:true};
  const anchor=old[0]?.signature;if(!sig(anchor))return r;
  return {status:'PENDING',anchor,cursor:manifest.nextBefore,attempts:0,additionalGapObserved:previous?.gapObserved===true&&!(r?.status==='ANCHOR_OVERLAP_OBSERVED'&&!r.additionalGapObserved)};
