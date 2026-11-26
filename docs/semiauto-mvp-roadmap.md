@@ -16,11 +16,11 @@
 | T09 | Candidate LP plans | Budget, bins, strategy comparison, executable constraints | Research preview draft; source fixture checks passed; SDK feasibility/calibration/live evidence pending |
 | T10 | Inventory, rebalance and exit decisions | Risk limits, no-LP, removal vs disposal, cost-aware decisions | Read-only management preview draft; source fixture checks passed; live reconciliation and validation pending |
 | T11 | Live shadow validation | Real events, frozen test, risk and costs versus fair baselines | Shadow framework draft; source fixture checks passed; actual reconciled samples and out-of-sample validation pending |
-| T12 | Single-pool terminal | Manual pool entry and plan preview | Approved visual direction implemented in standalone V4; static and archive-validator checks passed; browser UX review/formal implementation pending |
-| T13 | Position monitoring | Actual position, suggestions, alerts and recovery | Pending |
+| T12 | Single-pool terminal | Manual pool entry and plan preview | Approved V4.1 unified prototype; static and archive-validator checks passed; browser UX review/formal implementation pending |
+| T13 | Position monitoring | Actual position, suggestions, alerts and recovery | V4.1 archive-review prototype; live monitoring implementation pending |
 | T14 | Human-confirmed execution | Wallet, preview, simulation, limits, explicit signing and confirmation | Pending |
 | T15 | Execution reconciliation | Confirmed on-chain outcomes; failure/idempotency checks | Pending |
-| T16 | Performance | Actual net PnL, fees, costs and HODL-relative attribution | Pending |
+| T16 | Performance | Actual net PnL, fees, costs and HODL-relative attribution | V4.1 actual-vs-shadow review prototype; actual accounting implementation pending |
 | T17 | End-to-end acceptance | Safety and evidence; any funded trial requires separate approval | Pending |
 
 ## Gates
