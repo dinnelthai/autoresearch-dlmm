@@ -25,10 +25,11 @@ assert(Number.isInteger(historyPages)&&historyPages>=1&&historyPages<=20&&Number
 const idl=resolve(ROOT,cfg.idl??'data/raw/dlmm-idl.json');
 const dir=join(ROOT,'data','live',pool);await mkdir(dir,{recursive:true,mode:0o700});
 const stateFile=join(dir,'state.json'),lockPath=join(dir,'writer.lock');
-const lock=await open(lockPath,'wx',0o600);await lock.writeFile(String(process.pid));
+const lock=await open(lockPath,'wx',0o600);
 let state={schemaVersion:1,pool,sequence:0,streams:{},history:{},decisionReady:false,limitations:['Unverified chain observations only; upstream live acceptance not completed.','Separate stream slots are not a common market snapshot.','Polling is not a websocket subscription or proof of continuous history.']};
 let stopping=false,timer=null,server=null,active=null;
 try{
+ await lock.writeFile(String(process.pid));
  try{const old=JSON.parse(await readFile(stateFile,'utf8'));assert(old.pool===pool&&old.schemaVersion===1&&Number.isSafeInteger(old.sequence)&&old.streams&&old.history,'invalid persisted state');state={...old,decisionReady:false};}catch(e){if(e.code!=='ENOENT')throw e;}
  function capturePath(value){
   assert(typeof value==='string','missing capture directory');
@@ -106,12 +107,13 @@ try{
  async function persist(){const tmp=stateFile+'.tmp';await writeFile(tmp,JSON.stringify(state)+'\n',{mode:0o600});await rename(tmp,stateFile);}
  async function collect(name,fn){
   const startedAt=Date.now();
-  try{const evidence=await fn();state.streams[name]={status:'CAPTURED_UNVERIFIED',startedAt,receivedAt:Date.now(),evidence};}
+  try{const evidence=await fn();const partial=evidence.historyStatus==='OVERLAP_MISSING'||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:Date.now(),evidence};}
   catch{state.streams[name]={status:'BLOCKED',startedAt,receivedAt:Date.now(),reason:'CAPTURE_OR_VALIDATION_FAILED',previousEvidence:state.streams[name]?.evidence??state.streams[name]?.previousEvidence??null};}
   console.log(JSON.stringify({sequence:state.sequence,stream:name,status:state.streams[name].status,at:new Date().toISOString()}));await persist();
  }
  async function cycle(){
   state.sequence++;state.cycleStartedAt=Date.now();state.cycleCompletedAt=null;
+  const wanted=new Set(['market',...positions.map(a=>'position:'+a),'history:'+pool,...positions.map(a=>'history:'+a),'references']);for(const k of Object.keys(state.streams))if(!wanted.has(k))delete state.streams[k];
   // Never display prior-cycle values as fresh while their replacement is running.
   for(const name of ['market',...positions.map(a=>'position:'+a),'history:'+pool,...positions.map(a=>'history:'+a),'references']){const old=state.streams[name];state.streams[name]={status:'PENDING',previousEvidence:old?.evidence??old?.previousEvidence??null};}
   await persist();
