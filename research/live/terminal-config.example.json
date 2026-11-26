@@ -10,5 +10,9 @@
   "walletEvidence": {
     "enabled": false,
     "expectedGenesisHash": "REPLACE_WITH_VERIFIED_GENESIS_HASH"
+  },
+  "weightDiagnostic": {
+    "enabled": false,
+    "maxDeviationBps": null
   }
 }
