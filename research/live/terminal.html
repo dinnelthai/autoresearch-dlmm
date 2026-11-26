@@ -78,7 +78,7 @@ details{padding-top:10px;border-top:1px solid var(--line)}summary{cursor:pointer
   <div><small>实际净收益 SOL</small><strong>—</strong><small>T16 对账待接入</small></div>
  </div>
  <div class="position-layout">
-  <div class="stack"><section class="compare"><div class="head"><h2>仓位监控</h2><small>每 15 秒读取采集状态 · 非交易信号</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>数据状态</th><th>价格区间状态</th><th>评估准备状态</th></tr></thead><tbody id="monitorRows"></tbody></table></div><div class="subline">区间外仅表示同源 Active Bin 超出仓位范围，不代表应当撤池。</div></section>
+  <div class="stack"><section class="compare"><div class="head"><h2>仓位监控</h2><small>每 15 秒读取采集状态 · 非交易信号</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>数据状态</th><th>价格区间状态</th><th>评估准备状态</th></tr></thead><tbody id="monitorRows"></tbody></table></div><div class="subline">区间外仅表示同源 Active Bin 超出仓位范围，不代表应当撤池。</div></section><section class="compare"><div class="head"><h2>持续风险评估</h2><small id="autoMonitorStatus" role="status">读取服务状态</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>研究风险状态</th><th>压力损失 SOL</th><th>库存比例</th><th>最后评估</th></tr></thead><tbody id="autoMonitorRows"></tbody></table></div><div class="subline" id="autoMonitorDetail">仅显示同源、未过期的研究结果；不执行交易。</div><details class="diagnostics"><summary>风险状态变更历史</summary><div class="table-wrap"><table><thead><tr><th>时间</th><th>Position</th><th>状态</th><th>原因 / 标志</th></tr></thead><tbody id="autoMonitorEvents"></tbody></table></div><p class="micro">历史不代表当前风险；服务最多保留最近 500 条状态变更，界面显示最近 100 条。</p></details></section>
    <section class="compare"><div class="head"><h2>可查看仓位</h2><small>采集快照 / 归档 · 当前目标池</small></div><div class="table-wrap"><table><thead><tr><th>Position</th><th>来源</th><th>Slot</th><th>Bin 区间</th><th>本金 SOL</th><th>本金 MEME</th><th>查看</th></tr></thead><tbody id="positionRows"></tbody></table></div><div class="subline" id="positionListStatus">尚未导入仓位快照。</div></section>
    <section class="chartpanel"><div class="head"><h2>仓位逐 Bin 本金分布</h2><small id="posDistributionLabel">本金 · 不含未领取费用</small></div><div id="posChart" class="chart binchart">选择仓位快照</div><details class="bin-details"><summary>逐 Bin 本金与未领取费用</summary><div class="table-wrap"><table><thead><tr><th>Bin</th><th>本金 SOL</th><th>本金 MEME</th><th>费用 SOL</th><th>费用 MEME</th></tr></thead><tbody id="posBinRows"></tbody></table></div></details><div class="subline">同一归档参考价下折算 SOL；不含未领取费用。无匹配参考价时仅显示原始数量。</div><div class="table-wrap"><table><thead><tr><th>资产</th><th>当前本金</th><th>未领取手续费</th><th>历史已领取计数</th></tr></thead><tbody id="posAssets"><tr><td>SOL</td><td>—</td><td>—</td><td>—</td></tr><tr><td>MEME</td><td>—</td><td>—</td><td>—</td></tr></tbody></table></div></section>
    <section class="compare"><div class="head"><h2>管理方案比较</h2><small>模型场景 · 非执行报价</small></div><div class="table-wrap"><table><thead><tr><th>动作</th><th>模型可行 / 总数</th><th>场景 PnL SOL</th><th>压力损失 SOL</th><th>操作成本 SOL</th><th>不可行原因</th><th>查看</th></tr></thead><tbody id="manageRows"></tbody></table></div><div class="subline" id="manageReason">等待 T10 同源仓位分析报告。</div></section>
@@ -386,8 +386,38 @@ $('evaluatePosition').addEventListener('click',async()=>{
  }catch(e){if(generation===positionGeneration)put('managementStatus','评估失败：'+e.message)}
  finally{managementBusy=false;updatePlanButton();renderMonitorSelection()}
 });
-renderMonitorRows();renderMonitorSelection();
-setInterval(()=>{if(monitoring.size)applyMonitoring([...monitoring.values()]);},1000);
 
-refreshService({initial:true});setInterval(()=>refreshService(),15000);setInterval(()=>{if(report?.terminalBinding&&report.terminalBinding.expiresAt<=Date.now()){clearReport();put('generateStatus','研究证据已过期，请刷新后重新评估。')}if(serviceMarket&&!canAnalyze()){updatePlanButton();$('reviewDot').dataset.ready='false';if(serviceReview?.status==='PREFLIGHT_MATCHED_UNVERIFIED')put('reviewStatus','研究证据或市场快照已过期，请刷新。')}},1000);
+let autoMonitor=null,autoMonitorReading=false;
+const autoStates={UNKNOWN:'尚未评估',PENDING:'等待评估',BLOCKED:'评估阻塞',RISK_REVIEW_REQUIRED:'需人工风险复核',REVIEW_FLAGS:'存在复核标志',NO_MODEL_FLAGS:'模型未报告标志（未验收）'};
+function autoObservationMatches(o,x,now=Date.now()){
+ if(!o||!x||!monitorFresh(x,now)||!rangeFresh(x,now)||o.expiresAt<=now||!Number.isSafeInteger(o.expiresAt)||x.managementGate?.status!=='PREFLIGHT_MATCHED_UNVERIFIED'||x.managementGate.expiresAt<=now)return false;
+ const g=x.managementGate,m=serviceMarket;if(!m||m.expiresAt<=now)return false;
+ return o.key===[m.slot,m.rawHash,x.slot,x.rawHash,g.reviewHash,g.policyHash].join(':');
+}
+function renderAutoMonitor(){
+ const rows=$('autoMonitorRows'),events=$('autoMonitorEvents');rows.replaceChildren();events.replaceChildren();
+ const a=autoMonitor;
+ put('autoMonitorStatus',!a?'监控接口不可用':a.storageError?'记录服务异常':!a.enabled?'持续评估未开启':a.lastCycleAt?'最近轮询 '+new Date(a.lastCycleAt).toLocaleTimeString():'等待首次轮询');
+ for(const [id,x] of monitoring){
+  const tr=document.createElement('tr'),o=a?.current?.[id],matched=!!a?.enabled&&!a.storageError&&autoObservationMatches(o,x),current=matched?o:null;
+  const status=current?.status??(a?.enabled&&!a.storageError&&o?.status==='BLOCKED'?'BLOCKED':'UNKNOWN');
+  cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;const stateCell=cell(tr,autoStates[status]??'未知');if(status==='RISK_REVIEW_REQUIRED')stateCell.style.color='var(--warn)';
+  cell(tr,fmt(current?.stressLossSol));cell(tr,current?.worstInventoryRatio==null?'—':fmt(current.worstInventoryRatio*100)+'%');cell(tr,current?new Date(current.observedAt).toLocaleTimeString():'—');rows.append(tr);
+ }
+ if(!monitoring.size){const tr=document.createElement('tr');cell(tr,'暂无可监控仓位').colSpan=5;rows.append(tr)}
+ const chosen=a?.current?.[positionSelected],x=monitoring.get(positionSelected),matched=!!a?.enabled&&!a.storageError&&autoObservationMatches(chosen,x);
+ put('autoMonitorDetail',matched?'选中仓位：'+(chosen.flags?.length?chosen.flags.map(reasonText).join('；'):'模型未报告标志（未验收）'):a?.enabled&&chosen?.status==='BLOCKED'?'最近轮询阻塞：'+reasonText(chosen.reason):'等待与当前快照、配置和证据一致的风险结果。');
+ for(const e of (a?.events??[]).slice().reverse()){const tr=document.createElement('tr');cell(tr,new Date(e.at).toLocaleString());cell(tr,e.position.slice(0,7)+'…'+e.position.slice(-5)).title=e.position;cell(tr,autoStates[e.status]??e.status);const td=cell(tr,[e.reason,...(Array.isArray(e.flags)?e.flags:[])].filter(Boolean).map(reasonText).join('；')||'—');td.style.whiteSpace='normal';events.append(tr)}
+ if(!a?.events?.length){const tr=document.createElement('tr');cell(tr,'暂无历史状态变更').colSpan=4;events.append(tr)}
+}
+async function refreshAutoMonitor(){
+ if(autoMonitorReading)return;autoMonitorReading=true;const scope=target;
+ try{const res=await fetch('/api/terminal/monitor',{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await res.json();if(!res.ok||a.pool!==scope||target!==scope||a.decisionReady!==false||a.executionReady!==false||!Array.isArray(a.events)||!a.current)throw Error('MONITOR_UNAVAILABLE');autoMonitor=a}
+ catch{autoMonitor=null}finally{autoMonitorReading=false;renderAutoMonitor()}
+}
+
+renderMonitorRows();renderMonitorSelection();renderAutoMonitor();
+setInterval(()=>{if(monitoring.size)applyMonitoring([...monitoring.values()]);if(page==='positions')renderAutoMonitor();},1000);
+
+refreshService({initial:true}).then(()=>refreshAutoMonitor());setInterval(()=>{refreshService().then(()=>refreshAutoMonitor())},15000);setInterval(()=>{if(report?.terminalBinding&&report.terminalBinding.expiresAt<=Date.now()){clearReport();put('generateStatus','研究证据已过期，请刷新后重新评估。')}if(serviceMarket&&!canAnalyze()){updatePlanButton();$('reviewDot').dataset.ready='false';if(serviceReview?.status==='PREFLIGHT_MATCHED_UNVERIFIED')put('reviewStatus','研究证据或市场快照已过期，请刷新。')}},1000);
 </script></body></html>
