@@ -21,5 +21,10 @@
     "enabled": true,
     "provider": "solana-rpc",
     "idl": "data/raw/dlmm-idl.json"
+  },
+  "externalMarket": {
+    "probeSolRaw": "10000000",
+    "slippageBps": 50,
+    "maxDiscountBps": 200
   }
 }

@@ -15,6 +15,7 @@ import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture
 import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObservation} from './monitor-core.mjs';
 import {getPriceHistory} from './price-history.mjs';
 import {getPoolInfo,cachedLoader} from './market-api.mjs';
+import {observeExternalMarket} from './external-market.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data');
 const {values}=parseArgs({options:{config:{type:'string'},port:{type:'string',default:'8790'},help:{type:'boolean'}}});
@@ -254,6 +255,16 @@ async function observeWallet(body){
  return {pool:scope,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
+let externalBusy=false,externalLast=null;
+async function externalObservation(body){
+ const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),now=Date.now();
+ if(externalLast&&externalLast.pool===scope&&externalLast.marketRawHash===m.rawHash&&externalLast.expiresAt>now)return externalLast;
+ if(externalLast&&now-externalLast.fetchedAt<10000)throw Error('EXTERNAL_RETRY_COOLDOWN');
+ const base=join(DATA,'raw');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'external-'));
+ const result=await observeExternalMarket(m,{config:cfg.externalMarket??{},archive:(name,raw)=>writeFile(join(dir,name),raw,{mode:0o600,flag:'wx'})});
+ await writeFile(join(dir,'manifest.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600,flag:'wx'});
+ externalLast={...result,capture:relative(ROOT,dir)};return externalLast;
+}
 let positionReadBusy=false;
 const indexes=new Map();
 async function readPositionIndex(body){
@@ -298,6 +309,11 @@ const server=createServer(async(req,res)=>{
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
    if(positionReadBusy){send(res,409,blocked('POSITION_CAPTURE_BUSY'));return}positionReadBusy=true;
    try{const body=await jsonBody(req);send(res,200,await (req.url.endsWith('-detail')?readPositionDetail(body):readPositionIndex(body)))}finally{positionReadBusy=false}return
+  }
+  if(req.method==='POST'&&req.url==='/api/terminal/external-market'){
+   if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
+   if(externalBusy){send(res,409,blocked('EXTERNAL_CAPTURE_BUSY'));return}externalBusy=true;
+   try{send(res,200,await externalObservation(await jsonBody(req)))}finally{externalBusy=false}return
   }
   if(req.method==='POST'&&req.url==='/api/terminal/wallet-observation'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
