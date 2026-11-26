@@ -110,6 +110,7 @@ try{
   if(address!==pool)args.push('--position',address);
   const r=await run('research/live/capture-swaps.mjs',args,900000),p=capturePath(r.report.directory),m=await readManifest(p);
   assert(m.pool===pool&&m.indexAddress===address&&m.position===(address===pool?null:address)&&m.commitment==='finalized'&&Array.isArray(m.signatures),'history identity mismatch');
+  if(m.status==='EMPTY_PAGE_OBSERVED_UNVERIFIED'&&m.signatures.length===0&&!m.gaps?.length)return {capture:relative(ROOT,p),historyStatus:'EMPTY_OR_UNAVAILABLE',added:0,overlap:0};
   // Only merge fully captured windows. Partial windows remain archived for later repair.
   assert(m.status==='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'&&!m.gaps?.length,'history window partial');
   const decoded=await inspect('inspect-swaps.mjs',p);
