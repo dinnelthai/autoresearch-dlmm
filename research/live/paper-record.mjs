@@ -15,8 +15,8 @@ async function main(){
  if(values.help){console.log('node research/live/paper-record.mjs --pool ADDRESS [--watch --interval 30]');return}
  assert(poolAddress(values.pool),'PAPER_POOL_REQUIRED');const pool=values.pool,interval=Number(values.interval);assert(Number.isInteger(interval)&&interval>=10&&interval<=600,'PAPER_INTERVAL_INVALID');
  const dir=join(DATA,'paper-captures',pool);await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir);
- const lock=join(dir,'writer.lock'),h=await open(lock,'wx',0o600),target=join(dir,'index.json');let stop=false;const cancel=()=>{stop=true};process.once('SIGINT',cancel);process.once('SIGTERM',cancel);
  const idl=await io.safeDataPath(values.idl);
+ const lock=join(dir,'writer.lock'),h=await open(lock,'wx',0o600),target=join(dir,'index.json');let stop=false;const cancel=()=>{stop=true};process.once('SIGINT',cancel);process.once('SIGTERM',cancel);
  try{
   await h.writeFile(String(process.pid));
   do{
