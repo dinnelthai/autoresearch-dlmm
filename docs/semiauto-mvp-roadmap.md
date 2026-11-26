@@ -5,7 +5,7 @@
 ## Sequence
 | ID | Task | Acceptance | State |
 |---|---|---|---|
-| T01 | Raw RPC account acquisition | Real finalized Pool response, raw bytes, context slot, hash, timing and explicit gaps | In progress; environment DNS failure |
+| T01 | Raw RPC account acquisition | Real finalized Pool response, raw bytes, context slot, hash, timing and explicit gaps | CLI tests passed; BLOCKED on real RPC evidence |
 | T02 | SDK/IDL pinned pool/mint/vault decoding | Verified owner, mint orientation, decimals, extensions and vaults | Pending |
 | T03 | Bin arrays and bitmap | Complete declared snapshot and consistency checks | Pending |
 | T04 | Swap and dynamic fee events | Raw transaction ordering, fee and vault deltas reconcile, gaps explicit | Pending |
@@ -28,3 +28,11 @@ T01–T06 implement the v0.8/v1.1 raw-data and reconciliation requirements; do n
 
 ## Current action
 First obtain a real read-only finalized Pool snapshot, then derive and validate mint/vault/bitmap/bin-array addresses using pinned SDK. Sample candidate from prior research: 6HfgUd7WLGEAsmYR2NWu2H11qpowzq1gXQGbUzYrwrb; not a promise of eligibility or availability. Local RPC network access is required. Historical state cannot be recovered from the current snapshot alone. Record actual acceptance results and advance only on evidence.
+
+## T01 verification — 2026-11-26
+- Node v22.16.0; local capture file Git blob SHA matched main: 281a6b5b622dee86b021409442ad526f88f3e420.
+- Syntax check, help, invalid-address rejection and failure manifest verified.
+- CLI transport/archival integration: 6/6 local fixture cases passed (present, missing, RPC error, wrong ID, malformed data, HTTP 429). Test-only fixtures are not real-chain evidence and are not used by production research.
+- Actual public mainnet RPC request: DNS resolution failed in execution environment. CLI exit 1, status BLOCKED, failureStage network. No account data or slot received.
+- On a network-enabled machine, run `node research/capture-accounts.mjs --pool 6HfgUd7WLGEAsmYR2NWu2H11qpowzq1gXQGbUzYrwrb` (optionally set SOLANA_RPC_URL to an authorized RPC). Provide the resulting manifest.json and accounts.json, if present; do not include credentials. Confirm source/slot before T02; captured bytes alone are not a verified Meteora account.
+- Gate A remains unpassed. No strategy or PnL claims.
