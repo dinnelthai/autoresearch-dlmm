@@ -165,6 +165,8 @@ async function reviewContext(body){
  if(saved.mode==='management'){ctx=await managementContext(s,m,b.position,now);review=ctx}else review=await loadReview(m,now);
  assert(b.expiresAt>now&&m.receivedAt+maxAgeMs>now,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
  const result=buildReview({report:r,mode:saved.mode,rowIndex:body.rowIndex,wallet:body.wallet,market:m,position:ctx?.p.report,reviewHash:review.reviewHash,policyHash:ctx?.policyHash,now:Date.now()});
+ result.expiresAt=Math.min(result.expiresAt,review.expiresAt,m.receivedAt+maxAgeMs,ctx?.expiresAt??Infinity);
+ assert(result.expiresAt>Date.now(),'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
  return {saved,r,b,m,result};
 }
 async function inspectReview(body){
