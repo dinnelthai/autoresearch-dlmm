@@ -139,6 +139,7 @@ function createResearchEngine() {
   function applyAction(s,c,action,t,opts={}){
     const p=fresh(s,c,t)?s.market.ref.price:null;
     const k=action.type;
+    if(k==='REPOSITION'){assert(s.bins.length>0,'REPOSITION_REQUIRES_POSITION');assert(t-s.lastActionTime>=c.cooldownSeconds,'REPOSITION_COOLDOWN');assert(s.rebalances<c.maxRebalances&&s.rebalanceTurnover+s.turnover<c.maxTurnoverSol,'REBALANCE_BUDGET');}
     assert(!['DISPOSE','REMOVE_AND_DISPOSE'].includes(k)||s.allowDispose===true,'DISPOSAL_NOT_ALLOWED');
     if(["HOLD","NO_LP"].includes(k))return {status:"NO_ACTION"};
     if(k==="FUND"||k==="WITHDRAW"){assert(p!==null,"reference required for external flows");const x=finite(action.x??0,"flow x"),y=finite(action.y??0,"flow y"),sign=k==="FUND"?1:-1;if(sign<0)assert(x<=Math.min(s.wallet.x,s.baseline.x)+EPS&&y<=Math.min(s.wallet.y,s.baseline.y)+EPS,"withdraw exceeds wallet or matched HODL inventory");s.wallet.x+=sign*x;s.wallet.y+=sign*y;s.baseline.x+=sign*x;s.baseline.y+=sign*y;s.externalFlows+=sign*(x*p+y);return {status:"CONFIRMED"}}
@@ -199,6 +200,8 @@ function createResearchEngine() {
     const op=s.pending,trial=clone(s);trial.pending=null;
     try{
       const result=applyAction(trial,c,op.action,t,op.options);
+      const modeledCostSol=trial.cost-s.cost,modeledTurnoverSol=trial.turnover+trial.rebalanceTurnover-s.turnover-s.rebalanceTurnover;
+      assert([modeledCostSol,modeledTurnoverSol].every(v=>Number.isFinite(v)&&v>=-EPS),'OPERATION_ACCOUNTING_INVALID');
       if(["OPEN","ADD","REPOSITION"].includes(op.action.type)&&result.status!=="FAILED"&&result.reason!=="REMOVED_NOT_REDEPLOYED"){
         assert(trial.market?.ref.valid,"invalid execution reference");
         const r=risk(trial,c,trial.market.ref.price),g=classify(trial,c);
@@ -209,7 +212,7 @@ function createResearchEngine() {
         assert(!r.violations.length,"execution risk: "+r.violations.join(","));
         assert(!["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)&&!g.flags.includes("HOLDER_CONCENTRATION"),"market admission changed");
       }
-      Object.assign(s,trial);s.lastActionTime=t;s.receipts.push({id:op.id,t,action:op.action.type,...result});
+      Object.assign(s,trial);s.lastActionTime=t;s.receipts.push({id:op.id,t,action:op.action.type,...result,modeledCostSol,modeledTurnoverSol,costBasis:'DECLARED_LOGICAL_OPERATION_AGGREGATE'});
       if(fresh(s,c,t))record(s,s.market.ref.price,t);
     }catch(err){s.pending=null;s.receipts.push({id:op.id,t,action:op.action.type,status:"REJECTED",reason:String(err.message)});}
   }
@@ -284,7 +287,7 @@ function createResearchEngine() {
         observe();
         for(const e of scenario.events){const fill=event(sim,c,e);if(e.type==='SWAP'&&fill){fillStats.swapCount++;if(fill.requestedBaseQty>0){fillStats.eligibleCount++;const px=price(c,e.bin);fillStats.requestedNotionalSol+=fill.requestedBaseQty*px;fillStats.filledNotionalSol+=fill.filledBaseQty*px;if(fill.filledBaseQty>0)fillStats.filledCount++;if(['INVENTORY_LIMITED','INVENTORY_UNAVAILABLE'].includes(fill.status))fillStats.inventoryLimitedCount++;}}observe();executePending(sim,c,e.t);observe();}
 
-        if(sim.pending||sim.receipts.slice(s.receipts.length).some(r=>["REJECTED","FAILED","EXPIRED"].includes(r.status)))throw Error("SCENARIO_EXECUTION_UNAVAILABLE");
+        if(sim.pending||sim.receipts.slice(s.receipts.length).some(r=>["REJECTED","FAILED","EXPIRED","PARTIAL"].includes(r.status)))throw Error("SCENARIO_EXECUTION_UNAVAILABLE");
         assert(fresh(sim,c),'SCENARIO_END_REFERENCE_UNAVAILABLE');
         assert(!unobserved,'SCENARIO_PATH_REFERENCE_UNAVAILABLE');
         const end=reportAt(sim,sim.market.ref.price),before=reportAt(s,sim.market.ref.price);
@@ -294,8 +297,16 @@ function createResearchEngine() {
       }
       const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),terminalCvar=cvar(out.map(a=>a.terminalLoss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
       assert(Number.isFinite(utility)&&Number.isFinite(tail),'SCENARIO_NONFINITE_SCORE');
-      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},volumeDiagnostics:scenarios.map(v=>v.volumeDiagnostic??null),fillDiagnostics:out.map(v=>({name:v.name,...v.fillDiagnostics})),scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
+      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),expectedOperationCost:mean(a=>a.cost),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},volumeDiagnostics:scenarios.map(v=>v.volumeDiagnostic??null),fillDiagnostics:out.map(v=>({name:v.name,...v.fillDiagnostics})),scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
     }catch(err){return {action,feasible:false,reason:err.message}}
+  }
+  // Matched scenario difference; costs already included in net NAV, never deduct twice.
+  function compareWithHold(candidate,hold,c){
+    if(!candidate?.feasible||!hold?.feasible||!Array.isArray(candidate.scenarios)||!Array.isArray(hold.scenarios)||!candidate.scenarios.length||candidate.scenarios.length!==hold.scenarios.length)return {status:'HOLD_COMPARISON_UNAVAILABLE',eligible:false};
+    const rows=candidate.scenarios.map((x,i)=>{const h=hold.scenarios[i];if(x.name!==h.name||![x.pnl,h.pnl,x.cost,h.cost,x.fee,h.fee].every(Number.isFinite))return null;const net=x.pnl-h.pnl,cost=x.cost-h.cost;return {name:x.name,netPnlDeltaSol:net,grossBeforeOperationCostDeltaSol:net+cost,operationCostDeltaSol:cost,feeDeltaSol:x.fee-h.fee}});
+    if(rows.some(x=>!x)||!Number.isFinite(candidate.utility)||!Number.isFinite(hold.utility))return {status:'HOLD_COMPARISON_UNAVAILABLE',eligible:false};
+    const mean=k=>sum(rows.map(x=>x[k]))/rows.length,net=mean('netPnlDeltaSol'),cost=mean('operationCostDeltaSol'),gross=mean('grossBeforeOperationCostDeltaSol'),utilityDelta=candidate.utility-hold.utility,margin=c.minImprovementSol+c.uncertaintySol;
+    return {status:'MATCHED_SYNTHETIC_HOLD_COMPARISON',eligible:net>EPS&&utilityDelta>margin,netPnlDeltaSol:net,grossBeforeOperationCostDeltaSol:gross,operationCostDeltaSol:cost,feeDeltaSol:mean('feeDeltaSol'),utilityDelta,requiredUtilityMarginSol:margin,positiveNetScenarioCount:rows.filter(x=>x.netPnlDeltaSol>EPS).length,scenarioCount:rows.length,rows,costBasis:'DECLARED_LOGICAL_OPERATION_AGGREGATE_ALREADY_IN_NET_NAV'};
   }
   function candidatePlans(s,c,mode="adaptive"){
     const g=classify(s,c),open=s.bins.length>0,plans=[{type:open?"HOLD":"NO_LP"}];
@@ -318,7 +329,9 @@ function createResearchEngine() {
     if(["STRESS","DISTRIBUTION_RANGE","DEAD_RANGE","UNKNOWN"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION")){
       return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"MARKET_GATE",regime:g.regime,risk:r,candidates:[]};
     }
-    const sc=forecast(s,c),results=candidatePlans(s,c,mode).map(a=>evaluate(s,c,a,sc)),feasible=results.filter(a=>a.feasible).sort((a,b)=>b.utility-a.utility),base=results[0];
+    const sc=forecast(s,c),results=candidatePlans(s,c,mode).map(a=>evaluate(s,c,a,sc)),base=results[0];
+    for(const row of results)if(row.action.type==='REPOSITION'&&row.feasible){row.holdComparison=compareWithHold(row,base,c);if(!row.holdComparison.eligible){row.feasible=false;row.reason='REPOSITION_NET_ADVANTAGE_NOT_ESTABLISHED';}}
+    const feasible=results.filter(a=>a.feasible).sort((a,b)=>b.utility-a.utility);
     if(!s.bins.length&&!base?.feasible)return {action:{type:'NO_LP'},reason:'BASELINE_UNAVAILABLE_NO_DEPLOYMENT',regime:g.regime,risk:r,candidates:results};
     if(!feasible.length)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"RISK_BLOCKED",regime:g.regime,risk:r,candidates:results};
     let best=feasible[0];
@@ -440,7 +453,7 @@ function createResearchEngine() {
   function scenarioSuite(request,overrides={}){
     return evaluateSamples(["range","up","down","crash"].map(name=>({id:name,group:name,split:"scenario",request,events:demo(name,overrides)})),overrides);
   }
-  return {DEFAULTS,config,requestConfig,candidatePlans,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest,evaluateSamples,scenarioSuite};
+  return {DEFAULTS,config,requestConfig,candidatePlans,compareWithHold,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest,evaluateSamples,scenarioSuite};
 }
 export const Engine=createResearchEngine();
 export {createResearchEngine};
