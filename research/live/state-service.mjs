@@ -157,8 +157,10 @@ try{
   state.cycleCompletedAt=Date.now();await persist();
  }
  function publicState(){
-  const now=Date.now();return {...state,decisionReady:false,streamHealth:Object.fromEntries(Object.entries(state.streams).map(([k,v])=>[k,streamHealth(v,now,maxAge*1000)])),freshnessBasis:'LOCAL_RECEIPT_ONLY; CHAIN FRESHNESS UNVERIFIED'};
+  const now=Date.now();return {...state,decisionReady:false,streamHealth:Object.fromEntries(Object.entries(state.streams).map(([k,v])=>[k,streamHealth(v,now,maxAge*1000)])),freshnessBasis:'CONSERVATIVE_LOCAL_COLLECTION_START; CHAIN FRESHNESS UNVERIFIED'};
  }
+ // Persist restart invalidation before exposing the API or accepting prior-cycle snapshots.
+ await persist();
  if(!values.once){
   const port=Number(values.port);assert(Number.isInteger(port)&&port>=1024&&port<=65535,'invalid port');
   server=createServer((req,res)=>{
@@ -174,8 +176,9 @@ try{
  function stop(){stopping=true;for(const ch of children)ch.kill('SIGKILL');if(timer){clearTimeout(timer.id);timer.resolve();timer=null;}server?.close();}
  process.once('SIGINT',stop);process.once('SIGTERM',stop);
  do{if(stopping)break;active=cycle();await active;active=null;if(values.once||stopping)break;await new Promise(resolve=>{timer={id:setTimeout(()=>{timer=null;resolve();},interval*1000),resolve};});}while(!stopping);
+ if(stopping&&!values.once){for(const [k,v] of Object.entries(state.streams))state.streams[k]={status:'BLOCKED',reason:'SERVICE_STOPPED',previousEvidence:v.evidence??v.previousEvidence??null};await persist();}
  if(values.once&&Object.values(state.streams).some(s=>s.status!=='CAPTURED_UNVERIFIED'))process.exitCode=1;
 }finally{
- if(server)await new Promise(resolve=>server.close(()=>resolve()));
+ if(server){server.closeAllConnections();await new Promise(resolve=>server.close(()=>resolve()));}
  await lock.close();await unlink(lockPath);
 }
