@@ -8,17 +8,20 @@ const proof=v=>v&&typeof v.path==='string'&&hash(v.sha256);
 export function validateFreeze(f){
  assert(f?.schemaVersion===1&&f.policy==='T09_T10_RESEARCH_PREVIEW_V1'&&ts(f.frozenAt)&&f.codeHashes&&['engine','plans','management','contract','policy','runner'].every(k=>hash(f.codeHashes[k])),'invalid frozen policy');
  assert(Array.isArray(f.windows)&&f.windows.length&&f.windows.length<=100,'invalid windows');
- const ids=new Set(),groups=new Map(),mintSplits=new Map(),mintGroups=new Map();
+ const ids=new Set(),groups=new Map(),mintSplits=new Map(),mintGroups=new Map(),poolIdentity=new Map();
  for(const w of f.windows){
   assert(typeof w.id==='string'&&w.id&&!ids.has(w.id)&&typeof w.group==='string'&&w.group,'duplicate/missing window id');ids.add(w.id);
   assert(['train','validation','test'].includes(w.split)&&address(w.pool)&&address(w.mintX)&&address(w.mintY)&&w.mintX!==w.mintY,'invalid window identity');
+  const identity=JSON.stringify([w.mintX,w.mintY,w.group,w.split]);assert(!poolIdentity.has(w.pool)||poolIdentity.get(w.pool)===identity,'pool identity or split changed');poolIdentity.set(w.pool,identity);
   assert(ts(w.start)&&ts(w.end)&&w.end>w.start&&w.start>=f.frozenAt,'window precedes declared freeze');
   assert(!groups.has(w.group)||groups.get(w.group)===w.split,'group crosses splits');groups.set(w.group,w.split);
   assert(!mintSplits.has(w.mintX)||mintSplits.get(w.mintX)===w.split,'mint crosses splits');mintSplits.set(w.mintX,w.split);assert(!mintGroups.has(w.mintX)||mintGroups.get(w.mintX)===w.group,'same mint must remain in same group');mintGroups.set(w.mintX,w.group);
   assert(w.request?.pool===w.pool&&['sol','holding'].includes(w.request.entry)&&w.request.allowDispose===false&&num(w.request.meme)&&num(w.request.sol)&&!Object.hasOwn(w.request,'initialPrice')&&(w.request.meme>0||w.request.sol>0)&&['balanced','defensive','growth'].includes(w.request.goal)&&ts(w.request.horizonSeconds)&&w.request.horizonSeconds>0&&(w.request.entry!=='sol'||w.request.meme===0),'invalid equal-capital request');
   assert(!w.request.positionBins&&!w.request.pendingFeeX&&!w.request.pendingFeeY,'initial LP unsupported in this cohort');
-  assert(w.config&&Object.getPrototypeOf(w.config)===Object.prototype,'explicit frozen config required');
+  assert(w.config&&Object.getPrototypeOf(w.config)===Object.prototype&&w.config.forecastHorizonSeconds===w.request.horizonSeconds,'explicit frozen config and matching horizon required');
  }
+ const rank={train:0,validation:1,test:2};
+ for(const a of f.windows)for(const b of f.windows)if(rank[a.split]<rank[b.split])assert(a.end<b.start,'chronological split separation required');
  for(let i=0;i<f.windows.length;i++)for(let j=i+1;j<f.windows.length;j++){
   const a=f.windows[i],b=f.windows[j];
   if(a.mintX===b.mintX||a.pool===b.pool)assert(a.end<b.start||b.end<a.start,'overlapping correlated windows');
