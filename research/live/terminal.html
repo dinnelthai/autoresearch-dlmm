@@ -107,7 +107,8 @@ details{padding-top:10px;border-top:1px solid var(--line)}summary{cursor:pointer
 'use strict';
 const $=id=>document.getElementById(id),families=['NO_LP','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid'],names={NO_LP:'No LP',spot:'Spot',curve:'Curve',bid_ask:'Bid-Ask',hybrid:'Hybrid',asymmetric:'Asymmetric',hybrid_grid:'Hybrid Grid'};
 let perfWindow=null,perfGeneration=0,perfPositionScope=null,lifecycleReport=null,lifecycleGeneration=0;
-let target='',report=null,draft=null,selected=null,importGeneration=0,shapeView='dynamic';
+let target='',report=null,draft=null,selected=null,importGeneration=0,shapeView='dynamic',poolEpoch=0;
+function sameScope(startEpoch,startTarget,currentEpoch,currentTarget){return startEpoch===currentEpoch&&startTarget===currentTarget;}
 const fmt=n=>typeof n==='number'&&Number.isFinite(n)?n.toLocaleString('en-US',{maximumSignificantDigits:8}):'—';
 const put=(id,x)=>{$(id).textContent=x??'—'};
 const number=id=>{const e=$(id),v=e.value;if(!v.trim()||!Number.isFinite(Number(v))||!e.validity.valid)throw Error('请检查 '+(e.closest('label')?.querySelector('span')?.textContent??id));return Number(v)};
@@ -238,7 +239,7 @@ function drawPositionBins(chart,p,r,ref,val){
  chart.append(svg);const note=document.createElement('small');note.textContent='青绿 SOL / 紫色 MEME · 本金估值 '+fmt(val)+' SOL · 非实际退出价值';chart.append(note);
 }
 function renderPosition(){
- const body=$('positionRows');body.replaceChildren();put('positionCount',String(positions.size));for(const [id,o] of positions){const p=o.snapshot,tr=document.createElement('tr');if(id===positionSelected)tr.classList.add('viewing');cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;cell(tr,o.source==='service'?'本地采集':'手动归档');cell(tr,p.slot);cell(tr,p.lowerBinId+' 至 '+p.upperBinId);cell(tr,exactAmount(p.currentPrincipalRaw.y,9));cell(tr,exactAmount(p.currentPrincipalRaw.x,p.snapshot.decimalsX));const td=cell(tr,'');const b=document.createElement('button');b.textContent='查看';b.setAttribute('aria-pressed',String(id===positionSelected));b.addEventListener('click',()=>{positionSelected=id;put('managementStatus','');clearManagementView();renderPosition()});td.append(b);body.append(tr)}
+ const body=$('positionRows');body.replaceChildren();put('positionCount',String(positions.size));for(const [id,o] of positions){const p=o.snapshot,tr=document.createElement('tr');if(id===positionSelected)tr.classList.add('viewing');cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;cell(tr,o.source==='service'?'本地采集':'手动归档');cell(tr,p.slot);cell(tr,p.lowerBinId+' 至 '+p.upperBinId);cell(tr,exactAmount(p.currentPrincipalRaw.y,9));cell(tr,exactAmount(p.currentPrincipalRaw.x,p.snapshot.decimalsX));const td=cell(tr,'');const b=document.createElement('button');b.textContent='查看';b.setAttribute('aria-pressed',String(id===positionSelected));b.addEventListener('click',()=>{if(positionSelected===id)return;positionGeneration++;positionSelected=id;put('managementStatus','');clearManagementView();renderPosition()});td.append(b);body.append(tr)}
  if(!positions.size){const tr=document.createElement('tr');cell(tr,'尚无该 Pool 的可查看仓位').colSpan=7;body.append(tr)}
  put('positionListStatus',positions.size?'显示采集与导入的快照，不代表钱包全部仓位。':'尚未导入仓位快照。');
  const o=positions.get(positionSelected),p=o?.snapshot,r=o?.management,m=r?.managementPreview;
@@ -251,7 +252,8 @@ function renderPosition(){
  if(!p||!Number.isFinite(val)||val<=0){chart.textContent=p?'缺少匹配估值或本金为空；查看数量表':'选择仓位快照'}else{
  drawPositionBins(chart,p,r,ref,val)}
  renderManageRows();renderMonitorSelection();
- if(perfPositionScope!==positionSelected){perfPositionScope=positionSelected;perfGeneration++;perfWindow=null;$('performanceWindowFile').value='';$('performanceWindowFields').replaceChildren();$('performanceSeriesView').hidden=true;$('performanceSeriesFields').replaceChildren();$('performanceSeriesRows').replaceChildren();put('performanceWindowStatus','仓位已切换，请导入当前仓位的核算报告。')}
+ if(page==='performance')put('performanceScope',p?'Position '+p.position.slice(0,8)+'…'+p.position.slice(-5):target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择');
+ const perfScope=JSON.stringify([positionSelected,p?.owner??null]);if(perfPositionScope!==perfScope){perfPositionScope=perfScope;perfGeneration++;perfWindow=null;$('performanceWindowFile').value='';$('performanceWindowFields').replaceChildren();$('performanceSeriesView').hidden=true;$('performanceSeriesFields').replaceChildren();$('performanceSeriesRows').replaceChildren();put('performanceWindowStatus','仓位已切换，请导入当前仓位的核算报告。')}
  else if(perfWindow)renderPerfWindow();
 }
 function resetPositions(){lifecycleGeneration++;lifecycleReport=null;$('lifecycleFile').value='';$('lifecycleFields').replaceChildren();put('lifecycleStatus','导入当前 Pool 的已关闭仓位报告。');perfGeneration++;perfWindow=null;$('performanceWindowFile').value='';$('performanceWindowFields').replaceChildren();$('performanceSeriesView').hidden=true;$('performanceSeriesFields').replaceChildren();$('performanceSeriesRows').replaceChildren();put('performanceWindowStatus','导入当前仓位的 T16 诊断报告。');monitoring.clear();monitorSignature='';renderMonitorRows();put('managementStatus','');put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择');positionGeneration++;positions.clear();positionSelected=null;clearManagementView();$('positionFile').value='';$('managementFile').value='';put('positionImportStatus','先选择 Pool，再导入快照。');renderPosition()}
@@ -272,13 +274,13 @@ function renderShadowWindows(){
  if(!rows.length){const tr=document.createElement('tr');cell(tr,'没有该分组的窗口').colSpan=5;body.append(tr);return}
  for(const x of rows){const tr=document.createElement('tr'),a=x.runs?.find(y=>y.mode==='adaptive'),h=x.runs?.find(y=>y.mode==='hodl');cell(tr,x.id);cell(tr,x.group??'—');cell(tr,a?.status??'—');cell(tr,h?.status??'—');cell(tr,x.status==='BLOCKED'?reasonText(x.reason):a?.status==='HYPOTHETICAL_REPLAY'&&h?.status==='HYPOTHETICAL_REPLAY'?'研究回放有效（未验证）':'无效或未决回放');body.append(tr)}
 }
-function renderShadow(){renderShadowWindows();const body=$('shadowRows');body.replaceChildren();put('shadowWindows',shadow?shadow.rows.length:'—');put('shadowTests',shadow?shadow.rows.filter(x=>x.split==='test').length:'—');put('shadowPairs',shadow?.summaries?.test?.find(x=>x.baseline==='hodl')?.validPairs??'—');for(const mode of shadowBaselines){const tr=document.createElement('tr'),x=shadow?.summaries[$('shadowSplit').value]?.find(x=>x.baseline===mode);cell(tr,mode==='hodl'?'HODL':names[mode]);cell(tr,x?x.validPairs+' / '+x.plannedWindows+' · 组 '+x.completeGroups+'/'+x.declaredGroups:'—');cell(tr,fmt(x?.meanGroupDeltaSol));cell(tr,fmt(x?.worstGroupDeltaSol));cell(tr,x?.positiveGroupFraction==null?'—':fmt(x.positiveGroupFraction*100)+'%');body.append(tr)}}
+function renderShadow(){renderShadowWindows();const body=$('shadowRows');body.replaceChildren();put('shadowWindows',shadow?shadow.rows.length:'—');put('shadowTests',shadow?shadow.rows.filter(x=>x.split==='test').length:'—');put('shadowPairs',shadow?.summaries?.[shadow.evaluatedSplit]?.find(x=>x.baseline==='hodl')?.validPairs??'—');for(const mode of shadowBaselines){const tr=document.createElement('tr'),x=shadow?.summaries[$('shadowSplit').value]?.find(x=>x.baseline===mode);cell(tr,mode==='hodl'?'HODL':names[mode]);cell(tr,x?x.validPairs+' / '+x.plannedWindows+' · 组 '+x.completeGroups+'/'+x.declaredGroups:'—');cell(tr,fmt(x?.meanGroupDeltaSol));cell(tr,fmt(x?.worstGroupDeltaSol));cell(tr,x?.positiveGroupFraction==null?'—':fmt(x.positiveGroupFraction*100)+'%');body.append(tr)}}
 for(const b of document.querySelectorAll('[data-perf]'))b.addEventListener('click',()=>{const actual=b.dataset.perf==='actual';$('actualPerformance').hidden=!actual;$('shadowPerformance').hidden=actual;for(const x of document.querySelectorAll('[data-perf]'))x.setAttribute('aria-pressed',String(x===b))});
 $('shadowSplit').addEventListener('change',renderShadow);
-$('shadowFile').addEventListener('change',async()=>{const g=++shadowGeneration;try{const r=validateShadow(await readJson($('shadowFile').files[0]));if(g!==shadowGeneration)return;shadow=r;renderShadow();put('shadowStatus','已导入未验证的研究报告；与当前 Pool 独立。')}catch(e){if(g===shadowGeneration)put('shadowStatus','导入失败：'+e.message)}});
+$('shadowFile').addEventListener('change',async()=>{const g=++shadowGeneration;shadow=null;renderShadow();try{const r=validateShadow(await readJson($('shadowFile').files[0]));if(g!==shadowGeneration)return;shadow=r;$('shadowSplit').value=r.evaluatedSplit;renderShadow();put('shadowStatus','已导入未验证的研究报告；与当前 Pool 独立。')}catch(e){if(g===shadowGeneration)put('shadowStatus','导入失败：'+e.message)}});
 $('clearShadow').addEventListener('click',()=>{shadowGeneration++;shadow=null;$('shadowFile').value='';renderShadow();put('shadowStatus','尚未导入。')});
 let previousTarget=target;
-function handleTargetChange(){if(target!==previousTarget){previousTarget=target;resetPositions();if(page==='performance')put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择')}}
+function handleTargetChange(){if(target!==previousTarget){previousTarget=target;poolEpoch++;resetPositions();applyServiceMarket(null);servicePositions.clear();autoMonitor=null;autoRenderSignature='';renderAutoMonitor();closeResearchReview();if(page==='performance')put('performanceScope',target?'当前 Pool '+target.slice(0,8)+'…':'当前 Pool 未选择')}}
 $('poolForm').addEventListener('submit',handleTargetChange);
 $('pool').addEventListener('input',handleTargetChange);
 renderPosition();renderShadow();
@@ -307,17 +309,17 @@ function applyServiceMarket(m,gate=null){
  if(!report){put('activeBin',m?m.activeId+' / '+m.binStep+' bps':'—');put('slot',m?.slot??'—');put('quality',m?'采集未验收':'采集不可用')}
  updatePlanButton();
 }
-function clearServicePositions(){for(const id of servicePositions)if(positions.get(id)?.source==='service')positions.delete(id);servicePositions.clear();if(!positions.has(positionSelected)){positionSelected=positions.keys().next().value??null;clearManagementView()}renderPosition()}
+function clearServicePositions(){for(const id of servicePositions)if(positions.get(id)?.source==='service')positions.delete(id);servicePositions.clear();if(!positions.has(positionSelected)){const next=positions.keys().next().value??null;if(next!==positionSelected)positionGeneration++;positionSelected=next;clearManagementView()}renderPosition()}
 async function refreshService({initial=false}={}){
- if(refreshing)return;refreshing=true;$('refreshState').disabled=true;$('refreshState').setAttribute('aria-busy','true');const g=++refreshGeneration;
+ if(refreshing)return;refreshing=true;$('refreshState').disabled=true;$('refreshState').setAttribute('aria-busy','true');const g=++refreshGeneration,scope=target,epoch=poolEpoch;
  try{
   const res=await fetch('/api/terminal/state',{cache:'no-store',signal:AbortSignal.timeout(10000)});if(!res.ok)throw Error('STATE_HTTP_'+res.status);const x=await res.json();
-  if(g!==refreshGeneration)return;
+  if(g!==refreshGeneration||!sameScope(epoch,scope,poolEpoch,target))return;
   if(!addr(x.pool)||x.decisionReady!==false||x.executionReady!==false)throw Error('状态接口契约不符');
   servicePool=x.pool;
   if(initial&&!target&&!$('pool').value){$('pool').value=x.pool;$('poolForm').requestSubmit()}
   put('serviceStatus',x.market?'本地采集 · 未验收':'本地服务 · 数据阻塞');
-  if(target!==x.pool){applyServiceMarket(null);applyMonitoring([]);put('captureStatus','此服务配置的 Pool 与当前选择不一致；请修改本地配置或选择该池。');return}
+  if(target!==x.pool){applyServiceMarket(null);applyMonitoring([]);clearServicePositions();put('captureStatus','此服务配置的 Pool 与当前选择不一致；请修改本地配置或选择该池。');return}
   const m=x.status==='CAPTURED_UNVERIFIED'&&x.market&&hash(x.market.rawHash)&&Number.isSafeInteger(x.market.slot)&&Number.isSafeInteger(x.market.expiresAt)&&x.market.expiresAt>Date.now()?x.market:null;
   const gate=x.reviewGate?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&hash(x.reviewGate.reviewHash)&&Number.isSafeInteger(x.reviewGate.expiresAt)?x.reviewGate:{status:'BLOCKED',reason:x.reviewGate?.reason??'REVIEW_NOT_CONFIGURED'};applyServiceMarket(m,gate);put('captureStatus',m?'Slot '+m.slot+' · '+m.binCount+' 个 Bin · 本地接收时间 '+new Date(m.receivedAt).toLocaleTimeString():'采集不可用：'+reasonText(x.reason??x.gaps?.[0]));
   put('poolStatus',m?'目标池已匹配本地采集 · 未验收':'目标池已匹配服务配置 · 等待采集');
@@ -325,10 +327,10 @@ async function refreshService({initial=false}={}){
   let changed=false;for(const id of servicePositions)if(!incoming.has(id)&&positions.get(id)?.source==='service'){positions.delete(id);changed=true;}
   servicePositions.clear();
   for(const [id,p] of incoming){const old=positions.get(id);const same=old?.snapshot.rawHash===p.rawHash&&old.snapshot.slot===p.slot&&old.snapshot.owner===p.owner&&old.snapshot.snapshot.decimalsX===p.snapshot.decimalsX;if(!same||old.source!=='service'){positions.set(id,{snapshot:p,management:same?old.management:null,source:'service'});changed=true}servicePositions.add(id)}
-  if(!positions.has(positionSelected)){positionSelected=positions.keys().next().value??null;clearManagementView();changed=true}
+  if(!positions.has(positionSelected)){const next=positions.keys().next().value??null;if(next!==positionSelected)positionGeneration++;positionSelected=next;clearManagementView();changed=true}
   if(managementSelected&&!positions.get(positionSelected)?.management)clearManagementView();
   applyMonitoring(x.monitoring??[]);if(changed)renderPosition();put('positionListStatus',invalidPositions?'有 '+invalidPositions+' 个采集仓位未通过归档结构检查；未显示。':positions.size?'显示采集与归档快照，不代表钱包全部仓位。':'尚无该 Pool 的可查看仓位。');
- }catch(e){if(g!==refreshGeneration)return;put('serviceStatus','本地服务不可用');put('captureStatus','状态读取失败：'+e.message);applyServiceMarket(null);applyMonitoring([]);clearServicePositions()}
+ }catch(e){if(g!==refreshGeneration||!sameScope(epoch,scope,poolEpoch,target))return;put('serviceStatus','本地服务不可用');put('captureStatus','状态读取失败：'+e.message);applyServiceMarket(null);applyMonitoring([]);clearServicePositions()}
  finally{refreshing=false;$('refreshState').disabled=false;$('refreshState').setAttribute('aria-busy','false');updatePlanButton()}
 }
 $('refreshState').addEventListener('click',()=>refreshService().then(()=>refreshAutoMonitor()));
@@ -350,7 +352,7 @@ function monitorFresh(x,now=Date.now()){return x?.status==='CAPTURED_UNVERIFIED'
 function rangeFresh(x,now=Date.now()){return monitorFresh(x,now)&&x.commonMarketCapture===true&&Number.isSafeInteger(x.rangeExpiresAt)&&x.rangeExpiresAt>now}
 function manageReady(x,o,now=Date.now()){
  const g=x?.managementGate,b=o?.snapshot;
- return !!b&&o.source==='service'&&monitorFresh(x,now)&&x.commonMarketCapture===true&&x.slot===b.slot&&x.rawHash===b.rawHash&&g?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&Number.isSafeInteger(g.expiresAt)&&g.expiresAt>now&&hash(g.reviewHash)&&hash(g.policyHash);
+ return !!b&&o.source==='service'&&rangeFresh(x,now)&&x.commonMarketCapture===true&&x.slot===b.slot&&x.rawHash===b.rawHash&&g?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&Number.isSafeInteger(g.expiresAt)&&g.expiresAt>now&&hash(g.reviewHash)&&hash(g.policyHash);
 }
 function matchesManagementBinding(b,x,o,market,now=Date.now()){
  return !!b&&manageReady(x,o,now)&&b.scope==='RESEARCH_ONLY'&&b.position===x.position&&b.positionSlot===x.slot&&b.positionRawHash===x.rawHash&&b.marketSlot===market?.slot&&b.marketRawHash===market?.rawHash&&b.reviewHash===x.managementGate.reviewHash&&b.policyHash===x.managementGate.policyHash&&hash(b.requestHash)&&Number.isSafeInteger(b.expiresAt)&&b.expiresAt>now;
@@ -419,9 +421,9 @@ function renderAutoMonitor(){
  if(!a?.events?.length){const tr=document.createElement('tr');cell(tr,'暂无历史状态变更').colSpan=4;events.append(tr)}
 }
 async function refreshAutoMonitor(){
- if(autoMonitorReading)return;autoMonitorReading=true;const scope=target;
- try{const res=await fetch('/api/terminal/monitor',{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await res.json();if(!res.ok||a.pool!==scope||target!==scope||a.decisionReady!==false||a.executionReady!==false||!Array.isArray(a.events)||!a.current)throw Error('MONITOR_UNAVAILABLE');autoMonitor=a}
- catch{autoMonitor=null}finally{autoMonitorReading=false;renderAutoMonitor()}
+ if(autoMonitorReading)return;autoMonitorReading=true;const scope=target,epoch=poolEpoch;
+ try{const res=await fetch('/api/terminal/monitor',{cache:'no-store',signal:AbortSignal.timeout(10000)}),a=await res.json();if(!sameScope(epoch,scope,poolEpoch,target))return;if(!res.ok||a.pool!==scope||a.decisionReady!==false||a.executionReady!==false||!Array.isArray(a.events)||!a.current)throw Error('MONITOR_UNAVAILABLE');autoMonitor=a}
+ catch{if(sameScope(epoch,scope,poolEpoch,target))autoMonitor=null}finally{autoMonitorReading=false;renderAutoMonitor()}
 }
 
 renderMonitorRows();renderMonitorSelection();renderAutoMonitor();
@@ -429,9 +431,9 @@ setInterval(()=>{if(monitoring.size)applyMonitoring([...monitoring.values()]);if
 
 refreshService({initial:true}).then(()=>refreshAutoMonitor());setInterval(()=>{refreshService().then(()=>refreshAutoMonitor())},15000);setInterval(()=>{if(report?.terminalBinding&&report.terminalBinding.expiresAt<=Date.now()){clearReport();put('generateStatus','研究证据已过期，请刷新后重新评估。')}if(serviceMarket&&!canAnalyze()){updatePlanButton();$('reviewDot').dataset.ready='false';if(serviceReview?.status==='PREFLIGHT_MATCHED_UNVERIFIED')put('reviewStatus','研究证据或市场快照已过期，请刷新。')}},1000);
 
-let walletAddress=null,walletProvider=null,walletBusy=false,walletEpoch=0,reviewEpoch=0,activeReview=null,walletEvidenceBusy=false,walletEvidenceResult=null,reviewVerified=false;
+let walletAddress=null,walletProvider=null,walletBusy=false,walletEpoch=0,reviewEpoch=0,activeReview=null,walletEvidenceBusy=false,walletEvidenceResult=null,reviewVerified=false,reviewExpiresAt=0;
 function walletKey(provider){try{const key=provider?.publicKey?.toBase58?.()??provider?.publicKey?.toString?.();return addr(key)?key:null}catch{return null}}
-function closeResearchReview(){reviewEpoch++;activeReview=null;reviewVerified=false;walletEvidenceResult=null;if($('reviewDialog').open)$('reviewDialog').close()}
+function closeResearchReview(){reviewEpoch++;activeReview=null;reviewVerified=false;reviewExpiresAt=0;walletEvidenceResult=null;if($('reviewDialog').open)$('reviewDialog').close()}
 function setWallet(value){
  if(walletAddress!==value){walletEpoch++;closeResearchReview()}
  walletAddress=value;put('walletIdentity',value?value.slice(0,6)+'…'+value.slice(-6):'未连接钱包');$('walletIdentity').title=value??'';
@@ -463,14 +465,14 @@ function reviewSelection(mode){
 }
 function updateReviewButtons(){
  $('reviewPlan').disabled=!reviewSelection('plans');$('reviewManagement').disabled=!reviewSelection('management');
- if(activeReview){const cur=reviewSelection(activeReview.mode);if(!cur||cur.report!==activeReview.report||cur.row!==activeReview.row||cur.wallet!==activeReview.wallet){closeResearchReview();}}
+ if(activeReview){const cur=reviewSelection(activeReview.mode);if((reviewVerified&&reviewExpiresAt<=Date.now())||!cur||cur.report!==activeReview.report||cur.row!==activeReview.row||cur.wallet!==activeReview.wallet){closeResearchReview();}}
 }
 function matchesReviewResponse(r,ctx){
  const b=ctx.report.terminalBinding,management=ctx.mode==='management';
  return r.reviewId===ctx.report.reviewId&&r.mode===ctx.mode&&r.rowIndex===ctx.rowIndex&&r.pool===target&&r.wallet===ctx.wallet&&r.requestHash===b.requestHash&&r.marketSlot===b.marketSlot&&r.marketRawHash===b.marketRawHash&&r.reviewHash===b.reviewHash&&r.position===(management?b.position:null)&&r.policyHash===(management?b.policyHash:null)&&r.positionSlot===(management?b.positionSlot:null)&&r.positionRawHash===(management?b.positionRawHash:null)&&Number.isSafeInteger(r.expiresAt)&&r.expiresAt>Date.now()&&r.expiresAt<=b.expiresAt;
 }
 async function openResearchReview(mode){
- const ctx=reviewSelection(mode);if(!ctx)return;const epoch=++reviewEpoch,accountEpoch=walletEpoch;activeReview=ctx;reviewVerified=false;walletEvidenceResult=null;$('readWalletEvidence').disabled=true;$('walletEvidenceFields').replaceChildren();put('walletEvidenceStatus','主动读取时会向配置的 RPC 提供公开钱包地址。');
+ const ctx=reviewSelection(mode);if(!ctx)return;const epoch=++reviewEpoch,accountEpoch=walletEpoch;activeReview=ctx;reviewVerified=false;reviewExpiresAt=0;walletEvidenceResult=null;$('readWalletEvidence').disabled=true;$('walletEvidenceFields').replaceChildren();put('walletEvidenceStatus','主动读取时会向配置的 RPC 提供公开钱包地址。');
  $('reviewFields').replaceChildren();$('reviewBlockers').replaceChildren();$('integerFields').replaceChildren();$('integerRows').replaceChildren();put('integerStatus','等待服务端整数预检');$('weightFields').replaceChildren();$('weightRows').replaceChildren();put('weightStatus','等待 SDK 权重诊断');$('inverseFields').replaceChildren();$('inverseRows').replaceChildren();put('inverseStatus','等待同源采集证据');put('reviewMessage','正在核对当前仓位、钱包身份及研究证据…');$('reviewDialog').showModal();
  try{
   const res=await fetch('/api/terminal/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,reviewId:ctx.report.reviewId,rowIndex:ctx.rowIndex,wallet:ctx.wallet}),signal:AbortSignal.timeout(10000)}),r=await res.json();
@@ -481,7 +483,7 @@ async function openResearchReview(mode){
   const fields={钱包:r.wallet,Pool:r.pool,Position:r.position??'尚未创建',研究动作:r.action,策略:r.strategy??'—',模型选中:r.modelSelected?'是':'否',模型SOL分配:fmt(r.modelAllocation?.sol),模型MEME分配:fmt(r.modelAllocation?.meme),Bin区间:r.modelAllocation?.lowerBinId==null?'无 LP':r.modelAllocation.lowerBinId+' 至 '+r.modelAllocation.upperBinId,快照Slot:r.marketSlot,有效期:new Date(r.expiresAt).toLocaleTimeString()};
   for(const [k,v] of Object.entries(fields)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=String(v);$('reviewFields').append(dt,dd)}
   for(const code of r.blockers??[]){const li=document.createElement('li');li.textContent=reasonText(code);$('reviewBlockers').append(li)}
-  renderIntegerDiagnostic(r.integerAllocation);renderWeightDiagnostic(r.weightDiagnostic);renderInverseDiagnostic(r.weightDiagnostic?.inverse);reviewVerified=true;$('readWalletEvidence').disabled=walletEvidenceBusy;put('reviewMessage','审阅完成 · 模型结果未验收 · 未获得任何签名权限');
+  renderIntegerDiagnostic(r.integerAllocation);renderWeightDiagnostic(r.weightDiagnostic);renderInverseDiagnostic(r.weightDiagnostic?.inverse);reviewVerified=true;reviewExpiresAt=r.expiresAt;$('readWalletEvidence').disabled=walletEvidenceBusy;put('reviewMessage','审阅完成 · 模型结果未验收 · 未获得任何签名权限');
  }catch(e){if(epoch===reviewEpoch)put('reviewMessage','审阅阻塞：'+e.message)}
 }
 $('reviewPlan').addEventListener('click',()=>openResearchReview('plans'));
@@ -493,7 +495,7 @@ setInterval(()=>{if(walletAddress&&walletKey(walletProvider)!==walletAddress)set
 
 $('readWalletEvidence').addEventListener('click',async()=>{
  const ctx=activeReview,epoch=reviewEpoch;
- if(!ctx||!reviewVerified||walletEvidenceBusy)return;
+ if(!ctx||!reviewVerified||reviewExpiresAt<=Date.now()||walletEvidenceBusy)return;
  walletEvidenceBusy=true;walletEvidenceResult=null;$('walletEvidenceFields').replaceChildren();$('readWalletEvidence').disabled=true;put('walletEvidenceStatus','正在读取 finalized 链上账户…');
  try{
   const res=await fetch('/api/terminal/wallet-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:ctx.mode,reviewId:ctx.report.reviewId,rowIndex:ctx.rowIndex,wallet:ctx.wallet}),signal:AbortSignal.timeout(40000)}),r=await res.json();
@@ -504,7 +506,7 @@ $('readWalletEvidence').addEventListener('click',async()=>{
   const tokenState=a=>a?.status==='MISSING'?'未创建 ATA':a?.frozen?'已冻结':a?.delegated?'存在委托':'已观测';
   const fields={'原生 SOL':exactAmount(r.nativeSolRaw,9),'MEME · ATA':exactAmount(r.memeAta?.amountRaw,r.decimalsX),'MEME 账户状态':tokenState(r.memeAta),'WSOL · ATA':exactAmount(r.wsolAta?.amountRaw,9),'WSOL 账户状态':tokenState(r.wsolAta),'单个经典 SPL 账户租金参考 SOL':exactAmount(r.classicTokenAccountRentRaw,9),'交易手续费':'待真实消息报价','账户观测 Slot':r.slot,'观测有效期':new Date(r.expiresAt).toLocaleTimeString()};
   for(const [k,v] of Object.entries(fields)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=String(v);$('walletEvidenceFields').append(dt,dd)}
-  walletEvidenceResult=r;put('walletEvidenceStatus','链上账户观测已读取 · 不代表可支配资金或交易已验证。');
+  walletEvidenceResult=r;reviewExpiresAt=Math.min(reviewExpiresAt,r.expiresAt);put('walletEvidenceStatus','链上账户观测已读取 · 不代表可支配资金或交易已验证。');
  }catch(e){if(epoch===reviewEpoch)put('walletEvidenceStatus','读取阻塞：'+e.message)}
  finally{walletEvidenceBusy=false;$('readWalletEvidence').disabled=!reviewVerified}
 });
@@ -552,9 +554,9 @@ function renderPerfWindow(){
  if(series){$('performanceSeriesView').hidden=false;for(const [k,label] of Object.entries(seriesMetricLabels)){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=r.capitalTime[k];$('performanceSeriesFields').append(dt,dd)}for(const x of r.points){const tr=document.createElement('tr');for(const v of [x.slot,new Date(x.asOf*1000).toISOString(),x.nav,x.terminalWealth,x.hodlTerminal,x.netPnl,x.alpha])cell(tr,v);$('performanceSeriesRows').append(tr)}}
 }
 $('performanceWindowFile').addEventListener('change',async()=>{
- const g=++perfGeneration,scope=target,id=positionSelected;perfWindow=null;renderPerfWindow();
+ const g=++perfGeneration,scope=target,id=positionSelected,owner=positions.get(id)?.snapshot.owner;perfWindow=null;renderPerfWindow();
  try{const r=await readJson($('performanceWindowFile').files[0]);
-  if(g!==perfGeneration||scope!==target||id!==positionSelected)return;
+  if(g!==perfGeneration||scope!==target||id!==positionSelected||owner!==positions.get(id)?.snapshot.owner)return;
   if(r.schemaVersion!==1||!['BOUNDED_WINDOW_ACCOUNTING_DIAGNOSTIC','BOUNDED_SERIES_DIAGNOSTIC'].includes(r.status)||r.pnlReady!==false||r.historyComplete!==false||r.executionReady!==false||r.decisionReady!==false||r.pool!==scope||r.position!==id||!addr(r.owner)||!validPerfBoundary(r)||!Number.isSafeInteger(r.observedCount)||r.observedCount<1||!Object.keys(perfMetricLabels).every(k=>typeof r.metrics?.[k]==='string'&&/^-?\d{1,80}(\.\d{1,36})?$/.test(r.metrics[k])))throw Error('诊断身份、状态或数值格式不符');
   perfWindow=r;renderPerfWindow();
  }catch(e){if(g===perfGeneration)put('performanceWindowStatus','导入失败：'+e.message)}
