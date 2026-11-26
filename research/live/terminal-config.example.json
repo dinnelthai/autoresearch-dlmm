@@ -1,5 +1,6 @@
 {
   "pool": "REPLACE_WITH_POOL_ADDRESS",
   "review": "data/research-evidence.json",
-  "maxAgeSeconds": 180
+  "maxAgeSeconds": 180,
+  "managementPolicies": {}
 }
