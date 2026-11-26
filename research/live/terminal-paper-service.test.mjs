@@ -68,3 +68,40 @@ test('real tick repairs terminal pointer after committed endpoint and rejects ch
  assert.equal(JSON.parse(await readFile(join(y.dir,'active.json'),'utf8')).running,true);
  await assert.rejects(stat(join(y.dir,'writer.lock')),{code:'ENOENT'});
 });
+
+test('real service starts, advances twice, archives and resumes from disk with injected decoded captures',async t=>{
+ const {IntegerKernel:K}=await import('../integer.mjs');
+ const {createPaperHistoryStore}=await import('./paper-history-store.mjs');
+ const DATA=await mkdtemp(join(tmpdir(),'paper-service-forward-'));
+ const {backendHash}=await sourceInventory(ROOT);
+ const io=createTerminalRuntime({ROOT,DATA}),captures=new Map(),services=[];
+ t.after(async()=>{try{await Promise.all(services.map(s=>s.stop()))}finally{await rm(DATA,{recursive:true,force:true})}});
+ let now=1800000000000,current;
+ t.mock.method(Date,'now',()=>now);
+ const mintX='C'.repeat(32),mintY='D'.repeat(32),idl=join(DATA,'idl.json');
+ await writeFile(idl,'{}');
+ async function capture(slot,fee,requested,received){
+  const dir=join(DATA,'capture-'+slot),raw=JSON.stringify({synthetic:true,slot}),rawHash=sha(raw);
+  await mkdir(dir);await writeFile(join(dir,'accounts.json'),raw);
+  await writeFile(join(dir,'manifest.json'),JSON.stringify({commitment:'finalized',pool:A,contextSlot:slot,raw:{file:'accounts.json',sha256:rawHash},requestedAt:new Date(requested).toISOString(),receivedAt:new Date(received).toISOString()}));
+  const identity={pool:A,mintX,mintY,slot,rawHash,sdkCommit:K.SDK_COMMIT,idlBlob:'synthetic-idl',activeId:0,binStep:100,orientation:'MEME_X_SOL_Y',status:'IDENTITY_CHECKED_UNVERIFIED',sides:[{mint:mintX,decimals:6},{mint:mintY,decimals:9}]};
+  const bins={...identity,status:'BITMAP_COVERAGE_CHECKED_UNVERIFIED',coverage:{expected:1,decoded:1,missing:0,unsupported:0},arrays:[{version:3,bins:Array.from({length:70},(_,binId)=>({binId,version:3,amountXRaw:'10000000',amountYRaw:'0',liquiditySupplyRaw:String(100n*K.Q),priceQ64Raw:String(K.Q),feeXPerTokenRaw:String(fee*K.Q),feeYPerTokenRaw:'0',openOrderAmountRaw:'0',totalProcessingOrderAmountRaw:'0',processedOrderRemainingAmountRaw:'0'}))}]};
+  captures.set(dir,{identity,bins});current={schemaVersion:1,pool:A,sequence:slot,decisionReady:false,streams:{market:{status:'CAPTURED_UNVERIFIED',receivedAt:received,evidence:{capture:dir,slot,identity,bins}}}};
+  return identity;
+ }
+ const first=await capture(1,0n,now-2000,now-1000),row={family:'spot',feasible:true,action:{type:'OPEN'},allocation:{lowerBinId:1,upperBinId:1,bins:[{binId:1,meme:1,sol:0}]}};
+ const report={schemaVersion:1,pool:A,status:'RESEARCH_DIAGNOSTIC_UNVERIFIED',executionReady:false,decisionReady:false,protocolExact:false,calibrated:false,market:{...first,decimalsX:6,decimalsY:9},planPreview:{status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',scope:'NEW_POSITION_ONLY',executionReady:false,decisionReady:false,families:['NO_LP','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid'].map(family=>({family,best:family==='spot'?row:family==='NO_LP'?{family,feasible:true,action:{type:'NO_LP'}}:null})),selected:row},terminalBinding:{scope:'RESEARCH_ONLY',expiresAt:now+60000,marketSlot:first.slot,marketRawHash:first.rawHash,requestHash:'a'.repeat(64),reviewHash:'b'.repeat(64),researchBudget:{memeRaw:'2000000',solRaw:'1000000000',allowDispose:false,minSolReserve:0,operationCostSol:0,maxBinShare:.1}}};
+ const make=()=>{const service=createTerminalPaperService({ROOT,DATA,pool:A,maxAgeMs:60000,backendHash,idlPath:idl,io:{...io,run:async(args,script)=>{assert.equal(args[2],'--idl');assert.equal(args[3],idl);const fixture=captures.get(args[1]);assert.ok(fixture);assert.ok(['inspect-pool.mjs','inspect-bins.mjs'].includes(script));return structuredClone(script==='inspect-pool.mjs'?fixture.identity:fixture.bins)}},loadState:async()=>structuredClone(current),preview:async()=>structuredClone(report),loadReview:async()=>{throw Error('UNEXPECTED_REVIEW')},isStopping:()=>false});services.push(service);return service};
+ const service=make(),body={draft:{pool:A,riskConfig:{maxBinShare:.1}},policy:{evaluationDays:7,maxDrawdownBps:1000,maxLossSolRaw:'100000000',maxGapSeconds:180,exitCostSolRaw:'1'}};
+ const started=await service.start(body);assert.equal(started.snapshotCount,1);assert.equal(started.rows.length,8);assert.equal(started.running,true);
+ await service.tick();assert.equal((await service.get()).snapshotCount,1);
+ now+=10000;await capture(2,1n,now-1000,now);await service.tick();
+ const second=await service.get();assert.equal(second.status,'UPDATED_UNVERIFIED');assert.equal(second.snapshotCount,2);assert.equal(second.rows.find(r=>r.mode==='spot').latest.totalFeeXRaw,'9');
+ await service.stop();const resumed=make();
+ now+=10000;await capture(3,2n,now-1000,now);await resumed.tick();
+ const third=await resumed.get();assert.equal(third.snapshotCount,3);assert.equal(third.rows.find(r=>r.mode==='spot').latest.totalFeeXRaw,'18');assert.equal(third.rows.find(r=>r.mode==='NO_LP').latest.pnlYRaw,'0');assert.equal(third.pnlReady,false);
+ const dir=join(DATA,'paper-auto',A,started.id),{checkpointHash,...state}=JSON.parse(await readFile(join(dir,'checkpoint.json'),'utf8'));assert.equal(checkpointHash,sha(JSON.stringify(state)));
+ const history=createPaperHistoryStore({read:(p,n)=>io.safeDataPath(p).then(path=>io.boundedRead(path,n)),atomic:async()=>{throw Error('UNEXPECTED_WRITE')}});
+ assert.equal((await history.verify(dir,state)).records,3);
+ assert.equal((await resumed.pause({pool:A,id:started.id})).running,false);
+});
