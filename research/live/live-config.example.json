@@ -1,0 +1,13 @@
+{
+  "pool": "REPLACE_WITH_POOL_ADDRESS",
+  "positions": [],
+  "references": [],
+  "probeSolRaw": "REPLACE_WITH_LAMPORTS",
+  "sellRaw": [],
+  "provider": "solana-rpc",
+  "idl": "data/raw/dlmm-idl.json",
+  "pollSeconds": 60,
+  "maxAgeSeconds": 180,
+  "historyPages": 2,
+  "historyLimit": 20
+}
