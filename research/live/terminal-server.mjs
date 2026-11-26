@@ -14,6 +14,7 @@ import {createTerminalHandler} from './terminal-router.mjs';
 import {createTerminalLocks} from './terminal-locks.mjs';
 import {loadTerminalAssets,terminalScriptSource,verifyTerminalMarkup} from './terminal-assets.mjs';
 import {sourceInventory} from './source-inventory.mjs';
+import {createTerminalPaperService} from './terminal-paper-service.mjs';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
 import {poolAddress} from './terminal-core.mjs';
@@ -47,10 +48,11 @@ const marketObservations=createMarketObservationService({ROOT,DATA,cfg,maxAgeMs,
 const {holderObservation,externalObservation}=marketObservations;
 const {researchInputs,saveResearchSnapshot,replayResearchSnapshot,buildResearchCandidate,loadResearchRun}=createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,run,marketObservations});
 const {readPositionIndex,readPositionDetail,positionAccounting}=createPositionService({ROOT,DATA,cfg,previewCfg,maxAgeMs,validateScope,loadState,safeDataPath,boundedRead,run});
-const server=createServer(createTerminalHandler({pool,port,origin,html,assets,startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor:monitor.publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}));
+const paperService=createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io:{safeDataPath,boundedRead,run},loadState,preview,isStopping});
+const server=createServer(createTerminalHandler({paperService,pool,port,origin,html,assets,startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor:monitor.publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}));
 server.requestTimeout=45000;server.headersTimeout=10000;server.keepAliveTimeout=2000;server.maxConnections=16;
 await new Promise((ok,fail)=>{server.once('error',fail);server.listen(port,'127.0.0.1',ok)});
-await monitor.start();
+await monitor.start();paperService.startScheduler();
 console.log('Read-only Flow Terminal: '+origin);
-async function stop(){if(stopping)return;stopping=true;server.close();await Promise.all([scopeService.stop(),monitor.stop()])}
+async function stop(){if(stopping)return;stopping=true;server.close();await Promise.all([scopeService.stop(),monitor.stop(),paperService.stop()])}
 process.once('SIGINT',()=>{stop().catch(()=>{process.exitCode=1})});process.once('SIGTERM',()=>{stop().catch(()=>{process.exitCode=1})});

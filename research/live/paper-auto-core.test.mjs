@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {nextPaperCapture,paperPublic} from './paper-auto-core.mjs';
+const h='a'.repeat(64),state={id:'x',pool:'pool',mintX:'x',mintY:'y',last:{slot:10,proof:{accountsHash:h,receivedAt:new Date(1000).toISOString()}},policy:{maxGapSeconds:60},snapshotCount:2,rows:[{mode:'spot',status:'BLOCKED',points:[{navYRaw:'10'}]}]};
+const market={pool:'pool',mintX:'x',mintY:'y',slot:10,rawHash:h};
+test('only newer matching market can advance; same slot conflict rejected',()=>{assert.equal(nextPaperCapture(state,market),false);assert.equal(nextPaperCapture(state,{...market,slot:11}),true);assert.throws(()=>nextPaperCapture(state,{...market,rawHash:'b'.repeat(64)}));assert.throws(()=>nextPaperCapture(state,{...market,slot:9}));assert.throws(()=>nextPaperCapture(state,{...market,pool:'other'}))});
+test('public status cannot present blocked rows or stale results as current',()=>{const j={status:'UPDATED_UNVERIFIED',running:true};assert.equal(paperPublic(state,j,{now:2000,maxAgeMs:60000}).checkpointFresh,true);assert.equal(paperPublic(state,j,{now:70000,maxAgeMs:60000}).checkpointFresh,false);const r=paperPublic(state,{...j,status:'BLOCKED'},{now:2000,maxAgeMs:60000});assert.equal(r.checkpointFresh,false);assert.equal(r.rows[0].latest,null);assert.equal(r.pnlReady,false)});

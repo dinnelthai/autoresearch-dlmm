@@ -3,9 +3,11 @@ import {randomUUID} from 'node:crypto';
 import {currentMarket,scopedTerminalRequest} from './terminal-core.mjs';
 import {diagnosticLog} from './diagnostic-log.mjs';
 import {blockedResponse,errorCode} from './research-contract.mjs';
-export function createTerminalHandler({pool,port,origin,html,assets=new Map(),startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}){
+export function createTerminalHandler({pool,port,origin,html,assets=new Map(),startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview,paperService}){
  const blocked=reason=>blockedResponse(pool,reason);
  const postRoutes=new Map([
+  ['/api/terminal/paper-start',{lock:'analysis',reason:'ANALYSIS_BUSY',handle:body=>paperService.start(body)}],
+  ['/api/terminal/paper-pause',{lock:null,reason:null,handle:body=>paperService.pause(body)}],
   ['/api/terminal/position-accounting',{lock:"positionAccounting",reason:"POSITION_ACCOUNTING_BUSY",handle:positionAccounting}],
   ['/api/terminal/wallet-positions',{lock:"positionRead",reason:"POSITION_CAPTURE_BUSY",handle:readPositionIndex}],
   ['/api/terminal/wallet-position-detail',{lock:"positionRead",reason:"POSITION_CAPTURE_BUSY",handle:readPositionDetail}],
@@ -34,6 +36,7 @@ return async function handle(req,res){
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
   if(req.method==='GET'&&req.url==='/health'){send(res,200,{status:'RUNNING',pool,...startup,decisionReady:false,executionReady:false});return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/research-catalog'){send(res,200,{pool:scope,scope:'HISTORICAL_ARCHIVE_INDEX_ONLY',entries:await archives.list(scope),decisionReady:false,executionReady:false});return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/paper-status'){send(res,200,await paperService.get(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/input-status'){send(res,200,await researchInputs(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/monitor'){send(res,200,scope===pool?publicMonitor():{pool:scope,enabled:false,current:{},events:[],decisionReady:false,executionReady:false});return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/pool-info'){try{const m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);send(res,200,await indexedPool([m.pool,m.mintX,m.mintY,m.decimalsX,m.decimalsY].join(':'),m))}catch(e){send(res,503,{pool:scope,status:'UNAVAILABLE',reason:/^INDEX_[A-Z_]+$/.test(e.message)?e.message:'POOL_INFO_UNAVAILABLE'})}return}
