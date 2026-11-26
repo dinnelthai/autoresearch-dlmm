@@ -13,7 +13,7 @@
 | T06 | Independent reference/exit depth | Target excluded, depth and timestamp quality, missing data gates | Direct pool quote draft; arithmetic checks passed; independent source/freshness and live validation pending |
 | T07 | Live state service | Persistence, deduplication, recovery, freshness and logs | Polling/API/persistence draft; automatic gap repair and live integration pending |
 | T08 | Existing math integration | Real event adapter, as-of boundaries and unsupported cases rejected | Read-only snapshot/risk bridge draft; normalized per-bin history and live evidence pending |
-| T09 | Candidate LP plans | Budget, bins, strategy comparison, executable constraints | Pending |
+| T09 | Candidate LP plans | Budget, bins, strategy comparison, executable constraints | Research preview draft; source fixture checks passed; SDK feasibility/calibration/live evidence pending |
 | T10 | Inventory, rebalance and exit decisions | Risk limits, no-LP, removal vs disposal, cost-aware decisions | Pending |
 | T11 | Live shadow validation | Real events, frozen test, risk and costs versus fair baselines | Pending |
 | T12 | Single-pool terminal | Manual pool entry and plan preview | Separate prototype ready for review; implementation pending |
