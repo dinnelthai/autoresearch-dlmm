@@ -352,6 +352,7 @@ function renderActualMarket(m){
  for(const b of d.rows){const tr=document.createElement('tr');cell(tr,String(b.binId)+(b.binId===m.activeId?' · Active':''));cell(tr,Number.isFinite(b.priceSolPerMeme)&&b.priceSolPerMeme>0?b.priceSolPerMeme.toPrecision(8):'—');cell(tr,exactAmount(b.amountYRaw,9));cell(tr,exactAmount(b.amountXRaw,m.decimalsX));body.append(tr)}
 }
 function applyServiceMarket(m,gate=null){
+ if(!m||serviceMarket?.rawHash!==m.rawHash||serviceMarket?.slot!==m.slot)clearExternalMarket();
  renderActualMarket(m);
  serviceReview=gate;
  if(report?.terminalBinding&&(!m||report.terminalBinding.marketSlot!==m.slot||report.terminalBinding.marketRawHash!==m.rawHash||gate?.reviewHash!==report.terminalBinding.reviewHash||report.terminalBinding.expiresAt<=Date.now())){clearReport();put('generateStatus','市场快照或研究证据已变化，需重新生成。')}
@@ -572,9 +573,9 @@ $('externalRefresh').addEventListener('click',async()=>{
  clearExternalMarket();const g=externalEpoch,p=target,m=serviceMarket;externalReading=true;$('externalRefresh').disabled=true;put('externalStatus','正在读取公开市场报价…');
  try{
   const res=await fetch('/api/terminal/external-market',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pool:p}),signal:AbortSignal.timeout(25000)}),r=await res.json();
-  if(g!==externalEpoch||p!==target)return;
+  if(g!==externalEpoch||p!==target||serviceMarket?.rawHash!==m.rawHash||serviceMarket?.slot!==m.slot)return;
   if(!res.ok)throw Error(r.gaps?.[0]??'EXTERNAL_UNAVAILABLE');
-  if(r.scope!=='EXTERNAL_DISPLAY_ONLY'||r.pool!==p||r.mintX!==m.mintX||r.mintY!==m.mintY||r.decisionReady!==false||r.executionReady!==false||!Number.isSafeInteger(r.expiresAt)||r.expiresAt<=Date.now()||!Array.isArray(r.candidates)||r.candidates.length>20||!Array.isArray(r.gaps))throw Error('外部观察身份或时效不符');
+  if(r.scope!=='EXTERNAL_DISPLAY_ONLY'||r.pool!==p||r.mintX!==m.mintX||r.mintY!==m.mintY||r.marketRawHash!==m.rawHash||r.marketSlot!==m.slot||r.decisionReady!==false||r.executionReady!==false||!Number.isSafeInteger(r.expiresAt)||r.expiresAt<=Date.now()||!Array.isArray(r.candidates)||r.candidates.length>20||!Array.isArray(r.gaps))throw Error('外部观察身份或时效不符');
   for(const a of r.candidates){const tr=document.createElement('tr');cell(tr,a.venue);cell(tr,a.pool.slice(0,8)+'…'+a.pool.slice(-5)).title=a.pool;cell(tr,Number.isFinite(a.priceSolPerMeme)?a.priceSolPerMeme.toPrecision(8):'—');cell(tr,Number.isFinite(a.liquidityUsd)?a.liquidityUsd.toLocaleString(undefined,{maximumFractionDigits:2}):'—');$('externalRows').append(tr)}
   const q=r.raydium,mid=q?.midSolPerMeme,active=m.display?.activeBinPriceSolPerMeme;
   const deviation=Number.isFinite(mid)&&mid>0&&Number.isFinite(active)&&active>0?(active/mid-1)*100:null;

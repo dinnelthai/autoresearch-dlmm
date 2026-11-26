@@ -13,6 +13,7 @@
     "bs58": "6.0.0"
   },
   "scripts": {
-    "verify:offline": "node verify-offline.mjs"
+    "verify:offline": "node verify-offline.mjs",
+    "check:local": "node check-local.mjs"
   }
 }

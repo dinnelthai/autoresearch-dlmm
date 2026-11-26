@@ -72,7 +72,7 @@ async function scopedOverview(scope){
  return {pool:scope,sequence,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason:market?null:reason,market,collection,reviewGate:{status:'BLOCKED',reason:'POOL_RESEARCH_NOT_CONFIGURED'},positions:[],monitoring:[],streams:{},decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY',scope:'MARKET_PREVIEW_ONLY'};
 }
 const html=await readFile(join(ROOT,'research/live/terminal.html'));
-const startup={apiVersion:'flow-data-v7',startedAt:Date.now(),htmlHash:sha(html),serverHash:sha(await readFile(fileURLToPath(import.meta.url)))};
+const startup={apiVersion:'flow-data-v8',startedAt:Date.now(),htmlHash:sha(html),serverHash:sha(await readFile(fileURLToPath(import.meta.url)))};
 let busy=false,monitorTimer=null,monitorJob=null,stopping=false,monitorLock=null,monitorLockPath=null,monitorFile=null,monitorCursor=0,monitorError=null,monitorLastCycle=null;
 const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitoring?.intervalSeconds??30;
 assert(Number.isInteger(monitorSeconds)&&monitorSeconds>=15&&monitorSeconds<=600,'INVALID_MONITOR_INTERVAL');
