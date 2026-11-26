@@ -1,0 +1,2 @@
+// Shared explicit source inventory for browser serving and archived research hashes.
+export const engineSourcePaths=Object.freeze(["research/engine.mjs","research/engine-source-paths.mjs","research/engine/numeric.mjs","research/engine/accounting.mjs","research/engine/market.mjs","research/engine/risk.mjs","research/engine/liquidity.mjs","research/engine/events.mjs","research/engine/forecast.mjs","research/engine/evaluation.mjs","research/engine/decision.mjs","research/engine/session.mjs","research/engine/experiments.mjs"]);
