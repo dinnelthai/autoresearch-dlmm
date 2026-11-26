@@ -44,6 +44,7 @@ export function remapAdaptive({row,selected,snapshot,state,cfg}){
  const d=allocationDiagnostic({row:{family:'adaptive',action:{type:'OPEN'},feasible:true,allocation:{...selected.allocation,lowerBinId:lo,upperBinId:hi}},market:{activeId:i.activeId,decimalsX:i.sides[0].decimals,decimalsY:9,bins:[...map.values()]},budget:{allowDispose:false,memeRaw:String(x),solRaw:String(y),minSolReserve:cfg.minSolReserve,operationCostSol:0}});
  assert(d.status==='INTEGER_DIAGNOSTIC_ONLY'&&d.rows.length<=256&&!d.zeroRows,'PAPER_ADAPTIVE_ALLOCATION_BLOCKED');
  const rows=d.rows.map(v=>proportionalShare(map.get(v.binId),v,i.activeId)),dx=raw(d.totalMemeRaw),dy=raw(d.totalSolRaw);
+ const cap=scaledFloat(cfg.maxBinShare,9);assert(rows.every(r=>raw(r.shareRaw)*1000000000n<=cap*raw(r.projectedSupplyRaw)),'PAPER_ADAPTIVE_CONFIGURED_SHARE_LIMIT');
  const turnover=oldTurnover+value(principalX,principalY)+value(dx,dy);
  assert(turnover<=scaledFloat(cfg.maxTurnoverSol,9)&&y-dy>=raw(state.policy.exitCostSolRaw),'PAPER_ADAPTIVE_TURNOVER_OR_RESERVE');
  const pX=rows.reduce((n,r)=>n+raw(r.shareRaw)*raw(map.get(r.binId).amountXRaw)/raw(map.get(r.binId).liquiditySupplyRaw),0n),pY=rows.reduce((n,r)=>n+raw(r.shareRaw)*raw(map.get(r.binId).amountYRaw)/raw(map.get(r.binId).liquiditySupplyRaw),0n);

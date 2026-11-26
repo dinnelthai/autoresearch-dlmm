@@ -93,6 +93,7 @@ export function advanceSnapshotExperiment(state,{opening,previous,snapshot,backe
 export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHash,now}){
  const row=state.rows.find(r=>r.mode==='adaptive');
  if(!state.adaptiveRequest||row?.status!=='OPEN_PROXY')return state;
+ assert(Number.isSafeInteger(now)&&now>=Date.parse(snapshot.proof.receivedAt)&&hash(reviewHash),'PAPER_ADAPTIVE_REVIEW_BINDING');
  const c=facts(snapshot);assert(state.last.slot===c.i.slot&&state.last.proof.accountsHash===c.proof.accountsHash,'PAPER_ADAPTIVE_POINT_SCOPE');
  const intent=adaptiveIntent({row,preview,slot:c.i.slot,requestedAt:c.requested,now,reviewHash,delaySeconds:Math.max(1,reviewed.cfg.executionDelaySeconds)});
  let next={...row,pendingAdaptive:intent.pending,adaptiveReason:intent.reason,adaptiveDecisions:(row.adaptiveDecisions??0)+1};

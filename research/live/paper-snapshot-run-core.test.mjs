@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {IntegerKernel as K} from '../integer.mjs';
-import {openSnapshotExperiment,advanceSnapshotExperiment} from './paper-snapshot-run-core.mjs';
+import {openSnapshotExperiment,advanceSnapshotExperiment,updateAdaptiveSnapshot} from './paper-snapshot-run-core.mjs';
 const Q=K.Q,pool='A'.repeat(32),mintX='B'.repeat(32),mintY='C'.repeat(32),backendHash='f'.repeat(64);
 function snapshot(slot,fee=0n){
  const rawHash=String(slot).repeat(64),identity={pool,mintX,mintY,slot,rawHash,sdkCommit:K.SDK_COMMIT,idlBlob:'idl',activeId:0,binStep:100,orientation:'MEME_X_SOL_Y',status:'IDENTITY_CHECKED_UNVERIFIED',sides:[{mint:mintX,decimals:6},{mint:mintY,decimals:9}]};
@@ -21,3 +21,17 @@ test('changed supply or gap blocks affected strategy permanently',()=>{const {a,
 test('reject stale or pre-freeze capture and altered checkpoint scope',()=>{const {a,state}=fixture(),b=snapshot(2);assert.throws(()=>advance(state,a,a,a));b.proof.requestedAt=new Date(11000).toISOString();assert.throws(()=>advance(state,a,a,b));assert.throws(()=>advance({...state,backendHash:'e'.repeat(64)},a,a,snapshot(2)))});
 
 test('risk loss triggers proxy exit with one declared cost',()=>{const {a,state}=fixture(),b=snapshot(2);state.policy.maxLossSolRaw='1';b.bins.arrays[0].bins[1].amountXRaw='9000000';const s2=advance(state,a,a,b);assert.equal(s2.rows[1].status,'EXITED_PROXY');assert.equal(s2.rows[1].reason,'RISK_VIRTUAL_EXIT');assert.equal(s2.rows[1].points.at(-1).costYRaw,'1');assert.equal(s2.rows[1].points.at(-1).pnlYRaw,'-100001')});
+
+test('virtual reposition freezes new segment, credits old fees once and preserves original baseline',()=>{
+ const {a,state}=fixture(),b=snapshot(2,1n),c=snapshot(3,2n),d=snapshot(4,3n);
+ state.adaptiveRequest={goal:'balanced'};
+ const cfg={executionDelaySeconds:1,maxRebalances:8,maxTurnoverSol:30,minSolReserve:0,maxBinShare:.1};
+ const preview={status:'RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED',selected:{feasible:true,action:{type:'REPOSITION',spec:{width:1}},estimatedOperationCostSol:0,allocation:{bins:[{binId:2,meme:.5,sol:0}]}}};
+ const reviewed={cfg,latest:{t:21}},reviewHash='e'.repeat(64);
+ let s2=advance(state,a,a,b);s2=updateAdaptiveSnapshot(s2,{snapshot:b,reviewed,preview,reviewHash,now:22000});
+ assert.equal(s2.rows[7].pendingAdaptive.action,'REPOSITION');
+ let s3=advance(s2,a,b,c);s3=updateAdaptiveSnapshot(s3,{snapshot:c,reviewed:{cfg,latest:{t:31}},preview,reviewHash,now:32000});
+ assert.equal(s3.rows[7].rebalances,1);assert.equal(s3.rows[7].mapping.rows[0].binId,2);assert.equal(s3.rows[7].claimedFeeXRaw,'20');assert.equal(s3.rows[7].points.at(-1).feeXRaw,'0');
+ const s4=advanceSnapshotExperiment(s3,{opening:a,previous:c,snapshot:d,backendHash,now:1000000,segmentOpenings:{adaptive:c}});
+ assert.equal(s4.rows[7].points.at(-1).feeXRaw,'5');assert.equal(s4.rows[7].claimedFeeXRaw,'20');assert.equal(s4.rows[7].points.at(-1).excessVsHoldYRaw,'25');assert.equal(s4.rows[1].points.at(-1).feeXRaw,'30');
+});
