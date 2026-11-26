@@ -8,7 +8,7 @@
 | T01 | Raw RPC account acquisition | Real finalized Pool response, raw bytes, context slot, hash, timing and explicit gaps | CLI tests passed; BLOCKED on real RPC evidence |
 | T02 | SDK/IDL pinned pool/mint/vault decoding | Verified owner, mint orientation, decimals, extensions and vaults | Code draft; live integration pending |
 | T03 | Bin arrays and bitmap | Complete declared snapshot and consistency checks | Code draft; bitmap pure checks passed; live integration pending |
-| T04 | Swap and dynamic fee events | Raw transaction ordering, fee and vault deltas reconcile, gaps explicit | Pending |
+| T04 | Swap and dynamic fee events | Raw transaction ordering, fee and vault deltas reconcile, gaps explicit | Capture/event decoding draft; per-instruction reconciliation and live validation pending |
 | T05 | Position ledger | Shares, principal, pending/claimed fees and lifecycle reconcile | Pending |
 | T06 | Independent reference/exit depth | Target excluded, depth and timestamp quality, missing data gates | Pending |
 | T07 | Live state service | Persistence, deduplication, recovery, freshness and logs | Pending |
