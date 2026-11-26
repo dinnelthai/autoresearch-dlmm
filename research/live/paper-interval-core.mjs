@@ -43,10 +43,10 @@ export function reconcileInterval({before,after,history,manifest}){
   assert(net>0n&&mm>0n&&out>0n&&(e.swapForY?dx===net&&dy===-out&&gx>0n&&gy===0n:dy===net&&dx===-out&&gy>0n&&gx===0n),'PAPER_PRINCIPAL_OR_FEE_GROWTH_MISMATCH');
   const v=tx[0];for(const [index,k] of [[0,'vaultX'],[1,'vaultY']]){const t=v[k];assert(v.vaultStatus==='DELTA_OBSERVED_NOT_RECONCILED'&&t?.mint===a.sides[index].mint&&raw(t.preRaw,64)===raw(a.sides[index].vaultAmountRaw,64)&&raw(t.postRaw,64)===raw(b.sides[index].vaultAmountRaw,64)&&BigInt(t.deltaRaw)===raw(t.postRaw,64)-raw(t.preRaw,64),'PAPER_VAULT_BOUNDARY_MISMATCH')}
   assert(e.swapForY?BigInt(v.vaultX.deltaRaw)===gross&&BigInt(v.vaultY.deltaRaw)===-out:BigInt(v.vaultY.deltaRaw)===gross&&BigInt(v.vaultX.deltaRaw)===-out,'PAPER_VAULT_EVENT_MISMATCH');
-  result.status='SINGLE_BIN_PRINCIPAL_MATCHED_UNVERIFIED';result.reason='FEE_GROWTH_UNITS_AND_COVERAGE_REQUIRE_INDEPENDENT_REVIEW';
   // Raw facts only; not a PER_BIN_RECONCILED model fill.
   result.candidate={signature:e.signature,slot:e.slot,txIndex:e.txIndex,bin:d.bin,side:candidate.side,basePrincipalRaw:(e.swapForY?dx:-dx).toString(),mmFeeRaw:e.mmFeeRaw,feeToken:e.feeToken,preBin:x,postBin:y};
-  result.feeCalibration=feeEventDiagnostic(result.candidate);
+  try{result.feeCalibration=feeEventDiagnostic(result.candidate)}catch{result.feeCalibration={status:'FEE_CALIBRATION_UNAVAILABLE',protocolExact:false,modelEligible:false}}
+  result.status='SINGLE_BIN_PRINCIPAL_MATCHED_UNVERIFIED';result.reason='FEE_GROWTH_UNITS_AND_COVERAGE_REQUIRE_INDEPENDENT_REVIEW';
  }catch(e){result.reason=/^[A-Z][A-Z0-9_]+$/.test(e.message)?e.message:'PAPER_INTERVAL_INVALID'}
  return result;
 }
