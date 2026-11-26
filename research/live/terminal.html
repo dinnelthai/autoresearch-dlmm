@@ -324,7 +324,7 @@ async function refreshService({initial=false}={}){
  }catch(e){if(g!==refreshGeneration)return;put('serviceStatus','本地服务不可用');put('captureStatus','状态读取失败：'+e.message);applyServiceMarket(null);applyMonitoring([]);clearServicePositions()}
  finally{refreshing=false;$('refreshState').disabled=false;$('refreshState').setAttribute('aria-busy','false');updatePlanButton()}
 }
-$('refreshState').addEventListener('click',()=>refreshService());
+$('refreshState').addEventListener('click',()=>refreshService().then(()=>refreshAutoMonitor()));
 $('poolForm').addEventListener('submit',()=>{if(target&&target===$('pool').value.trim())refreshService()});
 $('pool').addEventListener('input',()=>{applyServiceMarket(null);servicePositions.clear();applyMonitoring([])});
 $('request').addEventListener('input',updatePlanButton);
@@ -387,7 +387,7 @@ $('evaluatePosition').addEventListener('click',async()=>{
  finally{managementBusy=false;updatePlanButton();renderMonitorSelection()}
 });
 
-let autoMonitor=null,autoMonitorReading=false;
+let autoMonitor=null,autoMonitorReading=false,autoRenderSignature='';
 const autoStates={UNKNOWN:'尚未评估',PENDING:'等待评估',BLOCKED:'评估阻塞',RISK_REVIEW_REQUIRED:'需人工风险复核',REVIEW_FLAGS:'存在复核标志',NO_MODEL_FLAGS:'模型未报告标志（未验收）'};
 function autoObservationMatches(o,x,now=Date.now()){
  if(!o||!x||!monitorFresh(x,now)||!rangeFresh(x,now)||o.expiresAt<=now||!Number.isSafeInteger(o.expiresAt)||x.managementGate?.status!=='PREFLIGHT_MATCHED_UNVERIFIED'||x.managementGate.expiresAt<=now)return false;
@@ -395,12 +395,13 @@ function autoObservationMatches(o,x,now=Date.now()){
  return o.key===[m.slot,m.rawHash,x.slot,x.rawHash,g.reviewHash,g.policyHash].join(':');
 }
 function renderAutoMonitor(){
+ const a=autoMonitor?.pool===target?autoMonitor:null;
+ const signature=JSON.stringify([a,positionSelected,[...monitoring].map(([id,x])=>[id,autoObservationMatches(a?.current?.[id],x)])]);if(signature===autoRenderSignature)return;autoRenderSignature=signature;
  const rows=$('autoMonitorRows'),events=$('autoMonitorEvents');rows.replaceChildren();events.replaceChildren();
- const a=autoMonitor;
  put('autoMonitorStatus',!a?'监控接口不可用':a.storageError?'记录服务异常':!a.enabled?'持续评估未开启':a.lastCycleAt?'最近轮询 '+new Date(a.lastCycleAt).toLocaleTimeString():'等待首次轮询');
  for(const [id,x] of monitoring){
   const tr=document.createElement('tr'),o=a?.current?.[id],matched=!!a?.enabled&&!a.storageError&&autoObservationMatches(o,x),current=matched?o:null;
-  const status=current?.status??(a?.enabled&&!a.storageError&&o?.status==='BLOCKED'?'BLOCKED':'UNKNOWN');
+  const status=current?.status??(a?.enabled&&!a.storageError&&['BLOCKED','PENDING'].includes(o?.status)?o.status:'UNKNOWN');
   cell(tr,id.slice(0,7)+'…'+id.slice(-5)).title=id;const stateCell=cell(tr,autoStates[status]??'未知');if(status==='RISK_REVIEW_REQUIRED')stateCell.style.color='var(--warn)';
   cell(tr,fmt(current?.stressLossSol));cell(tr,current?.worstInventoryRatio==null?'—':fmt(current.worstInventoryRatio*100)+'%');cell(tr,current?new Date(current.observedAt).toLocaleTimeString():'—');rows.append(tr);
  }
