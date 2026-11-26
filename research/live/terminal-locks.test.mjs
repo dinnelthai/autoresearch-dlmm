@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createTerminalLocks} from './terminal-locks.mjs';
+test('builder excludes component captures and model runners until released',()=>{const l=createTerminalLocks(),release=l.acquire('builder');assert.ok(release);for(const k of ['analysis','replay','snapshot','holder','external','builder'])assert.equal(l.acquire(k),null);const p=l.acquire('positionRead');assert.ok(p);p();release();assert.ok(l.acquire('analysis'))});
+test('monitor/manual analysis and historical replay are mutually exclusive in both directions',()=>{const l=createTerminalLocks(),r=l.acquire('replay');assert.equal(l.acquire('analysis'),null);r();const a=l.acquire('analysis');assert.equal(l.acquire('replay'),null);assert.equal(l.acquire('builder'),null);a();assert.ok(l.acquire('replay'))});
+test('wallet review locks share a lease; duplicate release cannot unlock a new job',()=>{const l=createTerminalLocks(),a=l.acquire('review');assert.equal(l.acquire('walletEvidence'),null);a();const b=l.acquire('walletEvidence');a();assert.equal(l.acquire('review'),null);b();assert.ok(l.acquire('review'));assert.throws(()=>l.acquire('unknown'))});
+test('failed acquisition is atomic and unrelated jobs are not blocked',()=>{const l=createTerminalLocks(),a=l.acquire('holder');assert.equal(l.acquire('builder'),null);const r=l.acquire('analysis');assert.ok(r);r();const p=l.acquire('positionAccounting');assert.ok(p);p();a();assert.ok(l.acquire('builder'))});
