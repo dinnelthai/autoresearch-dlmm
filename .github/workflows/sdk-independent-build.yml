@@ -145,7 +145,13 @@ jobs:
           assert.equal(health.pool,'EXWUUH9Au6XimBjgaJ5RxP1ZfWz6JVxzjs8cNRyyxLNr');
           assert.equal(health.executionReady,false);
           const html=await fetch(origin+'/',{signal:AbortSignal.timeout(5000)});
-          assert.equal(html.status,200);assert.match(await html.text(),/Flow DLMM Terminal/);
+          assert.equal(html.status,200);
+          const markup=Buffer.from(await html.arrayBuffer());
+          const {createHash}=await import('node:crypto');
+          assert.equal(createHash('sha256').update(markup).digest('hex'),health.htmlHash,'Served HTML differs from startup fingerprint');
+          assert.ok(markup.toString('utf8').includes('<title>Flow · DLMM Terminal</title>'),'Terminal title missing');
+          const css=await fetch(origin+'/assets/terminal.css',{signal:AbortSignal.timeout(5000)});
+          assert.equal(css.status,200);assert.ok((await css.arrayBuffer()).byteLength>0,'Terminal CSS empty');
           const state=await get('/api/terminal/state');
           assert.equal(state.status,'BLOCKED');assert.equal(state.reason,'STATE_UNAVAILABLE');assert.equal(state.market,null);
           const paper=await get('/api/terminal/paper-status');
