@@ -38,15 +38,33 @@ $('paperAutoRefresh').addEventListener('click',refreshPaperAuto);
 $('paperAutoStart').addEventListener('click',async()=>{
  if(paperAutoBusy)return;
  const p=target;try{
-  if(!draft||draft.pool!==p||!canAnalyze()||!serviceMarket||!serviceReview)throw Error('请先在策略页准备有效草稿和市场审阅');
+  if(!draft||draft.pool!==p)throw Error('请先在策略页为当前 Pool 准备虚拟本金草稿');const d=draft;
   const dd=number('paperAutoDrawdown')*100,gap=number('paperAutoGap');if(!Number.isFinite(dd)||Math.abs(dd-Math.round(dd))>1e-8||dd<1||dd>10000||!Number.isInteger(gap))throw Error('风险参数无效');
   const policy={maxDrawdownBps:Math.round(dd),maxGapSeconds:gap,maxLossSolRaw:paperSolRaw($('paperAutoLoss').value.trim()),exitCostSolRaw:paperSolRaw($('paperAutoExitCost').value.trim())};
   if($('paperAdaptiveEnabled').checked)policy.adaptive={cooldownSeconds:number('paperAdaptiveCooldown'),maxRebalances:number('paperAdaptiveCount'),maxTurnoverSol:number('paperAdaptiveTurnover')};
   paperAutoBusy=true;paperAutoGeneration++;$('paperAutoStart').disabled=true;put('paperAutoStatus','正在生成并冻结虚拟方案…');
-  const res=await terminalPost('/api/terminal/paper-start',{draft,marketSlot:serviceMarket.slot,marketRawHash:serviceMarket.rawHash,reviewHash:serviceReview.reviewHash,policy},45000),r=await res.json();
+  const cr=await terminalGet('/api/terminal/paper-context',p),ctx=await cr.json();
+  if(p!==target||draft!==d)throw Error('Pool 或草稿已变化');
+  if(!cr.ok||ctx.scope!=='PAPER_OPEN_CONTEXT_RESEARCH_ONLY'||ctx.pool!==p||ctx.executionReady!==false||ctx.pnlReady!==false||!hash(ctx.marketRawHash)||!hash(ctx.reviewHash)||!Number.isSafeInteger(ctx.marketSlot)||!(ctx.expiresAt>Date.now()))throw Error(ctx.gaps?.[0]??'当前 Pool 缺少匹配审阅');
+  const res=await terminalPost('/api/terminal/paper-start',{draft:d,marketSlot:ctx.marketSlot,marketRawHash:ctx.marketRawHash,reviewHash:ctx.reviewHash,policy},45000),r=await res.json();
   if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'启动失败');renderAutoPaper(validateAutoPaper(r,p))
  }catch(e){if(p===target)put('paperAutoStatus','启动失败：'+e.message)}
  finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}
 });
-$('paperAutoPause').addEventListener('click',async()=>{if(paperAutoBusy||!paperAutoData?.running||paperAutoData.pool!==target)return;const p=target,id=paperAutoData.id;paperAutoBusy=true;paperAutoGeneration++;$('paperAutoPause').disabled=true;try{const res=await terminalPost('/api/terminal/paper-pause',{id},10000),r=await res.json();if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'暂停失败');renderAutoPaper(validateAutoPaper(r,p))}catch(e){if(p===target)put('paperAutoStatus','暂停失败：'+e.message)}finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}});
+$('paperAutoPause').addEventListener('click',async()=>{if(paperAutoBusy||!paperAutoData?.running||paperAutoData.pool!==target)return;const p=target,id=paperAutoData.id;paperAutoBusy=true;paperAutoGeneration++;$('paperAutoPause').disabled=true;try{const res=await terminalPost('/api/terminal/paper-pause',{pool:p,id},10000),r=await res.json();if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'暂停失败');renderAutoPaper(validateAutoPaper(r,p))}catch(e){if(p===target)put('paperAutoStatus','暂停失败：'+e.message)}finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}});
 setInterval(refreshPaperAuto,15000);
+
+let paperPoolsReading=false;
+async function refreshPaperPools(){
+ if(paperPoolsReading||page!=='performance'||$('paperPerformance').hidden)return;
+ paperPoolsReading=true;const body=$('paperPoolsRows');
+ try{
+  const res=await terminalGet('/api/terminal/paper-pools',null),r=await res.json();
+  if(!res.ok||r.scope!=='PAPER_MULTI_POOL_RESEARCH_ONLY'||r.executionReady!==false||r.pnlReady!==false||!Array.isArray(r.pools)||r.pools.length>9||new Set(r.pools.map(x=>x.pool)).size!==r.pools.length||r.pools.some(x=>!addr(x.pool)||x.pnlReady!==false||x.executionReady!==false||!Array.isArray(x.rows)))throw Error('多池状态无效');
+  body.replaceChildren();for(const x of r.pools){const tr=document.createElement('tr');cell(tr,x.pool);cell(tr,x.status+(x.reason?' · '+x.reason:''));cell(tr,x.snapshotCount??'—');cell(tr,paperSignedSol(x.rows.find(v=>v.mode==='adaptive')?.latest?.excessVsHoldYRaw));cell(tr,x.checkpointFresh?'最近观察 · 未验证':'历史或不可用');body.append(tr)}
+  put('paperPoolsStatus',r.pools.length+' 个配置池 · '+r.pools.filter(x=>x.running===true).length+' 个活动实验 · 独立观察');
+ }catch(e){body.replaceChildren();put('paperPoolsStatus','读取失败：'+e.message)}
+ finally{paperPoolsReading=false}
+}
+$('paperAutoRefresh').addEventListener('click',refreshPaperPools);
+setInterval(refreshPaperPools,15000);

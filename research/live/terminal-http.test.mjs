@@ -50,6 +50,7 @@ test('real localhost server: stale/missing state, scoped fixture, request guards
   const input=await get('/api/terminal/input-status');assert.equal(input.body.marketSlot,1);assert.equal(input.body.modelInputReady,false);
   const configuredDir=join(dir,'data','live',configured);await mkdir(configuredDir,{recursive:true});await writeFile(join(configuredDir,'state.json'),JSON.stringify(state(configured,Date.now()-1000)));
   const scoped=await get('/api/terminal/state?pool='+configured);assert.equal(scoped.body.scope,'SCOPED_RESEARCH_ONLY');assert.equal(scoped.body.pool,configured);assert.equal(scoped.body.market.slot,1);assert.equal(scoped.body.executionReady,false);
+  const paper=await get('/api/terminal/paper-pools');assert.equal(paper.body.scope,'PAPER_MULTI_POOL_RESEARCH_ONLY');assert.equal(paper.body.pools.length,2);assert.equal(paper.body.pnlReady,false);const paperScoped=await get('/api/terminal/paper-status?pool='+configured);assert.equal(paperScoped.body.pool,configured);assert.equal(paperScoped.body.status,'NO_EXPERIMENT');
   const catalog=await get('/api/terminal/research-catalog?pool='+configured);assert.equal(catalog.body.pool,configured);assert.deepEqual(catalog.body.entries,[]);
   const again=await get('/api/terminal/state?pool='+other);assert.equal(again.body.market,null);
   assert.equal((await get('/api/terminal/state')).body.pool,pool);

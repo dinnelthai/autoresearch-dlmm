@@ -1,4 +1,4 @@
-// Single configured pool, local virtual experiment scheduler. No wallet or RPC writes.
+// One configured pool per isolated virtual experiment service. No wallet or RPC writes.
 import {mkdir,open,writeFile,rename,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -23,10 +23,11 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
  async function reader(){return createPaperSnapshotReader({ROOT,io,idl:await io.safeDataPath(idlPath)})}
  async function verifyCode(){assert((await sourceInventory(ROOT)).backendHash===backendHash,'PAPER_AUTO_CODE_CHANGED')}
  async function exclusive(fn){assert(!closed&&!isStopping()&&!flight,'PAPER_AUTO_BUSY');const task=(async()=>{await init();const p=join(dir,'writer.lock'),h=await open(p,'wx',0o600);try{return await fn()}finally{try{await h.close()}finally{await unlink(p)}}})();flight=task;try{return await task}finally{if(flight===task)flight=null}}
- async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_PRIMARY_POOL_ONLY');const a=await active();if(!a)return {schemaVersion:1,scope:'PAPER_AUTO_RESEARCH_ONLY',pool,status:'NO_EXPERIMENT',running:false,checkpointFresh:false,rows:[],executionReady:false,decisionReady:false,pnlReady:false,protocolExact:false};const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,current,{now:Date.now(),maxAgeMs})}
+ async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const a=await active();if(!a)return {schemaVersion:1,scope:'PAPER_AUTO_RESEARCH_ONLY',pool,status:'NO_EXPERIMENT',running:false,checkpointFresh:false,rows:[],executionReady:false,decisionReady:false,pnlReady:false,protocolExact:false};const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,current,{now:Date.now(),maxAgeMs})}
+ async function context(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const m=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs),r=await loadReview(m,Date.now());assert(r.expiresAt>Date.now(),'PAPER_AUTO_REVIEW_EXPIRED');return {schemaVersion:1,scope:'PAPER_OPEN_CONTEXT_RESEARCH_ONLY',pool,marketSlot:m.slot,marketRawHash:m.rawHash,reviewHash:r.reviewHash,expiresAt:Math.min(r.expiresAt,m.receivedAt+maxAgeMs),executionReady:false,decisionReady:false,pnlReady:false}}
  async function start(body){return exclusive(async()=>{
   const a=await active();assert(!a?.running,'PAPER_AUTO_ALREADY_RUNNING');
-  assert(body?.draft?.pool===pool&&body.policy&&body.draft?.riskConfig?.maxBinShare<=.1,'PAPER_AUTO_PRIMARY_POOL_OR_SHARE_LIMIT');
+  assert(body?.draft?.pool===pool&&body.policy&&body.draft?.riskConfig?.maxBinShare<=.1,'PAPER_AUTO_POOL_OR_SHARE_LIMIT');
   await verifyCode();
   const r=await preview(body,'plans'),b=r.terminalBinding;
   assert(r.status==='RESEARCH_DIAGNOSTIC_UNVERIFIED'&&r.planPreview?.status==='RESEARCH_PLAN_PREVIEW_UNVERIFIED'&&b?.scope==='RESEARCH_ONLY'&&b.expiresAt>Date.now(),'PAPER_AUTO_PLAN_BLOCKED');
@@ -39,7 +40,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   assert(state.rows[0].status==='HOLD_ONLY'&&state.rows.some(x=>x.status==='OPEN_PROXY'),'PAPER_AUTO_NO_MAPPED_LP_PLAN');
   await verifyCode();await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};return get();
  })}
- async function pause(body){return exclusive(async()=>{const a=await active();assert(a&&body?.id===a.id,'PAPER_AUTO_EXPERIMENT_CHANGED');await atomic(pointer,{...a,running:false});job={id:a.id,status:'PAUSED',running:false};return get()})}
+ async function pause(body){return exclusive(async()=>{const a=await active();assert(a&&body?.pool===pool&&body?.id===a.id,'PAPER_AUTO_EXPERIMENT_CHANGED');await atomic(pointer,{...a,running:false});job={id:a.id,status:'PAUSED',running:false};return get()})}
  async function tick(){
   if(closed||isStopping()||flight)return;
   try{await exclusive(async()=>{
@@ -75,5 +76,5 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
  }
  function startScheduler(){if(timer||closed)return;timer=setInterval(()=>{void tick()},intervalMs);void tick()}
  async function stop(){closed=true;if(timer)clearInterval(timer);timer=null;if(flight)await flight.catch(()=>{})}
- return {get,start,pause,tick,startScheduler,stop};
+ return {get,context,start,pause,tick,startScheduler,stop};
 }

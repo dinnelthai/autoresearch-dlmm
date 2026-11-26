@@ -36,6 +36,8 @@ return async function handle(req,res){
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
   if(req.method==='GET'&&req.url==='/health'){send(res,200,{status:'RUNNING',pool,...startup,decisionReady:false,executionReady:false});return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/research-catalog'){send(res,200,{pool:scope,scope:'HISTORICAL_ARCHIVE_INDEX_ONLY',entries:await archives.list(scope),decisionReady:false,executionReady:false});return}
+  if(req.method==='GET'&&req.url==='/api/terminal/paper-pools'){send(res,200,await paperService.list());return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/paper-context'){send(res,200,await paperService.context(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/paper-status'){send(res,200,await paperService.get(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/input-status'){send(res,200,await researchInputs(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/monitor'){send(res,200,scope===pool?publicMonitor():{pool:scope,enabled:false,current:{},events:[],decisionReady:false,executionReady:false});return}

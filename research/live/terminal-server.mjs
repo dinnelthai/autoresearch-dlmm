@@ -15,6 +15,7 @@ import {createTerminalLocks} from './terminal-locks.mjs';
 import {loadTerminalAssets,terminalScriptSource,verifyTerminalMarkup} from './terminal-assets.mjs';
 import {sourceInventory} from './source-inventory.mjs';
 import {createTerminalPaperService} from './terminal-paper-service.mjs';
+import {paperPoolConfig,createPaperPoolManager} from './paper-pool-manager.mjs';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
 import {poolAddress} from './terminal-core.mjs';
@@ -48,7 +49,13 @@ const marketObservations=createMarketObservationService({ROOT,DATA,cfg,maxAgeMs,
 const {holderObservation,externalObservation}=marketObservations;
 const {researchInputs,saveResearchSnapshot,replayResearchSnapshot,buildResearchCandidate,loadResearchRun}=createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,run,marketObservations});
 const {readPositionIndex,readPositionDetail,positionAccounting}=createPositionService({ROOT,DATA,cfg,previewCfg,maxAgeMs,validateScope,loadState,safeDataPath,boundedRead,run});
-const paperService=createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io:{safeDataPath,boundedRead,run},loadState,preview,loadReview,isStopping});
+const paperEntries=paperPoolConfig(pool,additionalPools,cfg.paperReviews??{});
+assert(!cfg.review||!paperEntries.some(e=>e.review===cfg.review),'PAPER_POOL_REVIEW_REUSED');
+const paperService=createPaperPoolManager({entries:paperEntries,makeService:entry=>{
+ const scope=entry.pool,scopedLoad=()=>loadState(scope);
+ const scopedReview=scope===pool?review:createReviewService({DATA,cfg:{review:entry.review},pool:scope,maxAgeMs,loadState:scopedLoad,safeDataPath,boundedRead,run,validateScope,marketSummary});
+ return createTerminalPaperService({ROOT,DATA,pool:scope,maxAgeMs,backendHash,io:{safeDataPath,boundedRead,run},loadState:scopedLoad,preview:scopedReview.preview,loadReview:scopedReview.loadReview,isStopping});
+}});
 const server=createServer(createTerminalHandler({paperService,pool,port,origin,html,assets,startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor:monitor.publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}));
 server.requestTimeout=45000;server.headersTimeout=10000;server.keepAliveTimeout=2000;server.maxConnections=16;
 await new Promise((ok,fail)=>{server.once('error',fail);server.listen(port,'127.0.0.1',ok)});
