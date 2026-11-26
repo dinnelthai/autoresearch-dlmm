@@ -24,10 +24,10 @@
 | T17 | End-to-end acceptance | Safety and evidence; any funded trial requires separate approval | Pending |
 
 ## Gates
-T01–T06 implement the v0.8/v1.1 raw-data and reconciliation requirements; do not assert full Gate A until T02–03 pass, nor B/C until T04–05 pass. T07 onward requires accepted upstream evidence. T11 requires out-of-sample evaluation and quality thresholds; successful software execution does not prove profitability. Missing or unsupported data stops dependent decisions rather than producing invented metrics. No unauthorized signing, no private keys in logs or repository. Preserve research engine and old Python heuristic separately.
+T01–T06 implement the v0.8/v1.1 raw-data and reconciliation requirements; do not assert full Gate A until T02–03 pass, nor B/C until T04–05 pass. Implementation may proceed in dependency order using explicit contracts even if live environment evidence is blocked. Runtime activation, live acceptance, and funded operations still require accepted upstream evidence. T11 requires out-of-sample evaluation and quality thresholds; successful software execution does not prove profitability. Missing or unsupported data stops dependent decisions rather than producing invented metrics. No unauthorized signing, no private keys in logs or repository. Preserve research engine and old Python heuristic separately.
 
 ## Current action
-First obtain a real read-only finalized Pool snapshot, then derive and validate mint/vault/bitmap/bin-array addresses using pinned SDK. Sample candidate from prior research: 6HfgUd7WLGEAsmYR2NWu2H11qpowzq1gXQGbUzYrwrb; not a promise of eligibility or availability. Local RPC network access is required. Historical state cannot be recovered from the current snapshot alone. Record actual acceptance results and advance only on evidence.
+First obtain a real read-only finalized Pool snapshot, then derive and validate mint/vault/bitmap/bin-array addresses using pinned SDK. Sample candidate from prior research: 6HfgUd7WLGEAsmYR2NWu2H11qpowzq1gXQGbUzYrwrb; not a promise of eligibility or availability. Local RPC network access is required. Historical state cannot be recovered from the current snapshot alone. Record actual acceptance results in [integration-handoff.md](integration-handoff.md). Advance code independently of environment blockers; advance acceptance only on evidence.
 
 ## T01 verification — 2026-11-26
 - Node v22.16.0; local capture file Git blob SHA matched main: 281a6b5b622dee86b021409442ad526f88f3e420.
@@ -36,3 +36,8 @@ First obtain a real read-only finalized Pool snapshot, then derive and validate 
 - Actual public mainnet RPC request: DNS resolution failed in execution environment. CLI exit 1, status BLOCKED, failureStage network. No account data or slot received.
 - On a network-enabled machine, run `node research/capture-accounts.mjs --pool 6HfgUd7WLGEAsmYR2NWu2H11qpowzq1gXQGbUzYrwrb` (optionally set SOLANA_RPC_URL to an authorized RPC). Provide the resulting manifest.json and accounts.json, if present; do not include credentials. Confirm source/slot before T02; captured bytes alone are not a verified Meteora account.
 - Gate A remains unpassed. No strategy or PnL claims.
+
+## Workflow amendment (2026-11-26)
+- Maintain two independent statuses: implementation (pending / in progress / code ready) and live integration (pending / blocked / pass / fail). Code ready is not live pass.
+- Centralize all environment-dependent work in [integration-handoff.md](integration-handoff.md) for Codex. Continue code in dependency order with no fabricated production data.
+- Before modifying business UI (T12–T13), produce a separate prototype, review it, and keep the official research interface unchanged until the business layout is accepted.
