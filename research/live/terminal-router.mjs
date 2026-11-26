@@ -2,8 +2,9 @@
 import {randomUUID} from 'node:crypto';
 import {currentMarket,scopedTerminalRequest} from './terminal-core.mjs';
 import {diagnosticLog} from './diagnostic-log.mjs';
+import {blockedResponse,errorCode} from './research-contract.mjs';
 export function createTerminalHandler({pool,port,origin,html,assets=new Map(),startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview}){
- function blocked(reason){return {schemaVersion:1,pool,status:'BLOCKED',decisionReady:false,executionReady:false,gaps:[reason]}}
+ const blocked=reason=>blockedResponse(pool,reason);
  const postRoutes=new Map([
   ['/api/terminal/position-accounting',{lock:"positionAccounting",reason:"POSITION_ACCOUNTING_BUSY",handle:positionAccounting}],
   ['/api/terminal/wallet-positions',{lock:"positionRead",reason:"POSITION_CAPTURE_BUSY",handle:readPositionIndex}],
@@ -49,6 +50,6 @@ return async function handle(req,res){
    }
   }
   send(res,404,blocked('NOT_FOUND'));
- }catch(e){const m=String(e.message),reason=/^[A-Z0-9_]{1,96}$/.test(m)?m:'INPUT_OR_EVIDENCE_VALIDATION_FAILED';diagnosticLog({component:'TERMINAL',event:'REQUEST_VALIDATION',status:'BLOCKED',reason,requestId,durationMs:Date.now()-startedAt});send(res,400,{...blocked(reason),requestId})}
+ }catch(e){const reason=errorCode(e);diagnosticLog({component:'TERMINAL',event:'REQUEST_VALIDATION',status:'BLOCKED',reason,requestId,durationMs:Date.now()-startedAt});send(res,400,{...blocked(reason),requestId})}
 };
 }

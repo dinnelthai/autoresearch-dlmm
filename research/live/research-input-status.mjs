@@ -2,8 +2,7 @@
 import {featureProjection} from './market-features.mjs';
 import {distinctReferenceArtifacts} from './quote-evidence.mjs';
 const positive=v=>typeof v==='string'&&/^\d{1,20}$/.test(v)&&BigInt(v)<(1n<<64n);
-const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
-const finite=(v,lo,hi=Infinity)=>typeof v==='number'&&Number.isFinite(v)&&v>=lo&&v<=hi;
+import {hash,finite} from './research-contract.mjs';
 const fresh=(v,now,max)=>Number.isSafeInteger(v)&&v<=now&&now-v<=max;
 const evidence=v=>typeof v?.path==='string'&&hash(v?.sha256);
 export function boundedSwapObservation(stream,pool,now,maxAgeMs){

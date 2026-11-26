@@ -7,12 +7,13 @@ import {inputStatus} from './research-input-status.mjs';
 import {assembleCandidate,reviewStructureRequired} from './evidence-builder.mjs';
 import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-snapshot.mjs';
 import {replayRequest,replayResult} from './research-replay.mjs';
-import {assert,sha} from './terminal-runtime.mjs';
+import {assert,errorCode,hash} from './research-contract.mjs';
+import {sha} from './evidence-digest.mjs';
 export function createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,run,marketObservations}){
 async function researchInputs(scope){
  const now=Date.now();let state=null,m=null,review=null,reason=null;
  try{state=await loadState(scope);m=currentMarket(state,scope,now,maxAgeMs)}catch{reason='MARKET_CAPTURE_UNAVAILABLE'}
- if(m&&snapshotReviewPath(scope)){try{review=(await loadReview(m,now,snapshotReviewPath(scope))).review}catch(e){reason=e.message}}
+ if(m&&snapshotReviewPath(scope)){try{review=(await loadReview(m,now,snapshotReviewPath(scope))).review}catch(e){reason=errorCode(e,'REVIEW_VALIDATION_FAILED')}}
  else if(m)reason='POOL_RESEARCH_NOT_CONFIGURED';
  return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:marketObservations.external(),holder:m?marketObservations.holder(scope,m.mintX):null,review,reviewReason:reason,now,maxAgeMs});
 }
@@ -60,7 +61,7 @@ async function replayResearchSnapshot(body){
  assert(sha(await boundedRead(await safeDataPath(join(source,'manifest.json')),16*1024*1024))===sha(files.get('capture-manifest.json')),'REPLAY_CAPTURE_MANIFEST_CHANGED');
  assert(sha(await boundedRead(await safeDataPath(join(source,'accounts.json')),32*1024*1024))===x.market.rawHash,'REPLAY_CAPTURE_HASH_MISMATCH');
  let budget=64*1024*1024;for(const r of x.evidence){const b=await boundedRead(await safeDataPath(r.path),Math.min(budget,8*1024*1024));assert(sha(b)===r.sha256,'REPLAY_EVIDENCE_CHANGED');budget-=b.length}
- const sourcePaths=[...engineSourcePaths,'research/integer.mjs','research/live/analyze-state.mjs','research/live/engine-input.mjs','research/live/preview-plans.mjs','research/live/research-replay.mjs','research/live/research-snapshot.mjs','research/live/terminal-core.mjs','research/live/quote-evidence.mjs','research/live/external-market.mjs','research/live/reference-math.mjs','research/live/research-input-status.mjs','research/live/market-features.mjs','research/live/evidence-builder.mjs','research/live/preview-management.mjs','research/live/research-catalog.mjs','research/live/terminal-research-service.mjs','research/live/terminal-market-service.mjs','research/live/terminal-runtime.mjs'];
+ const sourcePaths=[...engineSourcePaths,'research/integer.mjs','research/live/analyze-state.mjs','research/live/engine-input.mjs','research/live/preview-plans.mjs','research/live/research-replay.mjs','research/live/research-snapshot.mjs','research/live/terminal-core.mjs','research/live/quote-evidence.mjs','research/live/external-market.mjs','research/live/reference-math.mjs','research/live/research-input-status.mjs','research/live/market-features.mjs','research/live/evidence-builder.mjs','research/live/preview-management.mjs','research/live/research-catalog.mjs','research/live/terminal-research-service.mjs','research/live/terminal-market-service.mjs','research/live/terminal-runtime.mjs','research/live/research-contract.mjs','research/live/evidence-digest.mjs'];
  const code=()=>Promise.all(sourcePaths.map(async path=>({path,sha256:sha(await readFile(join(ROOT,path)))})));
  const sourceHashes=await code(),base=join(DATA,'research-runs',scope);await mkdir(base,{recursive:true,mode:0o700});
  const tmp=await mkdtemp(join(base,'.pending-'));
@@ -85,7 +86,7 @@ async function buildResearchCandidate(body){
  assert(body.marketSlot===m.slot&&body.marketRawHash===m.rawHash,'MARKET_CHANGED_REFRESH_REQUIRED');
  if(body.draft)requestFromDraft(body.draft,m);
  const sourceErrors=[];let clock=null;
- const reason=(name,e)=>sourceErrors.push({source:name,reason:/^[A-Z0-9_]{1,100}$/.test(e.message)?e.message:'SOURCE_CAPTURE_FAILED'});
+ const reason=(name,e)=>sourceErrors.push({source:name,reason:errorCode(e,'SOURCE_CAPTURE_FAILED')});
  // Read independent sources concurrently; do not silently substitute later market state.
  await Promise.all([
   marketObservations.captureMarketTime(m).then(x=>{clock=x}).catch(e=>reason('CHAIN_TIME',e)),
@@ -100,13 +101,13 @@ async function buildResearchCandidate(body){
  try{await writeFile(join(dir,'manifest.json'),JSON.stringify(candidate,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(dir,dest)}catch(e){await rm(dir,{recursive:true,force:true});throw e}
  await archives.add({kind:'candidate',pool:scope,id:candidate.candidateId,snapshotId:snapshot.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:at,status:'RESEARCH_CANDIDATE_ONLY'});
  let replay=null,replayReason=null;
- if(body.draft&&candidate.replayEligible){try{replay=await replayResearchSnapshot({pool:scope,snapshotId:snapshot.snapshotId,draft:body.draft})}catch(e){replayReason=/^[A-Z0-9_]{1,100}$/.test(e.message)?e.message:'REPLAY_VALIDATION_FAILED'}}
+ if(body.draft&&candidate.replayEligible){try{replay=await replayResearchSnapshot({pool:scope,snapshotId:snapshot.snapshotId,draft:body.draft})}catch(e){replayReason=errorCode(e,'REPLAY_VALIDATION_FAILED')}}
  else replayReason=body.draft?'MATCHED_REVIEW_REQUIRED':'EXPLICIT_RESEARCH_BUDGET_REQUIRED';
  return {...candidate,capture:relative(ROOT,dest),replay,replayReason};
 }
 
 async function loadResearchRun(body){
-   const scope=validateScope(body.pool),id=body.runId;assert(typeof id==='string'&&/^[0-9a-f]{64}$/.test(id),'INVALID_RUN_ID');
+   const scope=validateScope(body.pool),id=body.runId;assert(hash(id),'INVALID_RUN_ID');
    const dir=await safeDataPath(join(DATA,'research-runs',scope,id)),m=JSON.parse(await boundedRead(await safeDataPath(join(dir,'manifest.json')),128*1024)),{runId,...rest}=m;
    assert(runId===id&&sha(JSON.stringify(rest))===id&&m.pool===scope&&m.scope==='HISTORICAL_RESEARCH_ONLY'&&m.executionReady===false&&m.decisionReady===false&&m.pnlReady===false,'RUN_MANIFEST_INVALID');
    const bytes=await boundedRead(await safeDataPath(join(dir,'report.json')),8*1024*1024),reqBytes=await boundedRead(await safeDataPath(join(dir,'request.json')),32768);

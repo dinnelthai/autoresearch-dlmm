@@ -7,7 +7,8 @@ import {buildReview,assertSameReview} from './review-core.mjs';
 import {allocationDiagnostic} from './allocation-diagnostic.mjs';
 import {sdkWeightDiagnostic} from './sdk-weight-diagnostic.mjs';
 import {validateWalletEvidence,walletReview} from './wallet-evidence-core.mjs';
-import {assert,sha} from './terminal-runtime.mjs';
+import {assert,errorCode,sameSnapshot} from './research-contract.mjs';
+import {sha} from './evidence-digest.mjs';
 export function createReviewService({DATA,cfg,pool,maxAgeMs,loadState,safeDataPath,boundedRead,run,validateScope,marketSummary}){
 // Review availability is a preflight, not verification of its underlying evidence.
 async function loadReview(m,now,path=cfg.review){
@@ -34,7 +35,7 @@ async function managementContext(s,m,address,now){
 async function overview(){
  const s=await loadState(),now=Date.now();assert(s.pool===pool&&s.schemaVersion===1&&s.decisionReady===false&&Number.isSafeInteger(s.sequence),'STATE_IDENTITY_MISMATCH');const streams=Object.fromEntries(Object.entries(s.streams??{}).map(([k,v])=>[k,{status:v.status,receivedAt:v.receivedAt??null,locallyFresh:Number.isSafeInteger(v.receivedAt)&&v.receivedAt<=now&&now-v.receivedAt<=maxAgeMs,...(k.startsWith('history:')?{historyStatus:v.evidence?.historyStatus??null,repairStatus:v.evidence?.repair?.status??s.history?.[k.slice(8)]?.repair?.status??null,repairCapture:v.evidence?.repairCapture===true,historyComplete:false,gapCount:v.evidence?.gapCount??v.evidence?.decoded?.gaps?.length??null,gapReasons:v.evidence?.gapReasons??[...new Set((v.evidence?.decoded?.gaps??[]).map(g=>g.reason))].slice(0,20),signatureCount:v.evidence?.signatureCount??v.evidence?.decoded?.transactions?.length??null}: {})}]));
  const positions=[];for(const [k,v] of Object.entries(s.streams??{})){const p=v.evidence?.report;if(k.startsWith('position:')&&v.status==='CAPTURED_UNVERIFIED'&&streams[k].locallyFresh&&p?.pool===pool&&p.position===k.slice(9)&&p.status==='POSITION_CALCULATED_UNVERIFIED')positions.push(p)}
- let market=null,marketModel=null,reason=null,reviewGate={status:'BLOCKED',reason:'MARKET_UNAVAILABLE'};try{const m=currentMarket(s,pool,now,maxAgeMs);marketModel=m;market=marketSummary(m);try{const r=await loadReview(m,now);reviewGate={status:'PREFLIGHT_MATCHED_UNVERIFIED',reviewHash:r.reviewHash,expiresAt:r.expiresAt}}catch(e){reviewGate={status:'BLOCKED',reason:e.message}}}catch(e){reason=e.message}
+ let market=null,marketModel=null,reason=null,reviewGate={status:'BLOCKED',reason:'MARKET_UNAVAILABLE'};try{const m=currentMarket(s,pool,now,maxAgeMs);marketModel=m;market=marketSummary(m);try{const r=await loadReview(m,now);reviewGate={status:'PREFLIGHT_MATCHED_UNVERIFIED',reviewHash:r.reviewHash,expiresAt:r.expiresAt}}catch(e){reviewGate={status:'BLOCKED',reason:errorCode(e,'REVIEW_VALIDATION_FAILED')}}}catch(e){reason=errorCode(e,'MARKET_UNAVAILABLE')}
  const monitoring=[];
  const addresses=new Set([...Object.keys(s.streams??{}).filter(k=>k.startsWith('position:')).map(k=>k.slice(9)),...Object.keys(cfg.managementPolicies??{})]);
  for(const address of addresses){
@@ -46,8 +47,8 @@ async function overview(){
    try{
     assert(marketModel,'MARKET_UNAVAILABLE');const v=await managementContext(s,marketModel,address,now);
     item.managementGate={status:'PREFLIGHT_MATCHED_UNVERIFIED',policyHash:v.policyHash,reviewHash:v.reviewHash,expiresAt:v.expiresAt,request:v.request};
-   }catch(e){item.managementGate={status:'BLOCKED',reason:e.message}}
-  }catch(e){item.reason=e.message;item.managementGate.reason=e.message}
+   }catch(e){item.managementGate={status:'BLOCKED',reason:errorCode(e,'MANAGEMENT_VALIDATION_FAILED')}}
+  }catch(e){item.reason=errorCode(e,'POSITION_CAPTURE_UNAVAILABLE');item.managementGate.reason=item.reason}
   monitoring.push(item);
  }
  return {pool,sequence:s.sequence??null,monitoring,status:market?'CAPTURED_UNVERIFIED':'BLOCKED',reason,market,reviewGate,positions,streams,decisionReady:false,executionReady:false,freshnessBasis:'LOCAL_RECEIPT_ONLY'};
@@ -69,8 +70,8 @@ async function preview(body,mode='plans'){
   for(const [name,data] of [['state',JSON.stringify(s)],['request',requestJson],['review',reviewBytes]])await writeFile(join(dir,name+'.json'),data,{mode:0o600});
   const r=await run(['--state',join(dir,'state.json'),'--request',join(dir,'request.json'),'--review',join(dir,'review.json'),mode==='management'?'--management':'--plans']);
   assert(r.pool===pool&&r.decisionReady===false&&r.executionReady===false,'ANALYSIS_CONTRACT_MISMATCH');
-  if(r.market)assert(r.market.slot===m.slot&&r.market.rawHash===m.rawHash,'ANALYSIS_SNAPSHOT_MISMATCH');
-  const latestState=await loadState(),latest=currentMarket(latestState,pool,Date.now(),maxAgeMs);assert(latest.slot===m.slot&&latest.rawHash===m.rawHash,'MARKET_CHANGED_DURING_ANALYSIS');const after=mode==='management'?await managementContext(latestState,latest,body.position,Date.now()):await loadReview(latest,Date.now());assert(after.reviewHash===reviewHash,'REVIEW_CHANGED_DURING_ANALYSIS');
+  if(r.market)assert(sameSnapshot(r.market,m),'ANALYSIS_SNAPSHOT_MISMATCH');
+  const latestState=await loadState(),latest=currentMarket(latestState,pool,Date.now(),maxAgeMs);assert(sameSnapshot(latest,m),'MARKET_CHANGED_DURING_ANALYSIS');const after=mode==='management'?await managementContext(latestState,latest,body.position,Date.now()):await loadReview(latest,Date.now());assert(after.reviewHash===reviewHash,'REVIEW_CHANGED_DURING_ANALYSIS');
   if(ctx){assert(after.policyHash===ctx.policyHash&&after.p.report.rawHash===ctx.p.report.rawHash&&after.p.report.slot===ctx.p.report.slot&&after.p.report.owner===ctx.p.report.owner,'POSITION_OR_POLICY_CHANGED_DURING_ANALYSIS');if(r.managementPreview?.status==='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED')assert(r.managementPreview.position?.address===body.position&&r.managementPreview.position?.owner===ctx.p.report.owner,'MANAGEMENT_REPORT_IDENTITY_MISMATCH')}
   const finalNow=Date.now(),boundExpiry=Math.min(expiresAt,after.expiresAt,m.receivedAt+maxAgeMs,latest.receivedAt+maxAgeMs);assert(boundExpiry>finalNow,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
   return {...r,terminalBinding:{requestHash,reviewHash,...(mode==='plans'?{researchBudget:{solRaw:request.solRaw,memeRaw:request.memeRaw,allowDispose:false,minSolReserve:request.riskConfig.minSolReserve,operationCostSol:request.riskConfig.operationCostSol}}:{}),...(ctx?{position:body.position,policyHash:ctx.policyHash,positionSlot:ctx.p.report.slot,positionRawHash:ctx.p.report.rawHash}:{}),expiresAt:boundExpiry,marketSlot:m.slot,marketRawHash:m.rawHash,sequence:s.sequence,generatedAt:Date.now(),scope:'RESEARCH_ONLY'}};

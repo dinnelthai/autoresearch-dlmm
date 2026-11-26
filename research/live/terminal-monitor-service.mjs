@@ -3,7 +3,7 @@ import {readFile,mkdir,writeFile,rename,open,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {poolAddress} from './terminal-core.mjs';
 import {observationKey,summarizeRisk,emptyLedger,recoverLedger,record,visibleObservation} from './monitor-core.mjs';
-import {assert} from './terminal-runtime.mjs';
+import {assert,errorCode} from './research-contract.mjs';
 export function createMonitorService({DATA,cfg,pool,locks,isStopping,overview,preview}){
  let monitorTimer=null,monitorJob=null,monitorLock=null,monitorLockPath=null,monitorFile=null,monitorCursor=0,monitorError=null,monitorLastCycle=null;
  const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitoring?.intervalSeconds??30;
@@ -43,7 +43,7 @@ async function monitorCycle(){
    const address=addresses.find((_,i)=>i>=monitorCursor&&ready.some(b=>b.position===addresses[i]))??addresses.find(a=>ready.some(b=>b.position===a));
    const body=ready.find(b=>b.position===address);monitorCursor=(addresses.indexOf(address)+1)%addresses.length;
    try{const report=await preview(body,'management');ledger=record(ledger,address,summarizeRisk(report,body,Date.now()),Date.now())}
-   catch(e){const reason=String(e.message);ledger=record(ledger,address,{status:'BLOCKED',reason:/^[A-Z0-9_:-]{1,120}$/.test(reason)?reason:'MONITOR_VALIDATION_FAILED',flags:[]},Date.now())}
+   catch(e){const reason=errorCode(e,'MONITOR_VALIDATION_FAILED');ledger=record(ledger,address,{status:'BLOCKED',reason,flags:[]},Date.now())}
   }
   await persistMonitor();monitorLastCycle=Date.now();
  }catch{monitorError='MONITOR_STORAGE_OR_CYCLE_FAILED';ledger={...ledger,current:{}}}

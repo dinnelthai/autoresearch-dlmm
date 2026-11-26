@@ -11,7 +11,7 @@ import {previewPlans} from './preview-plans.mjs';
 import {previewManagement} from './preview-management.mjs';
 import {distinctReferenceArtifacts} from './quote-evidence.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=resolve(ROOT,'data');
-const assert=(v,m)=>{if(!v)throw Error(m);};
+import {assert,blockAnalysis,errorCode} from './research-contract.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const finite=(v,min,max=Infinity)=>typeof v==='number'&&Number.isFinite(v)&&v>=min&&v<=max;
 function dataPath(path){assert(typeof path==='string','missing evidence path');const p=resolve(ROOT,path),rel=relative(DATA,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'evidence must be under data/');return p;}
@@ -117,7 +117,7 @@ async function main(){
     report.managementPreview=previewManagement(model,cfg,m,{asOf,operations,position:positionReport});
    }
   }
- }catch(e){report.gaps.push(String(e.message).slice(0,240));}
+ }catch(e){blockAnalysis(report,errorCode(e,'RESEARCH_INPUT_OR_CALCULATION_FAILED'));}
  output();
 }
 main().catch(()=>{console.error('T08 blocked: check local state and configuration');process.exitCode=1;});

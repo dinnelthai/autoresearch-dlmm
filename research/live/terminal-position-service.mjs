@@ -6,7 +6,8 @@ import {positionIndex,positionDetail} from './wallet-position-core.mjs';
 import {positionObservation,ledgerProjection,windowLedger} from './position-observation-workflow.mjs';
 import {assembleLedger} from './position-ledger-core.mjs';
 import {incrementalLedgerStore,nextLedgerPage,appendLedgerPage} from './incremental-ledger.mjs';
-import {assert,sha} from './terminal-runtime.mjs';
+import {assert,errorCode} from './research-contract.mjs';
+import {sha} from './evidence-digest.mjs';
 export function createPositionService({ROOT,DATA,cfg,previewCfg,maxAgeMs,validateScope,loadState,safeDataPath,boundedRead,run}){
 const ledgerStore=incrementalLedgerStore(DATA,async(path,limit)=>boundedRead(await safeDataPath(path),limit));
 let lastAccountingAttempt=0;
@@ -97,7 +98,7 @@ async function positionAccounting(body){
    performance=await run(['--input',cfgPath],'calculate-performance.mjs',30000);
    assert(performance.pnlReady===false&&performance.executionReady===false&&performance.decisionReady===false&&['BLOCKED','BOUNDED_WINDOW_ACCOUNTING_DIAGNOSTIC'].includes(performance.status),'WINDOW_RESULT_INVALID');
    if(performance.status!=='BLOCKED')assert(performance.pool===scope&&performance.owner===wallet&&performance.position===position&&performance.closingRawHash===obs.rawHash&&performance.historyComplete===false,'WINDOW_RESULT_SCOPE');
-  }catch(e){performance={status:'BLOCKED',reason:/^[A-Z0-9_]+$/.test(e.message)?e.message:'WINDOW_EVIDENCE_OR_CALCULATION_FAILED',decisionReady:false,executionReady:false,pnlReady:false}}
+  }catch(e){performance={status:'BLOCKED',reason:errorCode(e,'WINDOW_EVIDENCE_OR_CALCULATION_FAILED'),decisionReady:false,executionReady:false,pnlReady:false}}
  }
  const perfBytes=JSON.stringify(performance);await writeFile(join(dir,'performance.json'),perfBytes,{mode:0o600,flag:'wx'});
  const out={scope:'POSITION_ACCOUNTING_DIAGNOSTIC_ONLY',pool:scope,owner:wallet,position,observation:obs,historyCapture:relative(ROOT,capture),historyManifestHash:sha(mb),ledgerHash:sha(ledgerBytes),performanceHash:sha(perfBytes),ledger:summary,performance,createdAt:Date.now(),historyComplete:false,pnlReady:false,decisionReady:false,executionReady:false};

@@ -1,9 +1,8 @@
 // Recompute observations from archived source-specific payloads. No independent review or chain-time certification.
-import {createHash} from 'node:crypto';
+import {sha} from './evidence-digest.mjs';
+import {assert,hash} from './research-contract.mjs';
 import {discoverDirectPairs,normalizeRaydiumQuote,normalizeOrcaQuote,probeConfig} from './external-market.mjs';
 import {quoteMath} from './reference-math.mjs';
-const sha=b=>createHash('sha256').update(b).digest('hex'),assert=(v,m)=>{if(!v)throw Error(m)};
-const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 export function distinctReferenceArtifacts(refs){return Array.isArray(refs)&&refs.length>=2&&refs.every(r=>hash(r?.evidence?.sha256)&&typeof r.evidence.path==='string')&&new Set(refs.map(r=>r.evidence.sha256)).size===refs.length&&new Set(refs.map(r=>r.evidence.path)).size===refs.length}
 export async function verifyQuoteEvidence(report,m,read){
  assert(report?.pool===m.pool&&report.mintX===m.mintX&&report.mintY===m.mintY&&report.marketSlot===m.slot&&report.marketRawHash===m.rawHash&&report.decimalsX===m.decimalsX&&report.scope==='EXTERNAL_DISPLAY_ONLY'&&Array.isArray(report.evidence)&&report.evidence.length<=11&&Number.isSafeInteger(report.startedAt)&&Number.isSafeInteger(report.fetchedAt)&&report.startedAt<=report.fetchedAt,'QUOTE_EVIDENCE_SCOPE');

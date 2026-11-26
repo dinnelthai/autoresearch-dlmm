@@ -2,8 +2,9 @@
 import {realpath,open} from 'node:fs/promises';
 import {resolve,join,relative,isAbsolute} from 'node:path';
 import {spawn} from 'node:child_process';
-import {createHash} from 'node:crypto';
-export const assert=(x,m)=>{if(!x)throw Error(m)},sha=x=>createHash('sha256').update(x).digest('hex');
+import {assert} from './research-contract.mjs';
+export {assert} from './research-contract.mjs';
+export {sha} from './evidence-digest.mjs';
 export function createTerminalRuntime({ROOT,DATA}){
 async function safeDataPath(path){const root=await realpath(DATA),p=await realpath(resolve(ROOT,path)),rel=relative(root,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'INVALID_DATA_PATH');return p}
 async function boundedRead(path,limit){const h=await open(path,'r');try{const st=await h.stat();assert(st.isFile()&&st.size<=limit,'EVIDENCE_SIZE_EXCEEDED');const bytes=Buffer.alloc(st.size+1);let n=0;while(n<bytes.length){const r=await h.read(bytes,n,bytes.length-n,n);if(!r.bytesRead)break;n+=r.bytesRead;}assert(n===st.size,'EVIDENCE_SIZE_CHANGED');return bytes.subarray(0,n)}finally{await h.close()}}

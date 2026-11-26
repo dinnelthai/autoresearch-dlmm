@@ -1,8 +1,9 @@
 // T12 local terminal contract. Read-only, no SDK signing or execution.
 import {extractMarket} from './engine-input.mjs';
-const assert=(x,m)=>{if(!x)throw Error(m)};
-export const poolAddress=x=>typeof x==='string'&&/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(x);
-const finite=(x,min,max=Infinity)=>typeof x==='number'&&Number.isFinite(x)&&x>=min&&x<=max;
+import {assert,poolAddress,finite,hash,sameSnapshot} from './research-contract.mjs';
+export {poolAddress} from './research-contract.mjs';
+const allocationBounds=Object.freeze({maxInventoryRatio:[0,1],maxInventoryTokens:[0],minSolReserve:[0],maxLossSol:[0],stressDrop:[0,1],maxBinShare:[Number.MIN_VALUE,1],operationCostSol:[0],feeBps:[0,9999],protocolShare:[0,1],slippageBps:[0,9999]});
+function parseRiskConfig(input,bounds){const result={};for(const [k,[lo,hi]] of Object.entries(bounds)){const v=input?.[k];assert(finite(v,lo,hi),'INVALID_RISK_'+k);result[k]=v}return result}
 export function toRaw(value,decimals){
  assert(typeof value==='string'&&/^\d+(\.\d+)?$/.test(value)&&value.length<=40&&Number.isInteger(decimals)&&decimals>=0&&decimals<=18,'INVALID_AMOUNT');
  const [whole,frac='']=value.split('.');assert(frac.length<=decimals,'AMOUNT_PRECISION_EXCEEDED');
@@ -21,14 +22,13 @@ export function requestFromDraft(d,m){
  assert(['sol','holding'].includes(d.entry)&&['balanced','defensive','growth'].includes(d.goal)&&Number.isSafeInteger(d.horizonSeconds)&&d.horizonSeconds>0&&d.horizonSeconds<=30*86400,'INVALID_REQUEST');
  const solRaw=toRaw(d.solHuman,m.decimalsY),memeRaw=toRaw(d.memeHuman,m.decimalsX);
  assert(d.entry==='sol'?BigInt(solRaw)>0n&&BigInt(memeRaw)===0n:BigInt(memeRaw)>0n,'INVALID_ENTRY_ASSETS');
- const bounds={maxInventoryRatio:[0,1],maxInventoryTokens:[0],minSolReserve:[0],maxLossSol:[0],stressDrop:[0,1],maxBinShare:[Number.MIN_VALUE,1],operationCostSol:[0],feeBps:[0,9999],protocolShare:[0,1],slippageBps:[0,9999]};
- const riskConfig={};for(const [k,[lo,hi]] of Object.entries(bounds)){const v=d.riskConfig?.[k];assert(finite(v,lo,hi),'INVALID_RISK_'+k);riskConfig[k]=v}
+ const riskConfig=parseRiskConfig(d.riskConfig,allocationBounds);
  assert(riskConfig.minSolReserve+riskConfig.operationCostSol<=Number(solRaw)/10**m.decimalsY,'SOL_RESERVE_AND_COST_EXCEED_BUDGET');
  return {pool:m.pool,entry:d.entry,goal:d.goal,horizonSeconds:d.horizonSeconds,capitalScope:'USER_DECLARED_ALLOCATION',allowDispose:false,solRaw,memeRaw,riskConfig};
 }
 export function reviewMatches(review,m,now){
  const t=Math.floor(now/1000);
- assert(review?.pool===m.pool&&review.marketSlot===m.slot&&review.marketRawHash===m.rawHash&&review.mintX===m.mintX&&review.mintY===m.mintY,'REVIEW_SNAPSHOT_MISMATCH');
+ assert(review?.pool===m.pool&&sameSnapshot({slot:review.marketSlot,rawHash:review.marketRawHash},m)&&review.mintX===m.mintX&&review.mintY===m.mintY,'REVIEW_SNAPSHOT_MISMATCH');
  assert(Number.isSafeInteger(review.asOf)&&Number.isSafeInteger(review.maxAgeSeconds)&&review.maxAgeSeconds>0&&review.maxAgeSeconds<=600&&review.asOf<=t&&t-review.asOf<=review.maxAgeSeconds,'REVIEW_STALE_OR_INVALID');
  const latest=review.observations?.at(-1);assert(Number.isSafeInteger(review.marketObservedAt)&&review.marketObservedAt<=t&&t-review.marketObservedAt<=review.maxAgeSeconds&&Number.isSafeInteger(latest?.t)&&latest.t<=t&&t-latest.t<=review.maxAgeSeconds,'REVIEW_OBSERVATION_STALE');
 }
@@ -40,9 +40,9 @@ export function positionCapture(state,m,address,now,maxAgeMs){
  assert(stream?.status==='CAPTURED_UNVERIFIED'&&p?.status==='POSITION_CALCULATED_UNVERIFIED'&&p.position===address&&p.pool===state.pool,'POSITION_CAPTURE_UNAVAILABLE');
  assert(Number.isSafeInteger(stream.receivedAt)&&stream.receivedAt<=now&&now-stream.receivedAt<maxAgeMs,'POSITION_CAPTURE_STALE');
  const snap=p.snapshot;
- assert(poolAddress(p.owner)&&Number.isSafeInteger(p.slot)&&/^[0-9a-f]{64}$/.test(p.rawHash)&&snap?.position===address&&snap.pool===state.pool&&snap.slot===p.slot&&snap.tokenOrientation==='MEME_X_SOL_Y'&&snap.tokenExtensions===false&&Number.isInteger(snap.decimalsX)&&snap.decimalsX>=0&&snap.decimalsX<=18&&snap.decimalsY===9,'POSITION_IDENTITY_MISMATCH');
+ assert(poolAddress(p.owner)&&Number.isSafeInteger(p.slot)&&hash(p.rawHash)&&snap?.position===address&&snap.pool===state.pool&&snap.slot===p.slot&&snap.tokenOrientation==='MEME_X_SOL_Y'&&snap.tokenExtensions===false&&Number.isInteger(snap.decimalsX)&&snap.decimalsX>=0&&snap.decimalsX<=18&&snap.decimalsY===9,'POSITION_IDENTITY_MISMATCH');
  assert(Number.isSafeInteger(p.lowerBinId)&&Number.isSafeInteger(p.upperBinId)&&p.lowerBinId<=p.upperBinId,'POSITION_RANGE_INVALID');
- const common=!!m&&p.slot===m.slot&&p.rawHash===m.rawHash&&snap.decimalsX===m.decimalsX&&snap.binStep===String(m.binStep)&&stream.evidence.commonMarketCapture===true;
+ const common=sameSnapshot(p,m)&&snap.decimalsX===m.decimalsX&&snap.binStep===String(m.binStep)&&stream.evidence.commonMarketCapture===true;
  const rangeState=common?(m.activeId<p.lowerBinId?'BELOW_RANGE':m.activeId>p.upperBinId?'ABOVE_RANGE':'IN_RANGE'):'UNKNOWN';
  return {report:p,commonMarketCapture:common,rangeState,expiresAt:stream.receivedAt+maxAgeMs};
 }
@@ -51,8 +51,7 @@ export function managementRequest(policy,m,p){
  assert(['balanced','defensive','growth'].includes(policy.goal)&&Number.isSafeInteger(policy.horizonSeconds)&&policy.horizonSeconds>0&&policy.horizonSeconds<=30*86400,'INVALID_MANAGEMENT_HORIZON');
  const solRaw=toRaw(policy.extraSolHuman,m.decimalsY),memeRaw=toRaw(policy.extraMemeHuman,m.decimalsX);
  // These are expressly declared additional assets, not current position principal or wallet balance.
- const bounds={maxInventoryRatio:[0,1],maxInventoryTokens:[0],minSolReserve:[0],maxLossSol:[0],stressDrop:[0,1],maxBinShare:[Number.MIN_VALUE,1],operationCostSol:[0],feeBps:[0,9999],protocolShare:[0,1],slippageBps:[0,9999],cooldownSeconds:[0],maxRebalances:[0],maxTurnoverSol:[0]};
- const riskConfig={};for(const [k,[lo,hi]] of Object.entries(bounds)){const v=policy.riskConfig?.[k];assert(finite(v,lo,hi),'INVALID_RISK_'+k);riskConfig[k]=v}
+ const riskConfig=parseRiskConfig(policy.riskConfig,{...allocationBounds,cooldownSeconds:[0],maxRebalances:[0],maxTurnoverSol:[0]});
  assert(Number.isSafeInteger(riskConfig.cooldownSeconds)&&Number.isSafeInteger(riskConfig.maxRebalances),'INVALID_MANAGEMENT_COUNTER_LIMIT');
  return {pool:m.pool,position:p.position,entry:'position',goal:policy.goal,horizonSeconds:policy.horizonSeconds,capitalScope:'USER_DECLARED_ALLOCATION',allowDispose:false,solRaw,memeRaw,riskConfig};
 }

@@ -1,7 +1,6 @@
 // Immutable-by-content diagnostic snapshot contract, not an approved model input.
-import {createHash} from 'node:crypto';
-const sha=x=>createHash('sha256').update(x).digest('hex'),hash=x=>typeof x==='string'&&/^[0-9a-f]{64}$/.test(x);
-const assert=(x,m)=>{if(!x)throw Error(m)};
+import {sha} from './evidence-digest.mjs';
+import {assert,hash} from './research-contract.mjs';
 const allowedFiles=new Set(['state.json','diagnostic.json','review.json','external.json','holder.json','capture-manifest.json']);
 export function snapshotFileList(m){
  assert(Array.isArray(m?.files)&&m.files.length>=3&&m.files.length<=6,'SNAPSHOT_FILE_LIST_INVALID');

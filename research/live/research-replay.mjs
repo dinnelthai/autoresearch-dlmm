@@ -1,10 +1,8 @@
 // Historical research replay identity checks. Never produces a current or executable binding.
-import {createHash} from 'node:crypto';
+import {sha} from './evidence-digest.mjs';
+import {assert,hash,sameSnapshot} from './research-contract.mjs';
 import {currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest} from './terminal-core.mjs';
 import {verifySnapshotManifest,reviewEvidenceRefs} from './research-snapshot.mjs';
-const sha=b=>createHash('sha256').update(b).digest('hex');
-const assert=(v,m)=>{if(!v)throw Error(m)};
-const hash=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 export function replayRequest(manifest,files,{pool,snapshotId,draft,mode='plans',position=null,policy=null,now=Date.now()}){
  assert(manifest?.snapshotId===snapshotId&&hash(snapshotId)&&manifest.pool===pool&&Number.isSafeInteger(manifest.createdAt)&&manifest.createdAt<=now,'REPLAY_SCOPE_INVALID');
  verifySnapshotManifest(manifest,files);
@@ -27,7 +25,7 @@ export function replayRequest(manifest,files,{pool,snapshotId,draft,mode='plans'
 }
 export function replayResult({manifest,request,report,sourceHashes,generatedAt,policyHash=null,owner=null}){
  assert(report?.pool===manifest.pool&&report.decisionReady===false&&report.executionReady===false&&report.calibrated===false&&report.protocolExact===false&&['BLOCKED','RESEARCH_DIAGNOSTIC_UNVERIFIED'].includes(report.status),'REPLAY_REPORT_CONTRACT');
- if(report.market)assert(report.market.slot===manifest.marketSlot&&report.market.rawHash===manifest.marketRawHash,'REPLAY_REPORT_SNAPSHOT_MISMATCH');
+ if(report.market)assert(sameSnapshot(report.market,{slot:manifest.marketSlot,rawHash:manifest.marketRawHash}),'REPLAY_REPORT_SNAPSHOT_MISMATCH');
  assert(report.status!=='RESEARCH_DIAGNOSTIC_UNVERIFIED'||report.market&&Number.isSafeInteger(report.asOf),'REPLAY_REPORT_MISSING_CONTEXT');
  assert(!report.terminalBinding&&!report.reviewId&&Array.isArray(sourceHashes)&&sourceHashes.length>0&&sourceHashes.every(x=>typeof x.path==='string'&&hash(x.sha256))&&Number.isSafeInteger(generatedAt),'REPLAY_RESULT_BINDING_INVALID');
  const mode=request.entry==='position'?'management':'plans';

@@ -1,8 +1,7 @@
 // Candidate evidence assembly. Missing or unreviewed facts never become model observations.
-import {createHash} from 'node:crypto';
+import {sha} from './evidence-digest.mjs';
+import {assert,hash} from './research-contract.mjs';
 import {reviewShape} from './research-input-status.mjs';
-const assert=(v,m)=>{if(!v)throw Error(m)},hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
-const sha=b=>createHash('sha256').update(b).digest('hex');
 const genesis='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
 export function chainTimeFact({market,genesisReply,slotReply,timeReply,receivedAt,maxAgeSeconds}){
  assert(genesisReply?.jsonrpc==='2.0'&&genesisReply.id===1&&genesisReply.result===genesis&&slotReply?.jsonrpc==='2.0'&&slotReply.id===2&&Number.isSafeInteger(slotReply.result)&&slotReply.result>=market.slot,'CHAIN_TIME_SCOPE_INVALID');
