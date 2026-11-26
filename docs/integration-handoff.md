@@ -5,14 +5,14 @@ Updated 2026-11-26. This is the only integration backlog. Implement in roadmap o
 | ID | Task | State | Required environment / evidence |
 |---|---|---|---|
 | I01 | T01 raw Pool capture | BLOCKED: RPC DNS in chat environment | Real finalized RPC response, raw bytes, slot, SHA256, manifest |
-| I02 | T02 SDK/IDL identity and mint/vault decoding | Pending implementation | Install exact SDK version; validate program owner, token mints, decimals, vault mint/owner and extensions against real accounts |
+| I02 | T02 SDK/IDL identity and mint/vault decoding | Code draft committed; dependencies and real runtime unverified | Install exact SDK version; validate program owner, token mints, decimals, vault mint/owner and extensions against real accounts |
 | I03 | T03 BinArray/bitmap | Pending implementation | Real pool arrays, coverage, SDK comparison, same-slot or explicitly separate snapshots |
 | I04 | T04 swaps/fees | Pending implementation | Actual getTransaction/getBlock data, event order, raw amounts, fee and vault balance deltas; gaps |
 | I05 | T05 Position ledger | Pending implementation | Public or user-approved read-only positions; shares, principal, fee checkpoints and lifecycle receipts |
 | I06 | T06 reference and exits | Pending implementation | Non-target pools, valid timestamps, depth and read-only executable quotes; missing data must reject decision |
 | I07 | T07 live service | Pending implementation | Real subscriptions/polling, reconnect, backfill, persistence, fresh state, duplicate suppression |
 | I08 | T08–T11 decision/shadow | Pending implementation | Real event adapter, independent references, risk constraints, comparable baselines, frozen test samples, costs and actual deviations |
-| I09 | T12–T13 UI/monitoring | Pending prototype and implementation | Actual read-only API, no fabricated values; stale/unknown/error states; human review |
+| I09 | T12–T13 UI/monitoring | Standalone prototype committed; review pending | Actual read-only API, no fabricated values; stale/unknown/error states; human review |
 | I10 | T14–T15 execution | Pending implementation | Test network or explicitly approved small funded trial; preview, simulation, explicit signer confirmation, confirmed receipts; no automatic signing |
 | I11 | T16–T17 performance and end-to-end | Pending implementation | Actual net PnL and matched HODL, transaction costs, failure recovery, safety gates; no profitability guarantee |
 
@@ -29,3 +29,21 @@ For each Ixx: code commit, exact command, environment / SDK version (no secrets)
 
 ## Business workflow rule
 First create a standalone UX prototype (manual pool entry → analysis/plan → position monitoring → PnL). Review information structure and interactions before editing official business pages. Prototype is not a production execution surface. Existing research engine remains separate.
+
+## I02 commands — pinned protocol identity
+After I01 returns actual capture, install dependencies (review generated lockfile, commit it only after verification):
+```bash
+npm install --prefix research/live
+mkdir -p data/raw
+curl -fLsS https://raw.githubusercontent.com/MeteoraAg/dlmm-sdk/1532e540db41ac405dbf4c5bb2ddfceaa1f98ff1/ts-client/src/dlmm/idl/idl.json -o data/raw/dlmm-idl.json
+node research/live/inspect-pool.mjs --capture data/raw/accounts-REPLACE --idl data/raw/dlmm-idl.json
+```
+The decoder checks the IDL Git blob SHA 6715f5cf19dffa8651a185ac0dd823218c6a2a75, the capture SHA256, program owner and LbPair discriminator. First run returns mintX, mintY, vaultX, vaultY and missing addresses (exit 1 is expected when missing). Re-capture the pool AND all four discovered accounts in ONE getMultipleAccounts call:
+```bash
+node research/capture-accounts.mjs --pool POOL --account MINT_X --account MINT_Y --account VAULT_X --account VAULT_Y
+node research/live/inspect-pool.mjs --capture data/raw/accounts-NEW --idl data/raw/dlmm-idl.json
+```
+Replace placeholders with decoded real addresses and capture directories. Verify all fields against SDK output and actual RPC. Check anchor coder field names, package import/peer compatibility, IDL/actual account version, vault authority rule and token extension TLV. Direct dependency versions are pinned; transitive lockfile not yet generated. No actual execution or dependency install performed in chat. Unsupported Token-2022 or reverse orientation is an explicit blocked engine input, not successful strategy support. Gate A also requires T03. Record real output or error; fix adapter if actual protocol evidence disagrees.
+ 
+## Business prototype review
+Open docs/prototypes/terminal-v0.html locally in browser. Independent static prototype; tabs and form controls are for review only, no fake prices/positions/returns and no trade execution. Review empty states and layout before editing formal UI. Browser rendering and business acceptance still pending.
