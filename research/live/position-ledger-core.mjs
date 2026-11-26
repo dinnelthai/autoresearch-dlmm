@@ -5,7 +5,7 @@ const lam=v=>{assert(Number.isSafeInteger(v)&&v>=0,'LAMPORT_PRECISION_UNSUPPORTE
 export function reconcilePositionTransaction(o){
  const fail=reason=>({status:'BLOCKED',reason,signature:o?.signature,slot:o?.slot,decisionReady:false,executionReady:false});
  try{
-  assert(o?.source==='FINALIZED_RPC_CAPTURE'&&typeof o.signature==='string'&&Number.isSafeInteger(o.slot)&&Number.isSafeInteger(o.txIndex)&&o.scopeValidated===true,'FINALIZED_SCOPE_REQUIRED');
+  assert(o?.source==='FINALIZED_RPC_CAPTURE'&&typeof o.signature==='string'&&Number.isSafeInteger(o.slot)&&Number.isSafeInteger(o.txIndex)&&o.scopeValidated===true&&typeof o.success==='boolean','FINALIZED_SCOPE_REQUIRED');
   const fee=raw(o.feeRaw),before=lam(o.preWalletLamports),after=lam(o.postWalletLamports),rentBefore=lam(o.prePositionLamports),rentAfter=lam(o.postPositionLamports);
   const rent=rentAfter-rentBefore;
   assert(before-after===fee+rent,'NATIVE_LAMPORT_DELTA_MISMATCH');
@@ -33,7 +33,7 @@ export function reconcilePositionTransaction(o){
 }
 export function assembleLedger({pool,position,owner,mintX,mintY,observations}){
  assert(Array.isArray(observations)&&observations.length<=20000,'LEDGER_INPUT_INVALID');
- const bySig=new Map(),conflicts=new Set(),gaps=[];
+ const bySig=new Map(),conflicts=new Set(),gaps=[];if(!observations.length)gaps.push({reason:'NO_TRANSACTION_EVIDENCE'});
  for(const x of observations){
   if(typeof x?.signature!=='string'){gaps.push({reason:'SIGNATURE_MISSING'});continue}
   const old=bySig.get(x.signature);
@@ -42,7 +42,7 @@ export function assembleLedger({pool,position,owner,mintX,mintY,observations}){
  }
  const rows=[...bySig.values()].sort((a,b)=>a.slot-b.slot||a.txIndex-b.txIndex);
  for(const x of rows)if(x.status!=='TRANSACTION_DELTA_RECONCILED_UNVERIFIED')gaps.push({signature:x.signature,reason:x.reason??'TRANSACTION_BLOCKED'});
- const order=new Map();for(const x of rows){const k=x.slot+':'+x.txIndex;if(order.has(k)&&order.get(k)!==x.signature){conflicts.add(x.signature);conflicts.add(order.get(k));gaps.push({signature:x.signature,reason:'BLOCK_ORDER_CONFLICT'})}else order.set(k,x.signature)}
+ const order=new Map();for(const x of rows){if(!Number.isSafeInteger(x.slot)||!Number.isSafeInteger(x.txIndex))continue;const k=x.slot+':'+x.txIndex;if(order.has(k)&&order.get(k)!==x.signature){conflicts.add(x.signature);conflicts.add(order.get(k));gaps.push({signature:x.signature,reason:'BLOCK_ORDER_CONFLICT'})}else order.set(k,x.signature)}
  const accepted=rows.filter(x=>x.status==='TRANSACTION_DELTA_RECONCILED_UNVERIFIED'&&!conflicts.has(x.signature)),fields=['depositXRaw','depositYRaw','withdrawXRaw','withdrawYRaw','claimedXRaw','claimedYRaw','networkFeeRaw','rentLockedRaw','rentRecoveredRaw'];
  const totals=Object.fromEntries(fields.map(k=>[k,accepted.reduce((n,x)=>n+raw(x[k]),0n).toString()]));
  return {schemaVersion:1,status:gaps.length?'PARTIAL_LEDGER':'BOUNDED_LEDGER_UNVERIFIED',pool,position,owner,mintX,mintY,decisionReady:false,executionReady:false,historyComplete:false,pnlReady:false,observedCount:rows.length,acceptedCount:accepted.length,rows:rows.map(x=>conflicts.has(x.signature)?{signature:x.signature,slot:x.slot,txIndex:x.txIndex,status:'BLOCKED',reason:'CONFLICTING_EVIDENCE'}:x),gaps,totals,limitations:['Bounded finalized RPC evidence only. Totals are observed flows, not full history or realized profit.','Rent lock/recovery separate from network cost. Failed transactions may incur network fee.']};
