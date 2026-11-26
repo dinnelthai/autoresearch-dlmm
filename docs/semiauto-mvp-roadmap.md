@@ -17,7 +17,7 @@
 | T10 | Inventory, rebalance and exit decisions | Risk limits, no-LP, removal vs disposal, cost-aware decisions | Read-only management preview draft; source fixture checks passed; live reconciliation and validation pending |
 | T11 | Live shadow validation | Real events, frozen test, risk and costs versus fair baselines | Shadow framework draft; source fixture checks passed; actual reconciled samples and out-of-sample validation pending |
 | T12 | Single-pool terminal | Manual pool entry and plan preview | V4.5 approved; formal read-only terminal + local state/plans API code ready; live/browser integration pending |
-| T13 | Position monitoring | Actual position, suggestions, alerts and recovery | V4.5 terminal reads configured position snapshots; continuous monitoring/management API and live acceptance pending |
+| T13 | Position monitoring | Actual position, suggestions, alerts and recovery | V4.5 configured-position capture/range monitoring and manual T10 management API code ready; continuous model alerts, recovery and live acceptance pending |
 | T14 | Human-confirmed execution | Wallet, preview, simulation, limits, explicit signing and confirmation | Pending |
 | T15 | Execution reconciliation | Confirmed on-chain outcomes; failure/idempotency checks | Pending |
 | T16 | Performance | Actual net PnL, fees, costs and HODL-relative attribution | V4.5 actual-vs-shadow view retained; actual accounting implementation pending |
