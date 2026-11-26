@@ -57,7 +57,8 @@ try{
  }
  async function inspect(script,p,extra=[]){return (await run('research/live/'+script,['--capture',p,'--idl',idl,...extra])).report;}
  async function market(){
-  let required=positions.slice(),fallback=null;
+  const clock='SysvarC1ock11111111111111111111111111111111';
+  let required=[...new Set([...positions,...(cfg.includeClock===true?[clock]:[])])],fallback=null;
   for(let attempt=0;attempt<5;attempt++){
    const {p,m}=await accounts(required);
    const identity=await inspect('inspect-pool.mjs',p);
@@ -80,7 +81,7 @@ try{
     if(Object.keys(positionReports).length===positions.length)return fallback;
    }
    let next=[...new Set([...required,...base,...extra].filter(a=>a!==pool))];
-   if(next.length>99){if(marketReady)return fallback;next=base;}
+   if(next.length>99){if(marketReady)return fallback;next=[...new Set([...base,...(cfg.includeClock===true&&base.length<99?[clock]:[])])];}
    if(next.length>99)throw Error('market snapshot exceeds one RPC request');
    if(next.length===required.length&&next.every(a=>required.includes(a))){if(marketReady)return fallback;throw Error('snapshot remains partial or unsupported');}
    if(marketReady&&attempt===4)return fallback;
