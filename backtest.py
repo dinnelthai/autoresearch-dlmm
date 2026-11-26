@@ -81,7 +81,7 @@ def make_pool_config(pool_info: dict) -> PoolConfig:
     runtime = get_pool_runtime_config(pool_info)
     return PoolConfig(
         bin_step_bps=runtime["bin_step"],
-        base_fee_bps=runtime["base_fee_pct"],
+        base_fee_pct=runtime["base_fee_pct"],
         protocol_fee_pct=runtime["protocol_fee_pct"],
         name=runtime["name"],
     )
@@ -339,6 +339,7 @@ def save_results(
 
 
 def main():
+    print('LEGACY_CANDLE_HEURISTIC: research only; not protocol-accurate LP or realized PnL.')
     args = parse_args()
 
     print("Loading cached data...")
@@ -362,7 +363,7 @@ def main():
 
     print(
         f"Pool: {pool_config.name} | Bin Step: {pool_config.bin_step_bps} bps | "
-        f"Base Fee: {pool_config.base_fee_bps:.3f}% | Protocol Fee: {pool_config.protocol_fee_pct:.1f}%"
+        f"Base Fee: {pool_config.base_fee_pct:.3f}% | Protocol Fee: {pool_config.protocol_fee_pct:.1f}%"
     )
     print(
         f"Horizon: {run_config['horizon_mode']} | Prepared timeframe: {run_config.get('timeframe', 'unknown')}"

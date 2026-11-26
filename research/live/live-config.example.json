@@ -12,5 +12,8 @@
   "historyLimit": 20,
   "includeClock": false,
   "historyRetention": 2000,
-  "historyTimeoutSeconds": 120
+  "historyTimeoutSeconds": 120,
+  "positionPollSeconds": 60,
+  "referencePollSeconds": 120,
+  "historyPollSeconds": 60
 }

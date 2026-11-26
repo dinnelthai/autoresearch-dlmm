@@ -7,6 +7,7 @@ import {createServer} from 'node:http';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
 import {mergeHistory,streamHealth,pendingStream,historyBatch} from './state-core.mjs';
+import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url));
 const RAW=resolve(ROOT,'data/raw');
 const assert=(v,m)=>{if(!v)throw Error(m);};
@@ -27,12 +28,14 @@ assert(Number.isInteger(historyPages)&&historyPages>=1&&historyPages<=20&&Number
 const historyRetention=cfg.historyRetention??2000,historyTimeoutSeconds=cfg.historyTimeoutSeconds??120;
 assert(Number.isSafeInteger(historyRetention)&&historyRetention>=historyPages*historyLimit&&historyRetention<=20000,'invalid history retention');
 assert(Number.isSafeInteger(historyTimeoutSeconds)&&historyTimeoutSeconds>=30&&historyTimeoutSeconds<=900,'invalid history timeout');
+const positionSeconds=cfg.positionPollSeconds??interval,referenceSeconds=cfg.referencePollSeconds??Math.max(interval,120),historySeconds=cfg.historyPollSeconds??interval;
+assert([positionSeconds,referenceSeconds,historySeconds].every(v=>Number.isInteger(v)&&v>=15&&v<=3600),'invalid stream intervals');
 const idl=resolve(ROOT,cfg.idl??'data/raw/dlmm-idl.json');
 const dir=join(ROOT,'data',marketOnly?'live-preview':'live',pool);await mkdir(dir,{recursive:true,mode:0o700});
 const stateFile=join(dir,'state.json'),lockPath=join(dir,'writer.lock');
 const lock=await open(lockPath,'wx',0o600);
 let state={schemaVersion:1,pool,sequence:0,streams:{},history:{},decisionReady:false,limitations:['Unverified chain observations only; upstream live acceptance not completed.','Separate stream slots are not a common market snapshot.','Polling is not a websocket subscription or proof of continuous history.']};
-let stopping=false,timer=null,server=null,active=null,historyCursor=0;const children=new Set();
+let stopping=false,server=null,historyCursor=0;const children=new Set(),controller=new AbortController();
 try{
  await lock.writeFile(String(process.pid));
  try{assert((await stat(stateFile)).size<=64*1024*1024,'persisted state exceeds size cap');const old=JSON.parse(await readFile(stateFile,'utf8'));assert(old.pool===pool&&old.schemaVersion===1&&Number.isSafeInteger(old.sequence)&&old.streams&&old.history,'invalid persisted state');state={...old,decisionReady:false};historyCursor=Number.isSafeInteger(old.historyCursor)&&old.historyCursor>=0?old.historyCursor:0;
@@ -85,7 +88,7 @@ try{
      }catch{ /* independent position failure does not invent a common snapshot */ }
     }
     fallback={capture:relative(ROOT,p),slot:m.contextSlot,identity,bins,positionReports};
-    if(Object.keys(positionReports).length===positions.length)return fallback;
+    if(Object.keys(positionReports).length===positions.length||!values.once)return fallback;
    }
    let next=[...new Set([...required,...base,...extra].filter(a=>a!==pool))];
    if(next.length>99){if(marketReady)return fallback;next=[...new Set([...base,...(cfg.includeClock===true&&base.length<99?[clock]:[])])];}
@@ -98,9 +101,9 @@ try{
   throw Error('snapshot discovery did not converge');
  }
  async function position(address){
-  const common=state.streams.market?.status==='CAPTURED_UNVERIFIED'?state.streams.market.evidence:null;
+  const commonStream=state.streams.market,common=streamHealth(commonStream,Date.now(),maxAge*1000)==='RECENT_UNVERIFIED'?commonStream.evidence:null;
   const shared=common?.positionReports?.[address];
-  if(shared?.status==='POSITION_CALCULATED_UNVERIFIED')return {capture:common.capture,slot:common.slot,report:shared,commonMarketCapture:true};
+  if(shared?.status==='POSITION_CALCULATED_UNVERIFIED')return {capture:common.capture,slot:common.slot,report:shared,commonMarketCapture:true,commonReceivedAt:commonStream.receivedAt};
   let required=[address];
   for(let attempt=0;attempt<3;attempt++){
    const {p,m}=await accounts(required);
@@ -136,11 +139,19 @@ try{
   assert(m.pool===pool&&m.status==='REFERENCE_EVIDENCE_UNVERIFIED','reference evidence partial');
   return {capture:relative(ROOT,p),report:m};
  }
- async function persist(){const tmp=stateFile+'.tmp',data=JSON.stringify(state)+'\n';assert(Buffer.byteLength(data)<=64*1024*1024,'state exceeds size cap');await writeFile(tmp,data,{mode:0o600});await rename(tmp,stateFile);}
+ const writeState=serializedWriter(async data=>{const tmp=stateFile+'.tmp';await writeFile(tmp,data,{mode:0o600});await rename(tmp,stateFile)});
+ async function persist(){const data=JSON.stringify(state)+'\n';assert(Buffer.byteLength(data)<=64*1024*1024,'state exceeds size cap');await writeState(data);}
  async function collect(name,fn){
-  const startedAt=Date.now();
-  try{const evidence=await fn();const partial=['OVERLAP_MISSING','DECODE_PARTIAL','EMPTY_OR_UNAVAILABLE','CAPTURE_PARTIAL'].includes(evidence.historyStatus)||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:evidence.commonMarketCapture===true?Math.min(startedAt,state.streams.market.receivedAt):startedAt,completedAt:Date.now(),evidence};}
-  catch{state.streams[name]={status:'BLOCKED',startedAt,receivedAt:Date.now(),reason:'CAPTURE_OR_VALIDATION_FAILED',previousEvidence:state.streams[name]?.evidence??state.streams[name]?.previousEvidence??null};}
+  const startedAt=Date.now(),before=state.streams[name];
+  const superseded=()=>name.startsWith('position:')&&state.streams[name]!==before&&state.streams[name]?.status==='CAPTURED_UNVERIFIED'&&state.streams[name].evidence?.commonMarketCapture===true;
+  try{const evidence=await fn();if(superseded())return;const partial=['OVERLAP_MISSING','DECODE_PARTIAL','EMPTY_OR_UNAVAILABLE','CAPTURE_PARTIAL'].includes(evidence.historyStatus)||(evidence.decoded&&evidence.decoded.status!=='EVENTS_DECODED_UNVERIFIED');state.streams[name]={status:partial?'PARTIAL':'CAPTURED_UNVERIFIED',startedAt,receivedAt:evidence.commonMarketCapture===true?Math.min(startedAt,evidence.commonReceivedAt):startedAt,completedAt:Date.now(),evidence};}
+  catch{if(superseded())return;state.streams[name]={status:'BLOCKED',startedAt,receivedAt:Date.now(),reason:'CAPTURE_OR_VALIDATION_FAILED',previousEvidence:state.streams[name]?.evidence??state.streams[name]?.previousEvidence??null};}
+  if(name==='market'&&state.streams.market.status==='CAPTURED_UNVERIFIED'){
+   const m=state.streams.market;for(const [address,report] of Object.entries(m.evidence.positionReports??{})){
+    if(report.status!=='POSITION_CALCULATED_UNVERIFIED')continue;
+    state.streams['position:'+address]={status:'CAPTURED_UNVERIFIED',startedAt,receivedAt:m.receivedAt,completedAt:Date.now(),evidence:{capture:m.evidence.capture,slot:m.evidence.slot,report,commonMarketCapture:true,commonReceivedAt:m.receivedAt}};
+   }
+  }
   console.log(JSON.stringify({sequence:state.sequence,stream:name,status:state.streams[name].status,at:new Date().toISOString()}));await persist();
  }
  async function cycle(){
@@ -158,6 +169,14 @@ try{
   for(const a of batch.addresses){if(stopping)break;await collect('history:'+a,()=>history(a));}
   state.cycleCompletedAt=Date.now();await persist();
  }
+ async function refreshLane(name,fn){
+  if(stopping)return;const old=state.streams[name];
+  state.streams[name]=name==='market'&&streamHealth(old,Date.now(),maxAge*1000)==='RECENT_UNVERIFIED'?{...old,refreshing:true,refreshStartedAt:Date.now()}:pendingStream(old,Date.now());
+  await persist();if(!stopping)await collect(name,fn);
+ }
+ async function marketTick(){state.sequence++;state.cycleStartedAt=Date.now();state.cycleCompletedAt=null;await refreshLane('market',market);state.cycleCompletedAt=Date.now();await persist()}
+ async function positionTick(){for(const a of positions){if(stopping)break;const m=state.streams.market,p=state.streams['position:'+a];if(streamHealth(m,Date.now(),maxAge*1000)==='RECENT_UNVERIFIED'&&streamHealth(p,Date.now(),maxAge*1000)==='RECENT_UNVERIFIED'&&p.evidence?.commonMarketCapture===true&&p.evidence.slot===m.evidence.slot&&p.evidence.report.rawHash===m.evidence.identity.rawHash)continue;await refreshLane('position:'+a,()=>position(a))}}
+ async function historyTick(){const batch=historyBatch([pool,...positions],historyCursor);historyCursor=batch.nextCursor;state.historyCursor=historyCursor;await refreshLane('history:'+batch.addresses[0],()=>history(batch.addresses[0]))}
  function publicState(){
   const now=Date.now();return {...state,decisionReady:false,streamHealth:Object.fromEntries(Object.entries(state.streams).map(([k,v])=>[k,streamHealth(v,now,maxAge*1000)])),freshnessBasis:'CONSERVATIVE_LOCAL_COLLECTION_START; CHAIN FRESHNESS UNVERIFIED'};
  }
@@ -175,9 +194,19 @@ try{
   await new Promise((ok,fail)=>{server.once('error',fail);server.listen(port,'127.0.0.1',ok);});
   console.log('Read-only state API: http://127.0.0.1:'+port);
  }
- function stop(){stopping=true;for(const ch of children)ch.kill('SIGKILL');if(timer){clearTimeout(timer.id);timer.resolve();timer=null;}server?.close();}
+ function stop(){stopping=true;controller.abort();for(const ch of children)ch.kill('SIGKILL');server?.close();}
  process.once('SIGINT',stop);process.once('SIGTERM',stop);
- do{if(stopping)break;active=cycle();await active;active=null;if(values.once||stopping)break;await new Promise(resolve=>{timer={id:setTimeout(()=>{timer=null;resolve();},interval*1000),resolve};});}while(!stopping);
+ if(values.once){if(!stopping)await cycle()}
+ else{
+  const wanted=new Set(['market',...positions.map(a=>'position:'+a),'history:'+pool,...positions.map(a=>'history:'+a),'references']);
+  for(const k of Object.keys(state.streams))if(!wanted.has(k))delete state.streams[k];
+  for(const a of Object.keys(state.history))if(![pool,...positions].includes(a))delete state.history[a];
+  const lanes=[{name:'market',intervalMs:interval*1000,run:marketTick},{name:'history',intervalMs:historySeconds*1000,run:historyTick}];
+  if(positions.length)lanes.push({name:'positions',intervalMs:positionSeconds*1000,run:positionTick});
+  if(references.length>=2)lanes.push({name:'references',intervalMs:referenceSeconds*1000,run:()=>refreshLane('references',reference)});
+  else state.streams.references={status:'BLOCKED',reason:'REFERENCES_NOT_CONFIGURED'};
+  await persist();await runCollectorLanes(lanes,controller,{onFatal:stop});
+ }
  if(stopping&&!values.once){for(const [k,v] of Object.entries(state.streams))state.streams[k]={status:'BLOCKED',reason:'SERVICE_STOPPED',previousEvidence:v.evidence??v.previousEvidence??null};await persist();}
  if(values.once&&Object.values(state.streams).some(s=>s.status!=='CAPTURED_UNVERIFIED'))process.exitCode=1;
 }finally{

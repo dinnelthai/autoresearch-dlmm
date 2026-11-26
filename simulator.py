@@ -14,7 +14,7 @@ from typing import Optional
 class PoolConfig:
     """Pool parameters derived from Meteora pool info."""
     bin_step_bps: int = 25
-    base_fee_bps: float = 0.25
+    base_fee_pct: float = 0.25  # percentage points
     protocol_fee_pct: float = 5.0
     name: str = "SOL/USDC"
 
@@ -86,6 +86,12 @@ class BacktestState:
     portfolio_value_log: list = field(default_factory=list)
 
 
+def fee_pct_to_fraction(value: float) -> float:
+    if not np.isfinite(value) or not 0 <= value < 100:
+        raise ValueError('invalid fee percentage')
+    return value / 100.0
+
+
 def simulate_candle_fees(state, pool, price_open, price_close,
                           volume_usd, tvl_estimate_usd=500_000) -> float:
     """Simulate fee earnings for one price leg within a candle."""
@@ -110,7 +116,7 @@ def simulate_candle_fees(state, pool, price_open, price_close,
         return 0.0
 
     volume_per_bin = volume_usd / max(len(bins_crossed), 1)
-    fee_rate_decimal = (pool.base_fee_bps / 100) / 100
+    fee_rate_decimal = fee_pct_to_fraction(pool.base_fee_pct)
 
     total_fees = 0.0
     for bin_idx in bins_crossed:
