@@ -36,6 +36,7 @@ export function validateSample(w,s,cfg){
   if(e.type==='MARKET'){
    marketCount++;lastMarket=e;assert(Number.isInteger(e.activeId),'active bin missing');
    assert(typeof e.tokenSafe==='boolean'&&num(e.holderShare,0,1)&&num(e.holderOutflow,0,1)&&num(e.buyImbalance,-1,1)&&num(e.flowSol)&&num(e.exitDepth),'market features unavailable');
+   assert(e.flowWindowSeconds==null||(Number.isSafeInteger(e.flowWindowSeconds)&&e.flowWindowSeconds>0&&e.flowWindowSeconds<=86400),'invalid flow observation window');
    assert(Array.isArray(e.references)&&e.references.length>=2,'reference evidence missing');const pools=new Set(),sources=new Set();venues.clear();
    for(const r of e.references){
     assert(address(r.pool)&&r.pool!==w.pool&&!pools.has(r.pool)&&r.mintX===w.mintX&&r.mintY===w.mintY&&typeof r.venue==='string'&&r.venue&&typeof r.source==='string'&&r.source&&proof(r.evidence),'invalid independent reference');
