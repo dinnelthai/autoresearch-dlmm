@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {rawHuman,checkTime,extractMarket} from './engine-input.mjs';
+assert.equal(rawHuman('1250000000',9),1.25);
+assert.throws(()=>rawHuman('9007199254740992',9));
+assert.throws(()=>rawHuman('-1',9));
+assert.throws(()=>rawHuman('1.2',9));
+assert.throws(()=>rawHuman('1',19));
+assert.throws(()=>checkTime(10,12,11,5));
+assert.throws(()=>checkTime(10,11,20,5));
+assert.throws(()=>checkTime(12,11,13,5));
+assert.doesNotThrow(()=>checkTime(10,11,15,5));
+assert.throws(()=>extractMarket({streams:{}}));
+console.log('Input boundary fixture assertions passed; no live acceptance.');
