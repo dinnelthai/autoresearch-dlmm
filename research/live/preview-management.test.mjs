@@ -35,3 +35,16 @@ assert.equal(economic.costBasis,'DECLARED_LOGICAL_OPERATION_AGGREGATE_ALREADY_IN
 assert.ok(economic.candidates.filter(r=>r.action.type==='REPOSITION'&&r.feasible).every(r=>r.holdComparison?.eligible===true&&r.holdComparison.netPnlDeltaSol>0));
 assert.ok(economic.candidates.filter(r=>r.reason==='REPOSITION_NET_ADVANTAGE_NOT_ESTABLISHED').every(r=>r.holdComparison?.eligible===false));
 assert.ok(economic.selected?.action.type!=='REPOSITION'||economic.selected.holdComparison?.eligible===true);
+
+// A risk-reducing withdrawal may leave current token exposure unsellable.
+const stressed=JSON.parse(JSON.stringify(s));stressed.market.exitDepth=.01;
+const protection=P(stressed,c,market,opts),withdraw=protection.protectiveDiagnostics.find(r=>r.action==='REMOVE_AND_HOLD');
+assert.equal(protection.selected,null);
+assert.equal(withdraw.feasible,false);
+assert.ok(withdraw.remainingViolations.includes('EXIT_CAPACITY'));
+assert.ok(withdraw.bidExposureReductionSol>0);
+assert.ok(withdraw.prospectiveExitHeadroomImprovementSol>0);
+assert.equal(withdraw.currentMemeDelta,0);
+assert.equal(withdraw.disposal,false);
+assert.equal(withdraw.executionReady,false);
+assert.equal(protection.currentExitDiagnostic.netLiquidationValue,null);
