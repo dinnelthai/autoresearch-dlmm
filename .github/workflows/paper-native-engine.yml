@@ -1,0 +1,57 @@
+name: Paper native engine acceptance
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/paper-native-engine.yml'
+      - 'research/engine.mjs'
+      - 'research/engine/**'
+      - 'research/engine-*.mjs'
+      - 'research/test.mjs'
+      - 'research/integer.mjs'
+      - 'research/live/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Record runtime and revision
+        run: |
+          node --version
+          git rev-parse HEAD
+          git status --porcelain
+      - name: Native engine and paper lifecycle tests
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap \
+            research/test.mjs \
+            research/engine-exit.test.mjs \
+            research/engine-guard.test.mjs \
+            research/engine-liquidity.test.mjs \
+            research/engine-parity.test.mjs \
+            research/engine-path-risk.test.mjs \
+            research/engine-rebalance.test.mjs \
+            research/engine-volume.test.mjs \
+            research/live/engine-input.test.mjs \
+            research/live/preview-management.test.mjs \
+            research/live/paper-adaptive-core.test.mjs \
+            research/live/paper-snapshot-run-core.test.mjs \
+            research/live/paper-core.test.mjs \
+            research/live/paper-event-core.test.mjs \
+            research/live/paper-interval-core.test.mjs | tee native-engine.tap
+      - name: Retain test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-engine-tap
+          path: native-engine.tap
+          if-no-files-found: warn
+          retention-days: 7
