@@ -14,7 +14,7 @@ function snapshot(p,l){
  return {...sums,claimedX:raw(p.claimedLifetimeRaw.x),claimedY:raw(p.claimedLifetimeRaw.y)};
 }
 // Price integer = SOL per human MEME * 10^18. Source independence remains a review assertion.
-function mark(m,l,time,slot,policy){
+export function mark(m,l,time,slot,policy){
  assert(m?.pool===l.pool&&m.mintX===l.mintX&&m.mintY===l.mintY&&m.slot===slot&&m.asOf===time&&hash(m.evidenceHash)&&Array.isArray(m.references)&&m.references.length===2,'PERF_MARK_IDENTITY');
  const [a,b]=m.references;
  assert([a,b].every(r=>r.pool!==l.pool&&typeof r.pool==='string'&&typeof r.source==='string'&&r.source&&typeof r.venue==='string'&&r.venue&&hash(r.evidenceHash)&&Number.isSafeInteger(r.observedAt)&&Number.isSafeInteger(r.availableAt)&&r.observedAt<=r.availableAt&&r.availableAt<=time&&time-r.observedAt<=policy.maxAgeSeconds),'PERF_MARK_TIME');
