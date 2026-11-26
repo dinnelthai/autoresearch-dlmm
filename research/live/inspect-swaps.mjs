@@ -8,6 +8,7 @@ import bs58 from 'bs58';
 import {PublicKey} from '@solana/web3.js';
 import {resolveReadMessage} from './transaction-version.mjs';
 import {verifyIndexPages} from './history-index-evidence.mjs';
+import {collapseSingleSwapTwin} from './paper-event-core.mjs';
 import {PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const sha=b=>createHash('sha256').update(b).digest('hex');
@@ -89,8 +90,9 @@ async function main(){
     for(const e of parser.parseLogs(meta.logMessages)){const row=normalize(e,m.pool);if(row)logs.push({...row,outerIndex:null,innerIndex:null,source:'LOG'});const life=positionEvent(e,m.pool,position);if(life)posLogs.push({...life,outerIndex:null,innerIndex:null,source:'LOG'});}
    }else report.gaps.push({signature:s.signature,reason:'LOGS_UNAVAILABLE'});
    const fingerprint=r=>JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k])=>!['outerIndex','innerIndex','source'].includes(k))));
+   // Compare raw event mirrors first; only a unique single-call compatibility pair can be collapsed.
    if(cpi.length&&logs.length&&JSON.stringify(cpi.map(fingerprint))!==JSON.stringify(logs.map(fingerprint)))report.gaps.push({signature:s.signature,reason:'CPI_LOG_EVENT_MISMATCH'});
-   const rows=cpi.length?cpi:logs;
+   const rawRows=cpi.length?cpi:logs;
    if(!cpi.length&&logs.length)report.gaps.push({signature:s.signature,reason:'LOG_ONLY_NO_INSTRUCTION_PATH'});
    // Detect known swap calls for this pool. A missing event is not proof of zero volume.
    const swaps=idl.instructions.filter(x=>/^swap/i.test(x.name)).map(x=>Buffer.from(x.discriminator));
@@ -99,6 +101,7 @@ async function main(){
     if(keys[ix.programIdIndex]!==PROGRAM.toBase58()||keys[ix.accounts?.[0]]!==m.pool||typeof ix.data!=='string')continue;
     const d=Buffer.from(bs58.decode(ix.data));if(swaps.some(tag=>d.subarray(0,tag.length).equals(tag)))calls++;
    }
+   const rows=collapseSingleSwapTwin(rawRows,calls);
    if(calls!==rows.length)report.gaps.push({signature:s.signature,reason:'SWAP_CALL_EVENT_COUNT_MISMATCH',calls,events:rows.length});
    if(meta.innerInstructions==null)report.gaps.push({signature:s.signature,reason:'INNER_INSTRUCTIONS_UNAVAILABLE'});
    for(const [eventIndex,row] of rows.entries())report.events.push({...row,signature:s.signature,slot:s.slot,txIndex,eventIndex,blockTime:tx.blockTime,id:s.signature+':'+row.source+':'+(row.outerIndex??'unknown')+':'+(row.innerIndex??eventIndex)});
