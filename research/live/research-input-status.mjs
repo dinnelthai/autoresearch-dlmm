@@ -1,5 +1,6 @@
 // Diagnostic projection only. Never manufactures MARKET events or research acceptance.
 import {featureProjection} from './market-features.mjs';
+import {distinctReferenceArtifacts} from './quote-evidence.mjs';
 const positive=v=>typeof v==='string'&&/^\d{1,20}$/.test(v)&&BigInt(v)<(1n<<64n);
 const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 const finite=(v,lo,hi=Infinity)=>typeof v==='number'&&Number.isFinite(v)&&v>=lo&&v<=hi;
@@ -39,7 +40,7 @@ export function reviewShape(review,m,now){
    if(!finite(o.buyImbalance,-1,1)||!finite(o.flowSol,0))gaps.push('FLOW_EVIDENCE_REQUIRED');
    if(!finite(o.exitDepth,0))gaps.push('EXIT_DEPTH_EVIDENCE_REQUIRED');
    const refs=o.references;
-   if(!Array.isArray(refs)||refs.length<2||refs.length>16||refs.some(r=>!r||typeof r.pool!=='string'||r.pool===m.pool||r.mintX!==m.mintX||r.mintY!==m.mintY||typeof r.venue!=='string'||!r.venue||typeof r.source!=='string'||!r.source||!finite(r.price,Number.MIN_VALUE)||!finite(r.depth,Number.MIN_VALUE)||!timed(r.observedAt,r.availableAt,o.t)||!evidence(r.evidence))||new Set(refs.map(r=>r.pool)).size!==refs.length||new Set(refs.map(r=>r.venue)).size<2||new Set(refs.map(r=>r.source)).size<2)gaps.push('TWO_INDEPENDENT_REFERENCES_REQUIRED');
+   if(!Array.isArray(refs)||refs.length<2||refs.length>16||refs.some(r=>!r||typeof r.pool!=='string'||r.pool===m.pool||r.mintX!==m.mintX||r.mintY!==m.mintY||typeof r.venue!=='string'||!r.venue||typeof r.source!=='string'||!r.source||!finite(r.price,Number.MIN_VALUE)||!finite(r.depth,Number.MIN_VALUE)||!timed(r.observedAt,r.availableAt,o.t)||!evidence(r.evidence))||new Set(refs.map(r=>r.pool)).size!==refs.length||new Set(refs.map(r=>r.venue)).size<2||new Set(refs.map(r=>r.source)).size<2||!distinctReferenceArtifacts(refs))gaps.push('TWO_INDEPENDENT_REFERENCES_REQUIRED');
   }
   if(!Number.isSafeInteger(obs.at(-1)?.t)||obs.at(-1).t<review.marketAvailableAt||!fresh(obs.at(-1).t,t,age))gaps.push('LATEST_OBSERVATION_NOT_FRESH');
  }

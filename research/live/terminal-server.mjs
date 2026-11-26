@@ -19,6 +19,8 @@ import {observeExternalMarket} from './external-market.mjs';
 import {inputStatus} from './research-input-status.mjs';
 import {captureHolderFeatures} from './capture-holder-features.mjs';
 import {cohortChange} from './market-features.mjs';
+import {featureSeries} from './feature-series.mjs';
+import {verifyQuoteEvidence} from './quote-evidence.mjs';
 import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-snapshot.mjs';
 import {replayRequest,replayResult} from './research-replay.mjs';
 import {positionIndex,positionDetail} from './wallet-position-core.mjs';
@@ -264,17 +266,27 @@ async function observeWallet(body){
 }
 const indexedPool=cachedLoader(getPoolInfo,30000),indexedHistory=cachedLoader(getPriceHistory,60000);
 let externalBusy=false,externalLast=null,holderBusy=false,holderLastAttempt=0,snapshotBusy=false,replayBusy=false;
-const holderCache=new Map();
+const holderCache=new Map(),series=featureSeries(DATA);
+async function archivedHolderBaseline(m){
+ try{const row=(await series.read(m.pool,m.mintX,'holder')).at(-1);if(!row||Date.now()-row.receivedAt>1800000)return null;
+  const dir=await safeDataPath(row.capture),bytes=await boundedRead(await safeDataPath(join(dir,'manifest.json')),256*1024);assert(sha(bytes)===row.sha256,'HOLDER_BASELINE_HASH');const x=JSON.parse(bytes);
+  assert(x.pool===m.pool&&x.mint===m.mintX&&x.slot===row.slot&&x.receivedAt===row.receivedAt&&x.scope==='HOLDER_DIAGNOSTIC_ONLY'&&x.distribution?.supplyConserved===true&&Array.isArray(x.distribution.topOwners)&&x.distribution.topOwners.length<=100&&Array.isArray(x.files)&&x.files.length===4,'HOLDER_BASELINE_SCOPE');
+  const names=new Set(['genesis.json','mint-before.json','holder-index.json','mint-after.json']);for(const e of x.files){assert(names.delete(e.file)&&sha(await boundedRead(await safeDataPath(join(dir,e.file)),16*1024*1024))===e.sha256,'HOLDER_BASELINE_RAW_HASH')}
+  assert(names.size===0,'HOLDER_BASELINE_MISSING');return x;
+ }catch{return null}
+}
 async function holderObservation(body){
  const scope=validateScope(body?.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),key=scope+':'+m.mintX,now=Date.now(),old=holderCache.get(key);
  if(old&&now-old.public.receivedAt<60000)return old.public;
  if(now-holderLastAttempt<60000)throw Error('HOLDER_RETRY_COOLDOWN');holderLastAttempt=now;
  const base=join(DATA,'raw');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'holder-'));
  const x=await captureHolderFeatures(m,{archive:(name,raw)=>writeFile(join(dir,name),raw,{mode:0o600,flag:'wx'})});
- const cohort=cohortChange(old?.internal,x,Date.now());
+ const prior=old?.internal??await archivedHolderBaseline(m);
+ const cohort=cohortChange(prior,x,Date.now());
  const {ownerBalances,topOwners,...distribution}=x.distribution;
  const archived={...x,distribution:{...distribution,topOwners},cohort};const bytes=JSON.stringify(archived,null,2)+'\n';await writeFile(join(dir,'manifest.json'),bytes,{mode:0o600,flag:'wx'});
  const {files,...summary}=x,p={...summary,distribution,cohort,evidenceHash:sha(bytes),capture:relative(ROOT,dir)};
+ await series.add({kind:'holder',pool:scope,mint:m.mintX,slot:x.slot,receivedAt:x.receivedAt,capture:p.capture,sha256:p.evidenceHash});
  holderCache.delete(key);holderCache.set(key,{public:p,internal:x});while(holderCache.size>4)holderCache.delete(holderCache.keys().next().value);return p;
 }
 async function researchInputs(scope){
@@ -348,8 +360,10 @@ async function externalObservation(body){
  if(externalLast&&now-externalLast.fetchedAt<10000)throw Error('EXTERNAL_RETRY_COOLDOWN');
  const base=join(DATA,'raw');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'external-'));
  const result=await observeExternalMarket(m,{config:cfg.externalMarket??{},archive:(name,raw)=>writeFile(join(dir,name),raw,{mode:0o600,flag:'wx'})});
- await writeFile(join(dir,'manifest.json'),JSON.stringify(result,null,2)+'\n',{mode:0o600,flag:'wx'});
- externalLast={...result,capture:relative(ROOT,dir)};return externalLast;
+ const verified=await verifyQuoteEvidence(result,m,async name=>boundedRead(await safeDataPath(join(dir,name)),1024*1024));
+ const bytes=JSON.stringify({...result,rawEvidenceCheck:verified},null,2)+'\n';await writeFile(join(dir,'manifest.json'),bytes,{mode:0o600,flag:'wx'});
+ const capture=relative(ROOT,dir),evidenceHash=sha(bytes);await series.add({kind:'external',pool:scope,mint:m.mintX,slot:m.slot,receivedAt:result.fetchedAt,capture,sha256:evidenceHash});
+ externalLast={...result,rawEvidenceCheck:verified,capture,evidenceHash};return externalLast;
 }
 let positionReadBusy=false,positionAccountingBusy=false,lastAccountingAttempt=0;
 const indexes=new Map(),positionObservations=new Map();

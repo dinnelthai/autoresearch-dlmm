@@ -1,4 +1,5 @@
 // Read-only RPC transport; same provider retries only. No endpoint URLs or remote error messages in diagnostics.
+import {sharedRpcBudget} from './rpc-budget.mjs';
 const allowed=new Set(['getMultipleAccounts','getProgramAccounts','getGenesisHash','getMinimumBalanceForRentExemption','getSignaturesForAddress','getTransaction','getBlock','getAccountInfo','getSlot','getBlockTime','getEpochInfo']);
 const retryHttp=new Set([408,429,500,502,503,504]);
 const retryRpc=new Set([-32005,-32016]);
@@ -11,16 +12,17 @@ async function bounded(response,maxBytes){
  catch(e){await reader.cancel().catch(()=>{});throw e}finally{reader.releaseLock()}
  return new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts));
 }
-export function createReadRpc(endpoint,{fetcher=fetch,sleep=wait,timeoutMs=8000,totalMs=18000,maxAttempts=3,spacingMs=250,maxBytes=8*1024*1024,clock=Date.now}={}){
+export function createReadRpc(endpoint,{fetcher=fetch,sleep=wait,timeoutMs=8000,totalMs=18000,maxAttempts=3,spacingMs=250,maxBytes=8*1024*1024,clock=Date.now,grant=fetcher===fetch&&clock===Date.now?sharedRpcBudget():null}={}){
  const url=new URL(endpoint);
  if(url.protocol!=='https:'&&!(url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname)))throw Error('RPC_SCHEME_INVALID');
  if(!Number.isSafeInteger(maxAttempts)||maxAttempts<1||maxAttempts>3||![timeoutMs,totalMs,spacingMs,maxBytes].every(Number.isSafeInteger)||timeoutMs<1||totalMs<timeoutMs||totalMs>60000||spacingMs<0||spacingMs>5000||maxBytes<1||maxBytes>64*1024*1024)throw Error('RPC_CONFIG_INVALID');
- let tail=Promise.resolve(),nextAt=0;
- async function execute(request){
+ let tail=Promise.resolve(),nextAt=0,queued=0;
+ async function execute(request,start){
   if(request?.jsonrpc!=='2.0'||!allowed.has(request.method)||!Array.isArray(request.params)||!Number.isSafeInteger(request.id))throw Error('RPC_READ_METHOD_REQUIRED');
-  const start=clock();let last=null;
+  let last=null;
   for(let attempt=1;attempt<=maxAttempts;attempt++){
    const pause=Math.max(0,nextAt-clock());if(clock()-start+pause>=totalMs)break;if(pause)await sleep(pause);
+   if(grant){try{await grant(start+totalMs)}catch(e){throw failure(/^RPC_SHARED_BUDGET_[A-Z_]+$/.test(e.message)?e.message:'RPC_SHARED_BUDGET_IO',attempt)}}
    const remaining=totalMs-(clock()-start);if(remaining<=0)break;
    nextAt=clock()+spacingMs;let response,raw,p;
    try{response=await fetcher(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(request),signal:AbortSignal.timeout(Math.max(1,Math.min(timeoutMs,remaining))),redirect:'error'});}
@@ -45,5 +47,5 @@ export function createReadRpc(endpoint,{fetcher=fetch,sleep=wait,timeoutMs=8000,
   }
   throw last??failure('RPC_RETRY_BUDGET_EXHAUSTED',0);
  }
- return request=>{const job=tail.then(()=>execute(request));tail=job.catch(()=>{});return job};
+ return request=>{if(queued>=32)return Promise.reject(failure('RPC_QUEUE_LIMIT',0));const start=clock();queued++;const job=tail.then(()=>execute(request,start)).finally(()=>{queued--});tail=job.catch(()=>{});return job};
 }

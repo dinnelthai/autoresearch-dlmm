@@ -9,6 +9,7 @@ import {IntegerKernel as K} from '../integer.mjs';
 import {rawHuman,checkTime,extractMarket} from './engine-input.mjs';
 import {previewPlans} from './preview-plans.mjs';
 import {previewManagement} from './preview-management.mjs';
+import {distinctReferenceArtifacts} from './quote-evidence.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=resolve(ROOT,'data');
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const sha=b=>createHash('sha256').update(b).digest('hex');
@@ -53,7 +54,7 @@ async function main(){
    // Observations carry independently reviewed raw artifacts; file integrity is not semantic acceptance.
    await evidence(o.evidence?.path,o.evidence?.sha256);
    assert(typeof o.tokenSafe==='boolean'&&finite(o.holderShare,0,1)&&finite(o.holderOutflow,0,1)&&finite(o.buyImbalance,-1,1)&&finite(o.flowSol,0)&&finite(o.exitDepth,0),'missing holder/flow/exit features');
-   assert(Array.isArray(o.references)&&o.references.length>=2,'independent references missing');
+   assert(Array.isArray(o.references)&&o.references.length>=2&&distinctReferenceArtifacts(o.references),'independent reference artifacts missing or reused');
    const pools=new Set(),venues=new Set(),sources=new Set();
    for(const r of o.references){
     assert(typeof r.pool==='string'&&r.pool!==m.pool&&!pools.has(r.pool)&&r.mintX===m.mintX&&r.mintY===m.mintY&&typeof r.venue==='string'&&r.venue&&typeof r.source==='string'&&r.source&&finite(r.price,Number.MIN_VALUE)&&finite(r.depth,cfg.minDepthSol),'invalid reference identity/depth');
