@@ -252,10 +252,10 @@ function createResearchEngine() {
         if(!["HOLD","NO_LP"].includes(action.type))submit(sim,c,action,s.lastTime);
         // Observe pre/post-action path, not just the terminal mark. Existing passive
         // exposure remains a comparator even when a hypothetical shock violates limits.
-        let minNav=base,peakNav=base,maxDrawdownSol=0,maxInventoryRatio=0,maxInventoryTokens=0,minWalletSol=Infinity,maxStressLossSol=0,minExitHeadroomSol=Infinity,observations=0;
+        let minNav=base,peakNav=base,maxDrawdownSol=0,maxInventoryRatio=0,maxInventoryTokens=0,minWalletSol=Infinity,maxStressLossSol=0,minExitHeadroomSol=Infinity,observations=0,unobserved=0;
         const pathViolations=new Set();
         function observe(){
-          if(!fresh(sim,c))return;
+          if(!fresh(sim,c)){unobserved++;return;}
           const px=sim.market.ref.price,v=nav(sim,px),r=risk(sim,c,px),headroom=sim.market.exitDepth-r.postX*px;
           assert([v,r.worstRatio,r.postX,sim.wallet.y,r.stressLoss,headroom].every(Number.isFinite),'SCENARIO_PATH_NONFINITE');
           minNav=Math.min(minNav,v);peakNav=Math.max(peakNav,v);maxDrawdownSol=Math.max(maxDrawdownSol,peakNav-v);
@@ -268,6 +268,7 @@ function createResearchEngine() {
 
         if(sim.pending||sim.receipts.slice(s.receipts.length).some(r=>["REJECTED","FAILED","EXPIRED"].includes(r.status)))throw Error("SCENARIO_EXECUTION_UNAVAILABLE");
         assert(fresh(sim,c),'SCENARIO_END_REFERENCE_UNAVAILABLE');
+        assert(!unobserved,'SCENARIO_PATH_REFERENCE_UNAVAILABLE');
         const end=reportAt(sim,sim.market.ref.price),before=reportAt(s,sim.market.ref.price);
         assert([end.nav,end.alpha,end.ratio,end.fee,end.cost,before.alpha,before.fee,before.cost].every(Number.isFinite),'SCENARIO_NONFINITE_OUTPUT');
         if(sim.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT"))throw Error("FROZEN_PATH_SHARE_LIMIT");
