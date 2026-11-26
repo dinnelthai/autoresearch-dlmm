@@ -1,5 +1,7 @@
 // Aggregate event evidence classification, never fabricated per-bin fills.
 import {assert,hash,poolAddress} from './research-contract.mjs';
+export const PAPER_JOURNAL_MAX_BYTES=4*1024*1024;
+const MAX_HISTORY_SIGNATURES=20000;
 const raw=v=>typeof v==='string'&&/^\d{1,20}$/.test(v)&&BigInt(v)<(1n<<64n);
 const signature=v=>typeof v==='string'&&/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(v);
 export function collapseSingleSwapTwin(rows,calls){
@@ -22,15 +24,18 @@ export function classifySwapCandidate(row,tx){
 export function captureObservation({pool,market,marketProof,history,historyProof,decoded,manifest,observedAt}){
  assert(poolAddress(pool)&&Number.isSafeInteger(observedAt)&&observedAt>=0,'PAPER_OBSERVATION_SCOPE');
  const gaps=[];let marketRef=null,historyRef=null,candidates=[];
- if(market){assert(market.pool===pool&&hash(market.rawHash)&&Number.isSafeInteger(market.slot)&&market.slot>=0&&hash(marketProof?.sha256),'PAPER_MARKET_SCOPE');marketRef={slot:market.slot,rawHash:market.rawHash,mintX:market.mintX,mintY:market.mintY,receivedAt:market.receivedAt,evidence:marketProof};}
+ if(market){assert(market.pool===pool&&hash(market.rawHash)&&Number.isSafeInteger(market.slot)&&market.slot>=0&&hash(marketProof?.sha256)&&marketProof.accountsHash===market.rawHash,'PAPER_MARKET_SCOPE');marketRef={slot:market.slot,rawHash:market.rawHash,mintX:market.mintX,mintY:market.mintY,receivedAt:market.receivedAt,evidence:marketProof};}
  else gaps.push('MARKET_NOT_CAPTURED');
  if(history&&manifest&&decoded){assert(decoded.pool===pool&&decoded.position===null&&manifest.pool===pool&&manifest.position===null&&manifest.indexAddress===pool&&manifest.commitment==='finalized'&&hash(historyProof?.sha256)&&Array.isArray(decoded.events)&&Array.isArray(decoded.transactions)&&Array.isArray(decoded.gaps)&&Array.isArray(manifest.signatures),'PAPER_HISTORY_SCOPE');
  const tx=new Map(decoded.transactions.map(r=>[r.signature,r]));assert(tx.size===decoded.transactions.length,'PAPER_DUPLICATE_TRANSACTION');
  const ids=new Set();for(const row of decoded.events){assert(row.pool===pool&&typeof row.id==='string'&&!ids.has(row.id),'PAPER_DUPLICATE_EVENT');ids.add(row.id);candidates.push(classifySwapCandidate(row,tx.get(row.signature)))}
- historyRef={evidence:historyProof,head:manifest.before===null,signatures:manifest.signatures.map(s=>s.signature),status:decoded.status,historyStatus:history.historyStatus??null,repairCapture:history.repairCapture===true,sourceGaps:decoded.gaps.length};
+ historyRef={evidence:historyProof,head:manifest.before===null,signatures:manifest.signatures.map(s=>s.signature),status:decoded.status,historyStatus:history.historyStatus??null,repairCapture:history.repairCapture===true,sourceGaps:decoded.gaps.length+(manifest.gaps?.length??0)};
  if(decoded.gaps.length||manifest.gaps?.length||history.historyGapObserved||history.repairCapture||decoded.status!=='EVENTS_DECODED_UNVERIFIED')gaps.push('HISTORY_PARTIAL_OR_BACKFILL');
  }else gaps.push('HISTORY_NOT_CAPTURED');
  return {schemaVersion:1,scope:'PAPER_CAPTURE_EVIDENCE_ONLY',pool,observedAt,market:marketRef,history:historyRef,candidates,gaps,coverageVerified:false,modelEligible:false,executionReady:false,pnlReady:false};
+}
+export function historyHeadEligible(h){
+ return h?.head===true&&h.status==='EVENTS_DECODED_UNVERIFIED'&&!h.repairCapture&&h.sourceGaps===0&&Array.isArray(h.signatures)&&h.signatures.length<=MAX_HISTORY_SIGNATURES&&h.signatures.every(signature)&&new Set(h.signatures).size===h.signatures.length;
 }
 export function nextJournal(previous,observation,pointer,limit=256){
  assert(hash(pointer.sha256)&&typeof pointer.path==='string'&&Number.isSafeInteger(limit)&&limit>=1&&limit<=256,'PAPER_JOURNAL_POINTER');
@@ -38,9 +43,9 @@ export function nextJournal(previous,observation,pointer,limit=256){
  assert(prior.pool===observation.pool&&Array.isArray(prior.entries)&&prior.entries.length<=limit&&Array.isArray(prior.head)&&typeof prior.gapObserved==='boolean'&&typeof prior.retentionTruncated==='boolean','PAPER_JOURNAL_SCOPE');
  const entries=[...prior.entries],last=entries.at(-1);if(last?.sha256===pointer.sha256)return prior;
  assert(!last||observation.observedAt>=last.observedAt,'PAPER_JOURNAL_TIME_REVERSED');
- const head=observation.history?.head&&!observation.history.repairCapture&&observation.history.sourceGaps===0?observation.history.signatures:null;
- const disjoint=head&&head.length&&prior.head.length&&!head.some(s=>prior.head.includes(s));
+ const head=historyHeadEligible(observation.history)&&observation.gaps.length===0?observation.history.signatures:null;
+ const oldHead=new Set(prior.head);const disjoint=head&&head.length&&oldHead.size&&!head.some(s=>oldHead.has(s));
  entries.push({...pointer,observedAt:observation.observedAt,marketSlot:observation.market?.slot??null,historyStatus:observation.history?.status??null,candidateCount:observation.candidates.length});
  const truncated=entries.length>limit;if(truncated)entries.shift();
- return {...prior,entries,head:head?.length?head:prior.head,gapObserved:prior.gapObserved||!!disjoint||observation.gaps.length>0,retentionTruncated:prior.retentionTruncated||truncated};
+ return {...prior,entries,head:head?.length?head:prior.head,gapObserved:prior.gapObserved||!!disjoint||observation.gaps.length>0||!!(observation.history?.head&&!head),retentionTruncated:prior.retentionTruncated||truncated};
 }

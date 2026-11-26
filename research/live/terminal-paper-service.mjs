@@ -14,13 +14,13 @@ import {sha} from './evidence-digest.mjs';
 export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,isStopping,idlPath='data/raw/dlmm-idl.json',intervalMs=15000}){
  const dir=join(DATA,'paper-auto',pool),pointer=join(dir,'active.json');
  const read=async(p,n)=>io.boundedRead(await io.safeDataPath(p),n);
- let job=null,timer=null,flight=null,closed=false;
+ let job=null,timer=null,flight=null,closed=false,snapshotReader=null;
  async function atomic(path,value){const tmp=path+'.'+randomUUID()+'.tmp';try{await writeFile(tmp,JSON.stringify(value),{flag:'wx',mode:0o600});await rename(tmp,path)}finally{try{await unlink(tmp)}catch(e){if(e.code!=='ENOENT')throw e}}}
  async function init(){await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir)}
  async function active(){try{const x=JSON.parse(await read(pointer,16384));assert(x?.pool===pool&&typeof x.id==='string'&&/^[a-zA-Z0-9_-]{1,64}$/.test(x.id)&&typeof x.running==='boolean','PAPER_AUTO_POINTER');return x}catch(e){if(e.code==='ENOENT')return null;throw e}}
  async function checkpoint(a){const p=join(dir,a.id,'checkpoint.json'),cp=JSON.parse(await read(p,32*1024*1024)),{checkpointHash,...state}=cp;assert(hash(checkpointHash)&&sha(JSON.stringify(state))===checkpointHash&&state.id===a.id&&state.pool===pool&&state.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.executionReady===false&&state.pnlReady===false,'PAPER_AUTO_CHECKPOINT_HASH');return state}
  async function save(state){const dst=join(dir,state.id);await mkdir(dst,{recursive:true,mode:0o700});await io.safeDataPath(dst);const cp={...state,checkpointHash:sha(JSON.stringify(state))};assert(Buffer.byteLength(JSON.stringify(cp))<=32*1024*1024,'PAPER_AUTO_CHECKPOINT_SIZE');await atomic(join(dst,'checkpoint.json'),cp)}
- async function reader(){return createPaperSnapshotReader({ROOT,io,idl:await io.safeDataPath(idlPath)})}
+ async function reader(){if(!snapshotReader)snapshotReader=createPaperSnapshotReader({ROOT,io,idl:idlPath});return snapshotReader}
  async function verifyCode(){assert((await sourceInventory(ROOT)).backendHash===backendHash,'PAPER_AUTO_CODE_CHANGED')}
  async function exclusive(fn){assert(!closed&&!isStopping()&&!flight,'PAPER_AUTO_BUSY');const task=(async()=>{await init();const p=join(dir,'writer.lock'),h=await open(p,'wx',0o600);try{return await fn()}finally{try{await h.close()}finally{await unlink(p)}}})();flight=task;try{return await task}finally{if(flight===task)flight=null}}
  async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const a=await active();if(!a)return {schemaVersion:1,scope:'PAPER_AUTO_RESEARCH_ONLY',pool,status:'NO_EXPERIMENT',running:false,checkpointFresh:false,rows:[],executionReady:false,decisionReady:false,pnlReady:false,protocolExact:false};const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,current,{now:Date.now(),maxAgeMs})}
@@ -80,6 +80,6 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   })}catch(e){job={id:job?.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_SCHEDULER_BUSY'),running:true}}
  }
  function startScheduler(){if(timer||closed)return;timer=setInterval(()=>{void tick()},intervalMs);void tick()}
- async function stop(){closed=true;if(timer)clearInterval(timer);timer=null;if(flight)await flight.catch(()=>{})}
+ async function stop(){closed=true;if(timer)clearInterval(timer);timer=null;if(flight)await flight.catch(()=>{});snapshotReader=null}
  return {get,context,start,pause,tick,startScheduler,stop};
 }

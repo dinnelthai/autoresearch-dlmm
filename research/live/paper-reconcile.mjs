@@ -6,6 +6,7 @@ import {parseArgs} from 'node:util';
 import {createTerminalRuntime} from './terminal-runtime.mjs';
 import {reconcileInterval} from './paper-interval-core.mjs';
 import {createPaperSnapshotReader} from './paper-snapshot.mjs';
+import {historyHeadEligible,PAPER_JOURNAL_MAX_BYTES} from './paper-event-core.mjs';
 import {assert,errorCode,hash,poolAddress} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data'),io=createTerminalRuntime({ROOT,DATA});
@@ -13,13 +14,13 @@ const {values}=parseArgs({options:{pool:{type:'string'},before:{type:'string'},a
 const read=async(p,n)=>io.boundedRead(await io.safeDataPath(p),n);
 async function selectRecent(pool){
  assert(poolAddress(pool),'PAPER_POOL_INVALID');
- const index=JSON.parse(await read(join(DATA,'paper-captures',pool,'index.json'),512*1024));
+ const index=JSON.parse(await read(join(DATA,'paper-captures',pool,'index.json'),PAPER_JOURNAL_MAX_BYTES));
  assert(index.pool===pool&&Array.isArray(index.entries)&&index.entries.length<=256,'PAPER_JOURNAL_INVALID');
  const distinct=[];for(const e of [...index.entries].reverse()){if(Number.isSafeInteger(e.marketSlot)&&!distinct.some(x=>x.marketSlot===e.marketSlot))distinct.push(e);if(distinct.length===3)break}
  assert(distinct.length===3&&distinct[0].marketSlot>distinct[1].marketSlot&&distinct[1].marketSlot>distinct[2].marketSlot,'PAPER_THREE_DISTINCT_MARKET_SLOTS_REQUIRED');
  async function bundle(e){assert(hash(e.sha256)&&typeof e.path==='string','PAPER_BUNDLE_POINTER');const b=await read(e.path,72*1024*1024);assert(sha(b)===e.sha256,'PAPER_BUNDLE_HASH_MISMATCH');const r=JSON.parse(b);assert(r.pool===pool&&r.market?.slot===e.marketSlot,'PAPER_BUNDLE_SCOPE');return r}
  const latest=await bundle(distinct[0]),after=await bundle(distinct[1]),before=await bundle(distinct[2]);
- assert(latest.history?.head===true&&latest.history.sourceGaps===0&&!latest.history.repairCapture,'PAPER_RECENT_HISTORY_HEAD_REQUIRED');
+ assert(historyHeadEligible(latest.history)&&Array.isArray(latest.gaps)&&latest.gaps.length===0,'PAPER_RECENT_HISTORY_HEAD_REQUIRED');
  const proofs=[before.market.evidence,after.market.evidence,latest.history.evidence];
  for(const e of proofs){assert(e&&hash(e.sha256)&&typeof e.path==='string'&&e.path.endsWith('/manifest.json'),'PAPER_MANIFEST_POINTER');assert(sha(await read(e.path,16*1024*1024))===e.sha256,'PAPER_MANIFEST_HASH_MISMATCH')}
  return proofs.map(e=>dirname(e.path));
