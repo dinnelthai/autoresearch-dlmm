@@ -250,17 +250,32 @@ function createResearchEngine() {
       for(const scenario of scenarios){
         const sim=clone(s);sim.pending=null;sim.seen=[];sim.lastTime=s.lastTime;sim.quality=[];
         if(!["HOLD","NO_LP"].includes(action.type))submit(sim,c,action,s.lastTime);
-        for(const e of scenario.events){event(sim,c,e);executePending(sim,c,e.t);}
+        // Observe pre/post-action path, not just the terminal mark. Existing passive
+        // exposure remains a comparator even when a hypothetical shock violates limits.
+        let minNav=base,peakNav=base,maxDrawdownSol=0,maxInventoryRatio=0,maxInventoryTokens=0,minWalletSol=Infinity,maxStressLossSol=0,minExitHeadroomSol=Infinity,observations=0;
+        const pathViolations=new Set();
+        function observe(){
+          if(!fresh(sim,c))return;
+          const px=sim.market.ref.price,v=nav(sim,px),r=risk(sim,c,px),headroom=sim.market.exitDepth-r.postX*px;
+          assert([v,r.worstRatio,r.postX,sim.wallet.y,r.stressLoss,headroom].every(Number.isFinite),'SCENARIO_PATH_NONFINITE');
+          minNav=Math.min(minNav,v);peakNav=Math.max(peakNav,v);maxDrawdownSol=Math.max(maxDrawdownSol,peakNav-v);
+          maxInventoryRatio=Math.max(maxInventoryRatio,r.worstRatio);maxInventoryTokens=Math.max(maxInventoryTokens,r.postX);
+          minWalletSol=Math.min(minWalletSol,sim.wallet.y);maxStressLossSol=Math.max(maxStressLossSol,r.stressLoss);minExitHeadroomSol=Math.min(minExitHeadroomSol,headroom);observations++;
+          for(const v of r.violations)pathViolations.add(v);
+        }
+        observe();
+        for(const e of scenario.events){event(sim,c,e);observe();executePending(sim,c,e.t);observe();}
+
         if(sim.pending||sim.receipts.slice(s.receipts.length).some(r=>["REJECTED","FAILED","EXPIRED"].includes(r.status)))throw Error("SCENARIO_EXECUTION_UNAVAILABLE");
         assert(fresh(sim,c),'SCENARIO_END_REFERENCE_UNAVAILABLE');
         const end=reportAt(sim,sim.market.ref.price),before=reportAt(s,sim.market.ref.price);
         assert([end.nav,end.alpha,end.ratio,end.fee,end.cost,before.alpha,before.fee,before.cost].every(Number.isFinite),'SCENARIO_NONFINITE_OUTPUT');
         if(sim.quality.some(q=>q.reason==="FROZEN_PATH_SHARE_LIMIT"))throw Error("FROZEN_PATH_SHARE_LIMIT");
-        out.push({name:scenario.name,incrementalAlpha:end.alpha-before.alpha,pnl:end.nav-base,loss:Math.max(0,base-end.nav),ratio:end.ratio,fee:end.fee-before.fee,cost:end.cost-before.cost});
+        out.push({name:scenario.name,incrementalAlpha:end.alpha-before.alpha,pnl:end.nav-base,loss:Math.max(0,base-minNav),terminalLoss:Math.max(0,base-end.nav),ratio:end.ratio,fee:end.fee-before.fee,cost:end.cost-before.cost,pathRisk:{minNav,maxDrawdownSol,maxInventoryRatio,maxInventoryTokens,minWalletSol,maxStressLossSol,minExitHeadroomSol,observations,violations:[...pathViolations]}});
       }
-      const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
+      const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),terminalCvar=cvar(out.map(a=>a.terminalLoss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
       assert(Number.isFinite(utility)&&Number.isFinite(tail),'SCENARIO_NONFINITE_SCORE');
-      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
+      return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
     }catch(err){return {action,feasible:false,reason:err.message}}
   }
   function candidatePlans(s,c,mode="adaptive"){
