@@ -84,18 +84,26 @@ function createResearchEngine() {
       s.marks.push({t:m.t,fillId:f.id,side:f.q>0?"bid":"ask",notional:Math.abs(f.q)*f.price,net:f.q*(m.ref.price-f.price)+f.feeX*m.ref.price+f.feeY});
     }
   }
+  // Sell depth is a declared reference-mark notional proxy, not received SOL or a bid curve.
+  function exitExposure(s,c,p){
+    const b=balances(s),depth=s.market?.exitDepth,prospectiveX=b.x+sum(s.bins.map(i=>i.y/price(c,i.id)));
+    const valid=Number.isFinite(p)&&p>0&&Number.isFinite(depth)&&depth>=0&&[b.x,b.y,prospectiveX].every(v=>Number.isFinite(v)&&v>=0)&&Number.isFinite(b.x*p)&&Number.isFinite(prospectiveX*p);
+    if(!valid)return {status:'UNAVAILABLE',basis:'DECLARED_SELL_DEPTH_MARK_NOTIONAL_PROXY',capacitySol:null,currentHeadroomSol:null,prospectiveHeadroomSol:null};
+    const currentNotional=b.x*p,prospectiveNotional=prospectiveX*p;
+    return {status:'PROXY_ONLY',basis:'DECLARED_SELL_DEPTH_MARK_NOTIONAL_PROXY',capacitySol:depth,currentInventoryMeme:b.x,prospectiveInventoryMeme:prospectiveX,currentNotionalSol:currentNotional,prospectiveNotionalSol:prospectiveNotional,currentHeadroomSol:depth-currentNotional,prospectiveHeadroomSol:depth-prospectiveNotional,currentUncoveredMeme:Math.max(0,b.x-depth/p),prospectiveUncoveredMeme:Math.max(0,prospectiveX-depth/p),calibrated:false,executionReady:false};
+  }
   function risk(s,c,p){
     const b=balances(s),v=nav(s,p),bid=sum(s.bins.map(i=>i.y)),postX=b.x+sum(s.bins.map(i=>i.y/price(c,i.id))),postY=b.y-bid,stressP=p*(1-c.stressDrop);
     const stressedValue=b.x*stressP+b.y-sum(s.bins.map(i=>i.y*Math.max(0,1-stressP/price(c,i.id))));
     const loss=Math.max(0,v-stressedValue,s.initialNav+s.externalFlows-stressedValue);
     const worstRatio=postX*p+postY>EPS?postX*p/(postX*p+postY):0;
-    const violations=[];
-    if(s.market?.ref.valid&&(!Number.isFinite(s.market.exitDepth)||postX*p>s.market.exitDepth+EPS))violations.push("EXIT_CAPACITY");
+    const exit=exitExposure(s,c,p),violations=[];
+    if(s.market?.ref.valid&&(exit.status!=='PROXY_ONLY'||exit.prospectiveHeadroomSol < -EPS))violations.push("EXIT_CAPACITY");
     if(s.wallet.y<c.minSolReserve-EPS)violations.push("SOL_RESERVE");
     if(postX>c.maxInventoryTokens+EPS)violations.push("INVENTORY_QUANTITY");
     if(worstRatio>c.maxInventoryRatio+EPS)violations.push("INVENTORY_RATIO");
     if(loss>c.maxLossSol+EPS)violations.push("STRESS_LOSS");
-    return {bid,postX,postY,worstRatio,stressLoss:loss,stressedValue,violations};
+    return {bid,postX,postY,worstRatio,stressLoss:loss,stressedValue,exitExposure:exit,violations};
   }
   function bidCap(s,c,p){
     const b=balances(s),v=nav(s,p),z=v>EPS?b.x*p/v:1,existing=sum(s.bins.map(b=>b.y));
@@ -277,7 +285,7 @@ function createResearchEngine() {
         const pathViolations=new Set(),fillStats={swapCount:0,eligibleCount:0,filledCount:0,inventoryLimitedCount:0,requestedNotionalSol:0,filledNotionalSol:0};
         function observe(){
           if(!fresh(sim,c)){unobserved++;return;}
-          const px=sim.market.ref.price,v=nav(sim,px),r=risk(sim,c,px),headroom=sim.market.exitDepth-r.postX*px;
+          const px=sim.market.ref.price,v=nav(sim,px),r=risk(sim,c,px),headroom=r.exitExposure.prospectiveHeadroomSol;
           assert([v,r.worstRatio,r.postX,sim.wallet.y,r.stressLoss,headroom].every(Number.isFinite),'SCENARIO_PATH_NONFINITE');
           minNav=Math.min(minNav,v);peakNav=Math.max(peakNav,v);maxDrawdownSol=Math.max(maxDrawdownSol,peakNav-v);
           maxInventoryRatio=Math.max(maxInventoryRatio,r.worstRatio);maxInventoryTokens=Math.max(maxInventoryTokens,r.postX);
@@ -340,11 +348,12 @@ function createResearchEngine() {
     return {action:best.action,reason:best===base?"BASELINE_WINS_OR_MARGIN":"MAX_FEASIBLE_UTILITY",regime:g.regime,risk:r,selected:best,candidates:results,forecastLabel:"SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED"};
   }
   function liquidation(s,c){
-    if(!fresh(s,c))return {status:"UNAVAILABLE",value:null};
-    const p=s.market.ref.price,b=balances(s),depth=s.market.exitDepth;
-    if(!Number.isFinite(depth)||depth<0)return {status:"UNAVAILABLE",value:null};
-    const sell=Math.min(b.x,depth/p),remaining=b.x-sell,proceeds=sell*p*(1-c.slippageBps/10000);
-    return {status:remaining>EPS?"PARTIAL":"ESTIMATE",value:remaining>EPS?null:b.y+proceeds,solProceeds:b.y+proceeds,unsoldMeme:remaining};
+    if(!fresh(s,c))return {status:'UNAVAILABLE',value:null,netLiquidationValue:null};
+    const p=s.market.ref.price,b=balances(s),exit=exitExposure(s,c,p);
+    if(exit.status!=='PROXY_ONLY')return {status:'UNAVAILABLE',value:null,netLiquidationValue:null};
+    const sell=Math.min(b.x,exit.capacitySol/p),remaining=Math.max(0,b.x-sell),saleProceeds=sell*p*(1-c.slippageBps/10000),gross=b.y+saleProceeds,mark=nav(s,p);
+    const requiresWithdrawal=s.bins.length>0,requiresClaim=s.pendingFees.x>EPS||s.pendingFees.y>EPS,withdrawalOrClaimCostProxy=requiresWithdrawal||requiresClaim?c.operationCostSol:0;
+    return {status:remaining>EPS?'PARTIAL':'ESTIMATE',basis:'HYPOTHETICAL_WITHDRAW_AND_SELL_PROXY_BEFORE_EXIT_COSTS',value:remaining>EPS?null:gross,solProceeds:gross,markNavSol:mark,walletSol:s.wallet.y,walletMeme:s.wallet.x,positionSol:sum(s.bins.map(i=>i.y)),positionMeme:sum(s.bins.map(i=>i.x)),pendingFeesSol:s.pendingFees.y,pendingFeesMeme:s.pendingFees.x,heldSolAfterWithdrawalBeforeCost:b.y,heldMemeAfterWithdrawal:b.x,modeledSellMeme:sell,modeledSaleProceedsSol:saleProceeds,modeledSlippageCostSol:sell*p-saleProceeds,grossSolAfterHypotheticalSale:gross,unsoldMeme:remaining,unsoldMarkValueSol:remaining*p,withdrawalOrClaimCostProxy,upfrontWithdrawalCostCoveredByWallet:s.wallet.y+EPS>=withdrawalOrClaimCostProxy,walletReserveHeadroomSol:s.wallet.y-withdrawalOrClaimCostProxy-c.minSolReserve,netLiquidationValue:null,disposalAllowed:s.allowDispose===true,executionReady:false,calibrated:false};
   }
   function requestConfig(request,overrides={}){
     const goals={defensive:{lambda:1,kappaSol:.3,targetRatio:.25},balanced:{},growth:{lambda:.25,kappaSol:.4,targetRatio:.65}};assert(Object.hasOwn(goals,request.goal??"balanced"),"invalid goal");
@@ -453,7 +462,7 @@ function createResearchEngine() {
   function scenarioSuite(request,overrides={}){
     return evaluateSamples(["range","up","down","crash"].map(name=>({id:name,group:name,split:"scenario",request,events:demo(name,overrides)})),overrides);
   }
-  return {DEFAULTS,config,requestConfig,candidatePlans,compareWithHold,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest,evaluateSamples,scenarioSuite};
+  return {DEFAULTS,config,requestConfig,candidatePlans,compareWithHold,price,binId,cvar,newState,balances,nav,hodl,reportAt,reference,classify,risk,exitExposure,bidCap,weights,planBins,applyAction,swap,event,submit,executePending,forecast,evaluate,decide,liquidation,run,compare,demo,opportunities,createSession,analyzeRequest,evaluateSamples,scenarioSuite};
 }
 export const Engine=createResearchEngine();
 export {createResearchEngine};
