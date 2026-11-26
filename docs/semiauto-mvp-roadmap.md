@@ -9,7 +9,7 @@
 | T02 | SDK/IDL pinned pool/mint/vault decoding | Verified owner, mint orientation, decimals, extensions and vaults | Code draft; live integration pending |
 | T03 | Bin arrays and bitmap | Complete declared snapshot and consistency checks | Code draft; bitmap pure checks passed; live integration pending |
 | T04 | Swap and dynamic fee events | Raw transaction ordering, fee and vault deltas reconcile, gaps explicit | Capture/event decoding draft; per-instruction reconciliation and live validation pending |
-| T05 | Position ledger | Shares, principal, pending/claimed fees and lifecycle reconcile | Pending |
+| T05 | Position ledger | Shares, principal, pending/claimed fees and lifecycle reconcile | Position index/snapshot/lifecycle drafts; transfer reconciliation and live validation pending |
 | T06 | Independent reference/exit depth | Target excluded, depth and timestamp quality, missing data gates | Pending |
 | T07 | Live state service | Persistence, deduplication, recovery, freshness and logs | Pending |
 | T08 | Existing math integration | Real event adapter, as-of boundaries and unsupported cases rejected | Pending |
