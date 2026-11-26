@@ -46,13 +46,20 @@ async function main(){
  const wd=await sdkWeightDiagnostic(d,market,{enabled:true,inverseEnabled:true,maxDeviationBps:cfg.maxDeviationBps,maxAmountErrorBps:cfg.maxAmountErrorBps},capturePath);
  assert(wd.status==='SDK_WEIGHT_SHAPE_DIAGNOSTIC_ONLY'&&wd.inverse?.status==='SDK_INVERSE_ESTIMATE_ONLY','SDK_DIAGNOSTIC_BLOCKED');
  const idlBytes=await readFile(cfg.idl);assert(blob(idlBytes)===IDL_BLOB,'PINNED_IDL_MISMATCH');const idl=JSON.parse(idlBytes),coder=new anchor.BorshAccountsCoder(idl);
- const capturePair=accounts.get(cfg.pool);assert(capturePair?.owner.equals(PROGRAM),'POOL_CAPTURE_INVALID');
+ const capturePair=accounts.get(cfg.pool);assert(capturePair?.owner.equals(PROGRAM)&&!capturePair.executable,'POOL_CAPTURE_INVALID');
  const pair=coder.decode('LbPair',capturePair.data),mintX=key(market.mintX),mintY=key(market.mintY),reserveX=new PublicKey(pair.reserve_x),reserveY=new PublicKey(pair.reserve_y);
+ assert(pair.active_id===market.activeId&&pair.bin_step===market.binStep,'CAPTURE_GRID_MISMATCH');
  assert(mintY.equals(NATIVE_MINT)&&!mintX.equals(mintY)&&new PublicKey(pair.token_x_mint).equals(mintX)&&new PublicKey(pair.token_y_mint).equals(mintY),'MINT_SCOPE_UNSUPPORTED');
  const ax=getAssociatedTokenAddressSync(mintX,wallet,false,TOKEN_PROGRAM_ID),ay=getAssociatedTokenAddressSync(mintY,wallet,false,TOKEN_PROGRAM_ID);
  const low=binIdToBinArrayIndex(new BN(d.lowerBinId)),high=BN.max(low.add(new BN(1)),binIdToBinArrayIndex(new BN(d.upperBinId)));
  assert(low.toNumber()>=-512&&high.toNumber()<=511,'BITMAP_EXTENSION_UNSUPPORTED');
  const al=deriveBinArray(pool,low,PROGRAM)[0],au=deriveBinArray(pool,high,PROGRAM)[0],event=deriveEventAuthority(PROGRAM)[0];
+ // Independently bind all reviewed allocation rows (and dual-side active context) to captured bytes.
+ const checkedIds=new Set([...d.rows.map(b=>b.binId),...(raw(d.totalMemeRaw)>0n&&raw(d.totalSolRaw)>0n?[market.activeId]:[])]);
+ for(const id of checkedIds){const idx=binIdToBinArrayIndex(new BN(id)),address=deriveBinArray(pool,idx,PROGRAM)[0],info=accounts.get(address.toBase58());
+  assert(info&&!info.executable&&info.owner.equals(PROGRAM),'CAPTURE_BIN_MISSING');const arr=coder.decode('BinArray',info.data),offset=id-idx.toNumber()*70,bin=arr.bins[offset],reviewed=market.bins.find(b=>b.binId===id);
+  assert(new PublicKey(arr.lb_pair).equals(pool)&&arr.index.toString()===idx.toString()&&Number(arr.version)===3&&arr.bins.length===70&&bin&&reviewed&&bin.price.toString()===reviewed.priceQ64Raw&&bin.amount_x.toString()===reviewed.amountXRaw&&bin.amount_y.toString()===reviewed.amountYRaw,'CAPTURE_BIN_REVIEW_MISMATCH');
+ }
  const conn=new Connection(endpoint.toString(),'confirmed');assert(await conn.getGenesisHash()===genesis,'GENESIS_MISMATCH');
  const addresses=[wallet,position,pool,mintX,mintY,reserveX,reserveY,ax,ay,al,au];
  const snapshot=async()=>{
@@ -70,10 +77,10 @@ async function main(){
  };
  await snapshot();
  const x=raw(d.totalMemeRaw),y=raw(d.totalSolRaw);
- const bps=d.rows.map(b=>({binId:b.binId,xAmountBpsOfTotal:new BN(x?String(raw(b.memeRaw)*10000n/x):'0'),yAmountBpsOfTotal:new BN(y?String(raw(b.solRaw)*10000n/y):'0')}));
+ const bps=wd.distributionBps.map(b=>({binId:b.binId,xAmountBpsOfTotal:new BN(b.xBps),yAmountBpsOfTotal:new BN(b.yBps)}));
  assert(d.rangeWidth===bps.length&&d.rangeWidth<=Number(DEFAULT_BIN_PER_POSITION.toString())&&bps.length<MAX_BIN_LENGTH_ALLOWED_IN_ONE_TX,'SINGLE_MESSAGE_SCOPE_REQUIRED');
  const weights=toWeightDistribution(new BN(x.toString()),new BN(y.toString()),bps,market.binStep);
- assert(weights.length===bps.length,'SDK_WEIGHT_DROPPED');
+ assert(weights.length===bps.length&&JSON.stringify(weights.map(b=>({binId:b.binId,weight:b.weight})))===JSON.stringify(wd.sdkWeights),'SDK_WEIGHT_VECTOR_CHANGED');
  assert(Number.isInteger(cfg.slippageBps)&&cfg.slippageBps>0&&cfg.slippageBps<=market.binStep,'EXPLICIT_ONE_BIN_SLIPPAGE_REQUIRED');
  const sdk=await DLMM.create(conn,pool,{cluster:'localhost',programId:PROGRAM,skipSolWrappingOperation:true});
  assert(sdk.lbPair.activeId===market.activeId&&sdk.lbPair.binStep===market.binStep&&sdk.lbPair.reserveX.equals(reserveX)&&sdk.lbPair.reserveY.equals(reserveY)&&sdk.lbPair.tokenXMint.equals(mintX)&&sdk.lbPair.tokenYMint.equals(mintY),'SDK_STATE_CHANGED');
