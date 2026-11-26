@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 const root=fileURLToPath(new URL('../../',import.meta.url)),research=join(root,'research');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const records=[];
+const requiredTests=["research/capture-accounts.test.mjs","research/engine-exit.test.mjs","research/engine-guard.test.mjs","research/engine-liquidity.test.mjs","research/engine-path-risk.test.mjs","research/engine-rebalance.test.mjs","research/engine-volume.test.mjs","research/integer.test.mjs","research/live/allocation-diagnostic.test.mjs","research/live/bitmap.test.mjs","research/live/engine-input.test.mjs","research/live/inverse-allocation-core.test.mjs","research/live/message-audit-core.test.mjs","research/live/monitor-core.test.mjs","research/live/open-message-core.test.mjs","research/live/performance-core.test.mjs","research/live/performance-lifecycle.test.mjs","research/live/performance-series.test.mjs","research/live/position-ledger-core.test.mjs","research/live/preview-management.test.mjs","research/live/preview-plans.test.mjs","research/live/reference-math.test.mjs","research/live/review-core.test.mjs","research/live/shadow-summary.test.mjs","research/live/shadow.test.mjs","research/live/simulation-core.test.mjs","research/live/state-core.test.mjs","research/live/terminal-core.test.mjs","research/live/terminal-management.test.mjs","research/live/terminal-ui.test.mjs","research/live/wallet-evidence-core.test.mjs","research/live/weight-shape-core.test.mjs","research/position-input.test.mjs"];
 function execute(id,args,timeout=120000){
  const r=spawnSync(process.execPath,args,{cwd:root,encoding:'utf8',timeout,maxBuffer:16*1024*1024});
  const result={id,command:[process.execPath,...args],status:r.status===0&&!r.error?'PASS':'FAIL',exitCode:r.status,error:r.error?.code??null,stdout:r.stdout??'',stderr:r.stderr??''};records.push(result);return result;
@@ -15,6 +16,8 @@ async function walk(dir){const files=[];for(const e of await readdir(dir,{withFi
 async function main(){
  const major=Number(process.versions.node.split('.')[0]);if(major<20)throw Error('Node >=20 required');
  const files=await walk(research),modules=files.filter(p=>p.endsWith('.mjs')),tests=modules.filter(p=>p.endsWith('.test.mjs')),sourceHashes={};
+ const testPaths=new Set(tests.map(p=>relative(root,p).replaceAll('\\','/'))),missing=requiredTests.filter(p=>!testPaths.has(p));
+ records.push({id:'required-test-inventory',status:missing.length?'FAIL':'PASS',minimum:requiredTests.length,found:tests.length,missing});
  for(const p of modules){sourceHashes[relative(root,p)]=sha(await readFile(p));execute('syntax:'+relative(root,p),['--check',p],15000)}
  const htmlPath=join(research,'live','terminal.html'),html=await readFile(htmlPath,'utf8');sourceHashes[relative(root,htmlPath)]=sha(html);
  const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1];let domError=null;
@@ -22,7 +25,11 @@ async function main(){
  records.push({id:'terminal-inline-structure',status:domError?'FAIL':'PASS',error:domError});
  for(const p of files.filter(p=>p.endsWith('.example.json')||['package.json','package-lock.json'].includes(basename(p)))){try{const b=await readFile(p);sourceHashes[relative(root,p)]=sha(b);JSON.parse(b.toString('utf8'));records.push({id:'json:'+relative(root,p),status:'PASS'})}catch(e){records.push({id:'json:'+relative(root,p),status:'FAIL',error:e.message})}}
  if(records.every(r=>r.status==='PASS')){
-  execute('node-test-suite',['--test',...tests],180000);
+  // Separate test processes identify each broken entry and prevent silent missing or skipped suites.
+  for(const p of tests){const r=execute('test:'+relative(root,p),['--test','--test-reporter=tap',p],120000);
+   const total=r.stdout.match(/^# tests (\d+)$/m),passed=r.stdout.match(/^# pass (\d+)$/m),bad=['fail','cancelled','skipped','todo'].map(k=>r.stdout.match(new RegExp('^# '+k+' (\\d+)$','m')));
+   if(!total||!passed||Number(total[1])<1||Number(passed[1])!==Number(total[1])||bad.some(x=>!x||Number(x[1])!==0)){r.status='FAIL';r.tapError='MISSING_OR_INCOMPLETE_TAP_COUNTS'}
+  }
   execute('legacy-research-suite',[join(research,'test.mjs')],120000);
  }else records.push({id:'node-test-suite',status:'BLOCKED',reason:'STATIC_CHECK_FAILED'});
  const git=spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}),dirty=spawnSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:root,encoding:'utf8'});
