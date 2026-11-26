@@ -20,7 +20,7 @@
 | T13 | Position monitoring | Actual position, suggestions, alerts and recovery | V4.5 capture/range monitoring, manual T10 and opt-in continuous risk observation, transition journal and historical recovery code ready; live acceptance pending |
 | T14 | Human-confirmed execution | Wallet, preview, simulation, limits, explicit signing and confirmation | Phase A–B4 research diagnostics, B5a/B5b local unsigned OPEN build and cost checks, B6 opt-in exact-message local simulation/reconciliation code draft ready; actual SDK/RPC/simulation acceptance, production management, signing and confirmation pending |
 | T15 | Execution reconciliation | Confirmed on-chain outcomes; failure/idempotency checks | Narrow direct finalized transaction/position cashflow ledger code draft ready; historical coverage, full transfer/ownership semantics and live acceptance pending |
-| T16 | Performance | Actual net PnL, fees, costs and HODL-relative attribution | Phase A bounded window and B1 cumulative NAV/HODL series, contributed capital-time and sampled NAV-hours diagnostics with scoped V4.5 import code ready; complete coverage, verified marks, zero-flow intervals, lifetime/realized PnL and actual utilization pending |
+| T16 | Performance | Actual net PnL, fees, costs and HODL-relative attribution | Phase A/B1 window and series diagnostics plus B2 closed lifecycle, rent and observed provider page-chain diagnostic code ready with V4.5 archive imports; independent complete coverage, verified marks, zero-flow intervals, actual cash realization/utilization and live acceptance pending |
 | T17 | End-to-end acceptance | Safety and evidence; any funded trial requires separate approval | Pending |
 
 ## Gates
