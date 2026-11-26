@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mergeHistory,streamHealth} from './state-core.mjs';
+import {mergeHistory,streamHealth,pendingStream,historyBatch} from './state-core.mjs';
 const a=mergeHistory(null,[{signature:'a',slot:1}]);
 const b=mergeHistory(a,[{signature:'b',slot:2},{signature:'a',slot:1}]);
 assert.equal(b.records.length,2);assert.equal(b.added,1);assert.equal(b.overlap,1);
@@ -12,3 +12,11 @@ assert.equal(streamHealth({status:'CAPTURED_UNVERIFIED',receivedAt:10},20,15),'R
 assert.equal(streamHealth({status:'PARTIAL',receivedAt:10},20,15),'UNAVAILABLE_OR_STALE');
 assert.equal(streamHealth({status:'CAPTURED_UNVERIFIED',receivedAt:30},20,15),'UNAVAILABLE_OR_STALE');
 console.log('State core fixture assertions passed; no live integration evidence.');
+
+const bounded=mergeHistory(b,[{signature:'c',slot:3},{signature:'b',slot:2}],2);
+assert.equal(bounded.records.length,2);assert.equal(bounded.records[0].signature,'c');assert.equal(bounded.droppedThisMerge,1);assert.equal(bounded.retentionTruncated,true);assert.equal(bounded.historyComplete,false);
+assert.equal(mergeHistory(bounded,[{signature:'c',slot:3}],2).retentionTruncated,true);
+assert.equal(mergeHistory(c,[],2).gapObserved,true);assert.equal(mergeHistory(c,[],2).status,'OVERLAP_MISSING');
+assert.throws(()=>mergeHistory({records:[{signature:'x',slot:1},{signature:'x',slot:2}]},[]));assert.throws(()=>mergeHistory(null,[],0));
+assert.equal(historyBatch(['p','a','b'],0).addresses[0],'p');assert.equal(historyBatch(['p','a','b'],1).addresses[0],'a');assert.equal(historyBatch(['p','a','b'],2).nextCursor,0);assert.equal(historyBatch(['p','a','b'],9).addresses[0],'p');assert.equal(historyBatch(['p','a','b'],2,true).addresses.length,3);
+const old={status:'CAPTURED_UNVERIFIED',receivedAt:1,evidence:{slot:2}};const pending=pendingStream(old,10);assert.equal(pending.status,'PENDING');assert.equal(pending.previousEvidence.slot,2);assert.equal(streamHealth(pending,10,100),'UNAVAILABLE_OR_STALE');
