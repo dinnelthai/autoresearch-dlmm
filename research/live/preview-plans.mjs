@@ -21,7 +21,7 @@ export function previewPlans(model,cfg,market,{asOf}){
   const v=Engine.evaluate(model,cfg,action,scenarios);
   const row={family:action.type===BASE?BASE:action.label,action,feasible:false,reason:v.reason??null,score:null,allocation:null};
   if(!v.feasible){rows.push(row);continue;}
-  if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar].every(finite)){row.reason='NONFINITE_MODEL_OUTPUT';rows.push(row);continue;}
+  if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite)){row.reason='NONFINITE_MODEL_OUTPUT';rows.push(row);continue;}
   const bins=v.allocation??[];
   if(action.type==='OPEN'){
    if(!bins.length){row.reason='EMPTY_ALLOCATION';rows.push(row);continue;}
@@ -38,7 +38,7 @@ export function previewPlans(model,cfg,market,{asOf}){
    const x=sum(bins,'x'),y=sum(bins,'y');
    if(x>model.wallet.x+1e-9||y+cfg.minSolReserve+cfg.operationCostSol>model.wallet.y+1e-9){row.reason='DECLARED_BUDGET_EXCEEDED';rows.push(row);continue;}
   }
-  row.feasible=true;row.score=v.utility;row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar};row.risk=v.risk;
+  row.feasible=true;row.score=v.utility;row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV'};row.risk=v.risk;
   row.allocation={bidSol:sum(bins,'y'),askMeme:sum(bins,'x'),lowerBinId:bins.length?Math.min(...bins.map(b=>b.id)):null,upperBinId:bins.length?Math.max(...bins.map(b=>b.id)):null,bins:bins.map(b=>({binId:b.id,priceSolPerMeme:Engine.price(cfg,b.id),meme:b.x,sol:b.y}))};
   rows.push(row);
  }
@@ -49,5 +49,5 @@ export function previewPlans(model,cfg,market,{asOf}){
  if(selected&&ranked.length&&ranked[0].score-base.score>cfg.minImprovementSol+cfg.uncertaintySol){selected=ranked[0];reason='HIGHEST_FEASIBLE_SCENARIO_SCORE';}
  if(!selected)reason='BASELINE_UNAVAILABLE_NO_DEPLOYMENT';
  const families=[BASE,'spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid'].map(f=>({family:f,total:rows.filter(r=>r.family===f).length,feasible:rows.filter(r=>r.family===f&&r.feasible).length,best:rows.filter(r=>r.family===f&&r.feasible).sort((a,b)=>b.score-a.score)[0]??null}));
- return {...result,status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',reason,regime:g.regime,selected,candidates:rows,families,limitations:['No implicit spot acquisition or disposal; existing-position actions belong to T10.','Scenario estimates are model outputs, not expected realized income, calibrated probability, or protocol-exact amounts.','Observed bin share uses model value proxy, not protocol liquidity shares; exact SDK feasibility and rounding are pending.','No LP is a valid baseline; no deployment if baseline unavailable.']};
+ return {...result,status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',reason,regime:g.regime,selected,candidates:rows,families,limitations:['Path CVaR measures maximum loss from initial NAV on sampled scenarios, not continuous drawdown. Path breach counts are diagnostics, not calibrated probabilities or execution approval.','No implicit spot acquisition or disposal; existing-position actions belong to T10.','Scenario estimates are model outputs, not expected realized income, calibrated probability, or protocol-exact amounts.','Observed bin share uses model value proxy, not protocol liquidity shares; exact SDK feasibility and rounding are pending.','No LP is a valid baseline; no deployment if baseline unavailable.']};
 }
