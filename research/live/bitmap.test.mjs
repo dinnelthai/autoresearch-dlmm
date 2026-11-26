@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {bitmapIndexes} from './bitmap.mjs';
+const zero=n=>Array(n).fill(0n);
+const internal=zero(16);
+internal[0]=1n;internal[7]=1n<<63n;internal[8]=1n;internal[15]=1n<<63n;
+const pos=Array.from({length:12},()=>zero(8)),neg=Array.from({length:12},()=>zero(8));
+pos[0][0]=1n;neg[0][0]=1n;pos[11][7]=1n<<63n;neg[11][7]=1n<<63n;
+assert.deepEqual(bitmapIndexes(internal,pos,neg),[-6656,-513,-512,-1,0,511,512,6655]);
+assert.deepEqual(bitmapIndexes(zero(16),null,null),[]);
+assert.throws(()=>bitmapIndexes(zero(15),null,null));
+assert.throws(()=>bitmapIndexes(zero(16),pos,null));
+assert.throws(()=>bitmapIndexes([1n<<64n,...zero(15)],null,null));
+assert.throws(()=>bitmapIndexes([-1n,...zero(15)],null,null));
+console.log('6 bitmap fixture assertions passed; no real account validation.');
