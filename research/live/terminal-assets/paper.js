@@ -27,6 +27,7 @@ function renderAutoPaper(r){
 }
 function validateAutoPaper(r,scope){if(r?.scope!=='PAPER_AUTO_RESEARCH_ONLY'||r.pool!==scope||r.pnlReady!==false||r.executionReady!==false||r.protocolExact!==false||typeof r.running!=='boolean'||!Array.isArray(r.rows)||r.rows.length>8)throw Error('模拟服务响应不符');return r}
 async function refreshPaperAuto(){
+ if(paperAutoData&&paperAutoData.pool!==target){paperAutoGeneration++;renderAutoPaper(null);put('paperAutoStatus','Pool 已切换，等待重新读取。')}
  if(paperAutoReading||paperAutoBusy||page!=='performance'||$('paperPerformance').hidden||!target)return;
  paperAutoReading=true;const p=target,g=++paperAutoGeneration;
  try{const res=await terminalGet('/api/terminal/paper-status',p);const r=await res.json();if(g!==paperAutoGeneration||p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'服务不可用');renderAutoPaper(validateAutoPaper(r,p))}
@@ -38,7 +39,7 @@ $('paperAutoStart').addEventListener('click',async()=>{
  if(paperAutoBusy)return;
  const p=target;try{
   if(!draft||draft.pool!==p||!canAnalyze()||!serviceMarket||!serviceReview)throw Error('请先在策略页准备有效草稿和市场审阅');
-  const dd=number('paperAutoDrawdown')*100,gap=number('paperAutoGap');if(!Number.isInteger(Math.round(dd))||dd<1||dd>10000||!Number.isInteger(gap))throw Error('风险参数无效');
+  const dd=number('paperAutoDrawdown')*100,gap=number('paperAutoGap');if(!Number.isFinite(dd)||Math.abs(dd-Math.round(dd))>1e-8||dd<1||dd>10000||!Number.isInteger(gap))throw Error('风险参数无效');
   const policy={maxDrawdownBps:Math.round(dd),maxGapSeconds:gap,maxLossSolRaw:paperSolRaw($('paperAutoLoss').value.trim()),exitCostSolRaw:paperSolRaw($('paperAutoExitCost').value.trim())};
   paperAutoBusy=true;paperAutoGeneration++;$('paperAutoStart').disabled=true;put('paperAutoStatus','正在生成并冻结虚拟方案…');
   const res=await terminalPost('/api/terminal/paper-start',{draft,marketSlot:serviceMarket.slot,marketRawHash:serviceMarket.rawHash,reviewHash:serviceReview.reviewHash,policy},45000),r=await res.json();
@@ -46,5 +47,5 @@ $('paperAutoStart').addEventListener('click',async()=>{
  }catch(e){if(p===target)put('paperAutoStatus','启动失败：'+e.message)}
  finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}
 });
-$('paperAutoPause').addEventListener('click',async()=>{if(paperAutoBusy||!paperAutoData?.running)return;const p=target,id=paperAutoData.id;paperAutoBusy=true;paperAutoGeneration++;$('paperAutoPause').disabled=true;try{const res=await terminalPost('/api/terminal/paper-pause',{id},10000),r=await res.json();if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'暂停失败');renderAutoPaper(validateAutoPaper(r,p))}catch(e){if(p===target)put('paperAutoStatus','暂停失败：'+e.message)}finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}});
+$('paperAutoPause').addEventListener('click',async()=>{if(paperAutoBusy||!paperAutoData?.running||paperAutoData.pool!==target)return;const p=target,id=paperAutoData.id;paperAutoBusy=true;paperAutoGeneration++;$('paperAutoPause').disabled=true;try{const res=await terminalPost('/api/terminal/paper-pause',{id},10000),r=await res.json();if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'暂停失败');renderAutoPaper(validateAutoPaper(r,p))}catch(e){if(p===target)put('paperAutoStatus','暂停失败：'+e.message)}finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}});
 setInterval(refreshPaperAuto,15000);

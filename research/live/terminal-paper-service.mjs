@@ -21,7 +21,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
  async function reader(){return createPaperSnapshotReader({ROOT,io,idl:await io.safeDataPath(idlPath)})}
  async function verifyCode(){assert((await sourceInventory(ROOT)).backendHash===backendHash,'PAPER_AUTO_CODE_CHANGED')}
  async function exclusive(fn){assert(!closed&&!isStopping()&&!flight,'PAPER_AUTO_BUSY');const task=(async()=>{await init();const p=join(dir,'writer.lock'),h=await open(p,'wx',0o600);try{return await fn()}finally{try{await h.close()}finally{await unlink(p)}}})();flight=task;try{return await task}finally{if(flight===task)flight=null}}
- async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_PRIMARY_POOL_ONLY');const a=await active();if(!a)return {schemaVersion:1,scope:'PAPER_AUTO_RESEARCH_ONLY',pool,status:'NO_EXPERIMENT',running:false,checkpointFresh:false,rows:[],executionReady:false,decisionReady:false,pnlReady:false,protocolExact:false};const state=await checkpoint(a);const current=state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:false}:!a.running?{status:'PAUSED',running:false}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,current,{now:Date.now(),maxAgeMs})}
+ async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_PRIMARY_POOL_ONLY');const a=await active();if(!a)return {schemaVersion:1,scope:'PAPER_AUTO_RESEARCH_ONLY',pool,status:'NO_EXPERIMENT',running:false,checkpointFresh:false,rows:[],executionReady:false,decisionReady:false,pnlReady:false,protocolExact:false};const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,current,{now:Date.now(),maxAgeMs})}
  async function start(body){return exclusive(async()=>{
   const a=await active();assert(!a?.running,'PAPER_AUTO_ALREADY_RUNNING');
   assert(body?.draft?.pool===pool&&body.policy&&body.draft?.riskConfig?.maxBinShare<=.1,'PAPER_AUTO_PRIMARY_POOL_OR_SHARE_LIMIT');
@@ -52,7 +52,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     const opening=await load(await io.safeDataPath(state.opening.proof.path)),previous=state.opening.slot===state.last.slot?opening:await load(await io.safeDataPath(state.last.proof.path));
     const next=advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now:Date.now()});
     await verifyCode();await save(next);
-    if(!next.rows.some(r=>r.status==='OPEN_PROXY')){await atomic(pointer,{...a,running:false});job={id:a.id,status:'FINISHED_OR_BLOCKED',running:false};return}
+    if(!next.rows.some(r=>r.status==='OPEN_PROXY')){await atomic(pointer,{...a,running:false,finalStatus:'FINISHED_OR_BLOCKED'});job={id:a.id,status:'FINISHED_OR_BLOCKED',running:false};return}
     job={id:a.id,status:'UPDATED_UNVERIFIED',running:true};
    }catch(e){job={id:a.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_UPDATE_FAILED'),running:true}}
   })}catch(e){job={id:job?.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_SCHEDULER_BUSY'),running:true}}
