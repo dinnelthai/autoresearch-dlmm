@@ -32,3 +32,17 @@ export function checkFunding({nativeSolRaw,memeAtaRaw,wsolAtaRaw,amountXRaw,amou
  if(y<dy)blockers.push('WSOL_ATA_INSUFFICIENT');
  return {status:blockers.length?'BLOCKED':'CAP_BUDGET_DIAGNOSTIC_ONLY',decisionReady:false,executionReady:false,signingAvailable:false,blockers,fee,rentReferenceRaw:rent.toString(),rentCapRaw:cap.toString(),nativeRequiredWithCapRaw:(f+cap+reserve).toString(),memeRequiredRaw:dx.toString(),wsolRequiredRaw:dy.toString(),limitations:['Rent reference is based on locally declared account size, not proven allocation size. Actual debit and CPI must be simulated. Native SOL and WSOL are separate.']};
 }
+
+// Pinned IDL layouts for the three allowed DLMM instructions. Reject trailing bytes.
+export function decodeOpenArgs(name,bytes,side){
+ const d=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+ if(name==='initialize_position'){assert(bytes.length===16,'INIT_DATA_LENGTH');return {lowerBinId:d.getInt32(8,true),width:d.getInt32(12,true)}}
+ const one=name==='add_liquidity_one_side';assert(one||name==='add_liquidity_by_weight','DEPOSIT_TYPE_INVALID');
+ const start=one?16:24;assert(bytes.length>=start+12,'DEPOSIT_DATA_LENGTH');
+ const first=d.getBigUint64(8,true),second=one?0n:d.getBigUint64(16,true);
+ assert(!one||['X','Y'].includes(side),'DEPOSIT_SIDE_INVALID');
+ const count=d.getUint32(start+8,true);assert(count>0&&count<26&&bytes.length===start+12+count*6,'DEPOSIT_DATA_LENGTH');
+ const weights=Array.from({length:count},(_,i)=>({binId:d.getInt32(start+12+i*6,true),weight:d.getUint16(start+16+i*6,true)}));
+ assert(weights.every((b,i)=>b.weight>0&&(!i||b.binId>weights[i-1].binId))&&weights.reduce((n,b)=>n+b.weight,0)<=65535,'DEPOSIT_WEIGHT_INVALID');
+ return {amountXRaw:(one&&side==='Y'?0n:first).toString(),amountYRaw:(one&&side==='Y'?first:second).toString(),activeId:d.getInt32(start,true),maxActiveBinSlippage:d.getInt32(start+4,true),weights};
+}
