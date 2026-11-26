@@ -12,7 +12,7 @@ export function checkPageCoverage(ledger,archives){
  let cursor=null,priorSlot=Infinity,head=null,tail=null;
  for(let i=0;i<archives.length;i++){
   const {manifest:m,manifestHash,pages}=archives[i],source=ledger.sources[i];
-  assert(hash(manifestHash)&&source.manifestHash===manifestHash&&!sourceHashes.has(manifestHash)&&m.schemaVersion===1&&m.pool===ledger.pool&&m.position===ledger.position&&m.indexAddress===ledger.position&&m.commitment==='finalized'&&m.status==='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'&&Array.isArray(m.gaps)&&!m.gaps.length&&m.before===cursor,'LIFE_CAPTURE_CHAIN');
+  assert(hash(manifestHash)&&source.manifestHash===manifestHash&&!sourceHashes.has(manifestHash)&&m.schemaVersion===1&&m.pool===ledger.pool&&m.position===ledger.position&&m.indexAddress===ledger.position&&m.commitment==='finalized'&&(m.status==='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'||i===archives.length-1&&m.status==='EMPTY_PAGE_OBSERVED_UNVERIFIED'&&m.stopReason==='EMPTY_PAGE'&&m.signatures?.length===0)&&Array.isArray(m.gaps)&&!m.gaps.length&&m.before===cursor,'LIFE_CAPTURE_CHAIN');
   sourceHashes.add(manifestHash);
   assert(Array.isArray(pages)&&pages.length>=1&&pages.length<=20&&Number.isInteger(m.pageLimit)&&m.pageLimit>=1&&m.pageLimit<=1000&&Array.isArray(m.signatures),'LIFE_PAGE_SCHEMA');
   let terminal=false;const local=[];
@@ -24,13 +24,13 @@ export function checkPageCoverage(ledger,archives){
     seen.add(row.signature);local.push({signature:row.signature,slot:row.slot,err:row.err,blockTime:row.blockTime});priorSlot=row.slot;head??=row.signature;tail=row.signature;
    }
    if(page.rows.length)cursor=page.rows.at(-1).signature;
-   if(page.rows.length<page.limit){terminal=true;assert(j===pages.length-1,'LIFE_AFTER_TERMINAL_PAGE')}
+   if(page.rows.length<page.limit){terminal=true;assert(j===pages.length-1,'LIFE_AFTER_TERMINAL_PAGE');assert(m.stopReason===(page.rows.length?'SHORT_PAGE':'EMPTY_PAGE'),'LIFE_TERMINATION_REASON_MISMATCH')}
   }
   assert(JSON.stringify(local)===JSON.stringify(m.signatures)&&m.nextBefore===cursor,'LIFE_MANIFEST_PAGE_MISMATCH');
   if(i<archives.length-1)assert(!terminal&&m.stopReason==='PAGE_BUDGET_OR_ERROR','LIFE_EARLY_TERMINATION');
   else assert(terminal&&['SHORT_PAGE','EMPTY_PAGE'].includes(m.stopReason),'LIFE_TAIL_NOT_OBSERVED');
  }
- assert(seen.size===expected.size&&seen.size===ledger.rows.length,'LIFE_COVERAGE_SET_MISMATCH');
+ assert(seen.size===expected.size&&seen.size===ledger.rows.length&&head===ledger.rows.at(-1)?.signature&&tail===ledger.rows[0]?.signature,'LIFE_COVERAGE_SET_MISMATCH');
  return {status:'PROVIDER_PAGE_CHAIN_OBSERVED_UNVERIFIED',head,tail,count:seen.size,sourceHashes:[...sourceHashes],historyComplete:false};
 }
 export function calculateLifecycle({ledger:l,archives,marks,policy,bindings}){
