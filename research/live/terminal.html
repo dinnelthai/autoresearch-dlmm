@@ -520,7 +520,7 @@ function renderWalletPositions(){
  const rows=$('walletPositionRows');rows.replaceChildren();const idx=walletIndex;if(!idx||idx.expiresAt<=Date.now())return;
  for(const p of idx.positions){const d=walletDetails.get(p.address),snap=d?.snapshot,tr=document.createElement('tr');
   cell(tr,p.address.slice(0,7)+'…'+p.address.slice(-5)).title=p.address;
-  cell(tr,d?.status==='POSITION_CALCULATED_UNVERIFIED'?'已读取 · 未验收':d?.status==='PARTIAL'?'不支持 BinArray V'+d.binArrayVersion:d?.reason??'已发现');
+  cell(tr,d?.status==='V2_POSITION_OBSERVATION_UNVERIFIED'?'V2 本金/费用观测 · 未验收':d?.status==='POSITION_CALCULATED_UNVERIFIED'?'已读取 · 未验收':d?.status==='PARTIAL'?'不支持 BinArray V'+d.binArrayVersion:d?.reason??'已发现');
   cell(tr,Number.isSafeInteger(d?.lowerBinId)?d.lowerBinId+' 至 '+d.upperBinId:'—');
   cell(tr,snap?exactAmount(snap.currentPrincipalRaw.y,9)+' / '+exactAmount(snap.currentPrincipalRaw.x,snap.snapshot.decimalsX):'—');
   cell(tr,snap?exactAmount(snap.pendingFeeRaw.y,9)+' / '+exactAmount(snap.pendingFeeRaw.x,snap.snapshot.decimalsX):'—');
@@ -546,7 +546,7 @@ async function loadWalletDetail(id){
   if(e!==positionReadEpoch||p!==target||w!==walletAddress)return;
   if(!res.ok)throw Error(r.gaps?.[0]??'POSITION_DETAIL_UNAVAILABLE');
   if(r.pool!==p||r.wallet!==w||r.position!==id||r.decisionReady!==false||r.executionReady!==false||!Number.isSafeInteger(r.slot)||r.slot<slot)throw Error('仓位详情身份无效');
-  if(r.status==='POSITION_CALCULATED_UNVERIFIED'){const snap=validatePosition(r.snapshot,p);if(snap.position!==id||snap.owner!==w||snap.slot!==r.slot)throw Error('仓位快照不符')}
+  if(['POSITION_CALCULATED_UNVERIFIED','V2_POSITION_OBSERVATION_UNVERIFIED'].includes(r.status)){const source=r.snapshot;if(r.status==='V2_POSITION_OBSERVATION_UNVERIFIED'&&(source?.status!==r.status||source.scope!=='WALLET_DISPLAY_ONLY'||source.decisionReady!==false||source.executionReady!==false||!Array.isArray(source.binArrayVersions)||!source.binArrayVersions.includes(2)||!source.binArrayVersions.every(v=>v===2||v===3)))throw Error('V2 观察范围无效');const snap=validatePosition(r.status==='V2_POSITION_OBSERVATION_UNVERIFIED'?{...source,status:'POSITION_CALCULATED_UNVERIFIED'}:source,p);if(snap.position!==id||snap.owner!==w||snap.slot!==r.slot)throw Error('仓位快照不符')}
   else if(r.status!=='PARTIAL'||r.reason!=='POSITION_BIN_VERSION_UNSUPPORTED')throw Error('仓位状态无效');
   walletDetails.set(id,{...r,readAt:Date.now()});
  }catch(err){if(e===positionReadEpoch)walletDetails.set(id,{reason:err.message,readAt:Date.now()})}finally{walletReadBusy=false;renderWalletPositions()}

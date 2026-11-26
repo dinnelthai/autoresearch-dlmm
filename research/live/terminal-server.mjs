@@ -274,9 +274,9 @@ async function readPositionDetail(body){
   const r=await run(['--pool',scope,'--provider',previewCfg.provider??'solana-rpc',...addresses.flatMap(a=>['--account',a])],'../capture-accounts.mjs',40000);
   const path=await safeDataPath(r.directory),m=JSON.parse(await boundedRead(await safeDataPath(join(path,'manifest.json')),16*1024*1024));
   assert(m.pool===scope&&m.commitment==='finalized'&&Number.isSafeInteger(m.contextSlot)&&m.contextSlot>=idx.slot&&m.contextSlot===r.contextSlot&&typeof m.raw?.sha256==='string','POSITION_CAPTURE_CONTEXT_INVALID');
-  const report=await run(['--capture',path,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--position',position,'--owner',wallet],'inspect-position.mjs',15000);
+  const report=await run(['--capture',path,'--idl',previewCfg.idl??'data/raw/dlmm-idl.json','--position',position,'--owner',wallet,'--observe-v2'],'inspect-position.mjs',15000);
   assert(report.pool===scope&&report.position===position&&report.slot===m.contextSlot&&report.rawHash===m.raw.sha256,'POSITION_CAPTURE_MISMATCH');
-  if(report.status==='POSITION_CALCULATED_UNVERIFIED'||report.reason==='POSITION_BIN_VERSION_UNSUPPORTED')return positionDetail(report,{pool:scope,wallet,position,slot:m.contextSlot,rawHash:m.raw.sha256});
+  if(['POSITION_CALCULATED_UNVERIFIED','V2_POSITION_OBSERVATION_UNVERIFIED'].includes(report.status)||report.reason==='POSITION_BIN_VERSION_UNSUPPORTED')return positionDetail(report,{pool:scope,wallet,position,slot:m.contextSlot,rawHash:m.raw.sha256});
   assert(Array.isArray(report.requiredAccounts),'POSITION_DETAIL_UNAVAILABLE');
   const next=[...new Set([...addresses,...report.requiredAccounts.map(validateScope)])].filter(a=>a!==scope);assert(next.length>addresses.length&&next.length<=99,'POSITION_DETAIL_INCOMPLETE');addresses=next;
  }

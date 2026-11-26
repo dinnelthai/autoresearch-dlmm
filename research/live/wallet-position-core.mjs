@@ -11,6 +11,7 @@ export function positionDetail(r,{pool,wallet,position,slot,rawHash}){
  assert(r?.pool===pool&&r.owner===wallet&&r.position===position&&r.slot===slot&&r.rawHash===rawHash&&hash(rawHash)&&Number.isSafeInteger(r.lowerBinId)&&Number.isSafeInteger(r.upperBinId)&&r.lowerBinId<=r.upperBinId,'POSITION_DETAIL_IDENTITY_MISMATCH');
  const base={pool,wallet,position,slot,lowerBinId:r.lowerBinId,upperBinId:r.upperBinId,status:r.status,decisionReady:false,executionReady:false};
  if(r.status==='POSITION_CALCULATED_UNVERIFIED')return {...base,snapshot:r};
+ if(r.status==='V2_POSITION_OBSERVATION_UNVERIFIED'){assert(r.scope==='WALLET_DISPLAY_ONLY'&&r.decisionReady===false&&r.executionReady===false&&Array.isArray(r.binArrayVersions)&&r.binArrayVersions.includes(2)&&r.binArrayVersions.every(v=>v===2||v===3),'V2_OBSERVATION_SCOPE_INVALID');return {...base,snapshot:r}}
  assert(r.status==='PARTIAL'&&r.reason==='POSITION_BIN_VERSION_UNSUPPORTED','POSITION_DETAIL_UNAVAILABLE');
  return {...base,reason:r.reason,binArrayVersion:r.binArrayVersion};
 }

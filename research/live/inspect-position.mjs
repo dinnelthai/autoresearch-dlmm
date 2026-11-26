@@ -7,13 +7,15 @@ import {createProgram,wrapPosition,getBinArrayIndexesCoverage,deriveBinArray,get
 import {TOKEN_PROGRAM_ID,NATIVE_MINT,unpackMint,getExtensionTypes} from '@solana/spl-token';
 import {readCapture,PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
 import {IntegerKernel as K} from '../integer.mjs';
+import {positionBinFields} from './position-bin-fields.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const key=v=>new PublicKey(v).toBase58();
 const raw=v=>{const s=v.toString();assert(/^\d+$/.test(s),'invalid unsigned integer');return s;};
 async function main(){
- const {values}=parseArgs({options:{capture:{type:'string'},idl:{type:'string'},position:{type:'string'},owner:{type:'string'},help:{type:'boolean'}}});
- if(values.help){console.log('node research/live/inspect-position.mjs --capture DIR --idl FILE --position ADDRESS [--owner WALLET]');return;}
+ const {values}=parseArgs({options:{capture:{type:'string'},idl:{type:'string'},position:{type:'string'},owner:{type:'string'},'observe-v2':{type:'boolean'},help:{type:'boolean'}}});
+ if(values.help){console.log('node research/live/inspect-position.mjs --capture DIR --idl FILE --position ADDRESS [--owner WALLET] [--observe-v2]');return;}
  assert(values.capture&&values.idl&&values.position,'capture, IDL and position required');
+ const allowV2=values['observe-v2']===true;assert(!allowV2||values.owner,'V2 observation requires owner');
  const position=key(values.position),bytes=await readFile(values.idl);assert(blob(bytes)===IDL_BLOB,'pinned IDL mismatch');
  const idl=JSON.parse(bytes);assert(idl.address===PROGRAM.toBase58(),'IDL program mismatch');
  const {m,accounts}=await readCapture(values.capture);const coder=new anchor.BorshAccountsCoder(idl);
@@ -21,7 +23,7 @@ async function main(){
  const pair=coder.decode('LbPair',programAccount(m.pool).data);
  const miX=key(pair.token_x_mint),miY=key(pair.token_y_mint);
  const report={schemaVersion:1,sdkCommit:SDK_COMMIT,idlBlob:IDL_BLOB,pool:m.pool,position,slot:m.contextSlot,rawHash:m.raw.sha256,status:'PARTIAL',requiredAccounts:[miX,miY,position],limitations:['No historical cash flow, market valuation, reward entitlement or net PnL.','Calculated from supplied capture; no independent live verification.']};
- function output(){console.log(JSON.stringify(report,null,2));if(report.status!=='POSITION_CALCULATED_UNVERIFIED')process.exitCode=1;}
+ function output(){console.log(JSON.stringify(report,null,2));if(!['POSITION_CALCULATED_UNVERIFIED','V2_POSITION_OBSERVATION_UNVERIFIED'].includes(report.status))process.exitCode=1;}
  if(!accounts.get(position)){report.missing=[position];output();return;}
  // createProgram creates a local coder/provider only; no RPC method is called here.
  const program=createProgram(new Connection('http://127.0.0.1:8899','finalized'),{programId:PROGRAM});
@@ -46,22 +48,24 @@ async function main(){
  const x=mint(miX),y=mint(miY);assert(miY===NATIVE_MINT.toBase58()&&miX!==miY&&y.decimals===9,'unsupported MEME_X_SOL_Y orientation');
  const shares=pos.liquidityShares(),fees=pos.feeInfos();
  assert(shares.length>=width&&fees.length>=width,'position bin data incomplete');
- const bins=new Map();
+ const bins=new Map(),versions=new Set();
  for(const e of arrayEntries){
   const arr=coder.decode('BinArray',programAccount(e.address).data);
   assert(key(arr.lb_pair)===m.pool&&Number(arr.index.toString())===e.index&&arr.bins.length===70,'unsupported/mismatched BinArray');
-  if(arr.version!==3){report.reason='POSITION_BIN_VERSION_UNSUPPORTED';report.binArrayVersion=arr.version;output();return;}
+  if(arr.version!==3&&!(arr.version===2&&allowV2)){report.reason='POSITION_BIN_VERSION_UNSUPPORTED';report.binArrayVersion=arr.version;output();return;}
   const [start,end]=getBinArrayLowerUpperBinId(new anchor.BN(e.index)).map(n=>n.toNumber());assert(end-start===69,'invalid array bounds');
-  for(let i=0;i<70;i++)bins.set(start+i,arr.bins[i]);
+  versions.add(arr.version);for(let i=0;i<70;i++)bins.set(start+i,{bin:arr.bins[i],version:arr.version});
  }
  const snapshot={sdkCommit:SDK_COMMIT,pool:m.pool,position,slot:m.contextSlot,tokenOrientation:'MEME_X_SOL_Y',tokenExtensions:false,decimalsX:x.decimals,decimalsY:y.decimals,binStep:raw(pair.bin_step),bins:[]};
  for(let i=0;i<width;i++){
   const id=lo+i,b=bins.get(id),f=fees[i];assert(b&&f,'missing position bin or checkpoint');
-  snapshot.bins.push({binId:id,supply:raw(b.liquidity_supply),share:raw(shares[i]),amountX:raw(b.amount_x),amountY:raw(b.amount_y),feeGrowthX:raw(b.fee_amount_x_per_token_stored),feeGrowthY:raw(b.fee_amount_y_per_token_stored),checkpointX:raw(f.feeXPerTokenComplete),checkpointY:raw(f.feeYPerTokenComplete),pendingX:raw(f.feeXPending),pendingY:raw(f.feeYPending)});
+  snapshot.bins.push(positionBinFields(b.bin,b.version,id,shares[i],f,{allowV2}));
  }
  const calc=JSON.parse(K.stringify(K.reconcile(snapshot)));
  report.snapshot=snapshot;report.accounting=calc;report.currentPrincipalRaw={x:calc.totals.principalX,y:calc.totals.principalY};report.pendingFeeRaw={x:calc.totals.feeX,y:calc.totals.feeY};
- report.status='POSITION_CALCULATED_UNVERIFIED';
+ report.binArrayVersions=[...versions].sort();
+ report.status=versions.has(2)?'V2_POSITION_OBSERVATION_UNVERIFIED':'POSITION_CALCULATED_UNVERIFIED';
+ if(versions.has(2)){report.scope='WALLET_DISPLAY_ONLY';report.decisionReady=false;report.executionReady=false;report.limitations.push('V2 common fields only; no reward/order semantics, management input, or independent SDK/accounting acceptance.');}
  report.limitations.push('Claimed lifetime fees are historical counters, NOT current wallet balances or additional current NAV.','No replay asOf is assigned from local receipt time; a validated chain-time boundary is required before strategy replay.','SDK wrapper, fee formula, range and version must be cross-checked with actual SDK position data.');
  output();
 }
