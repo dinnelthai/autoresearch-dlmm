@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {Engine,createResearchEngine} from './engine.mjs';
 import {engineSourcePaths} from './engine-source-paths.mjs';
 import {readFile,readdir} from 'node:fs/promises';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 const requests=[{"entry":"holding","meme":50000,"sol":5,"initialPrice":0.0001},{"entry":"sol","meme":0,"sol":10,"initialPrice":0.0001},{"entry":"position","meme":1000,"sol":5,"initialPrice":0.0001,"positionBins":[{"id":-1,"x":0,"y":1},{"id":1,"x":5000,"y":0}],"pendingFeeX":1,"pendingFeeY":0.001}];
 const fixtures=[
   {
@@ -104,5 +106,27 @@ const fixtures=[
   }
 ];
 function fingerprint(x){const s=JSON.stringify(x);let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return {length:s.length,fnv1a:(h>>>0).toString(16).padStart(8,'0')}}
-for(const f of fixtures)test('engine output parity '+f.kind+' '+f.entry,()=>{const req=requests.find(x=>x.entry===f.entry);assert.deepEqual(fingerprint(Engine.compare(req,Engine.demo(f.kind),{executionDelaySeconds:0,forecastSteps:4})),f.expected)});
+// The historical fingerprints are retained as diagnostics, not portable floating-point goldens.
+// Compare the actual frozen source and current engine on the same runtime, with no tolerance.
+const BASE='5dc94379869fe3dbb28bbaa88222f2f68ed5d479',BLOB='2da429e85e32abb54dfd9d2705a6654304d652b6';
+const cwd=fileURLToPath(new URL('../',import.meta.url));
+let originalPromise;
+function baseline(){
+ return originalPromise??=(async()=>{
+  let source;
+  try{source=execFileSync('git',['show',BASE+':research/engine.mjs'],{cwd,encoding:'utf8'})}
+  catch(e){throw Error('Frozen engine baseline unavailable; fetch the complete Git history',{cause:e})}
+  assert.equal(execFileSync('git',['hash-object','--stdin'],{cwd,input:source,encoding:'utf8'}).trim(),BLOB);
+  return (await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'))).Engine;
+ })();
+}
+for(const f of fixtures)test('engine output parity '+f.kind+' '+f.entry,async t=>{
+ const req=requests.find(x=>x.entry===f.entry),cfg={executionDelaySeconds:0,forecastSteps:4},original=await baseline();
+ const expected=original.compare(structuredClone(req),original.demo(f.kind),cfg);
+ const actual=Engine.compare(structuredClone(req),Engine.demo(f.kind),cfg);
+ const originalFingerprint=fingerprint(expected);
+ if(originalFingerprint.length!==f.expected.length||originalFingerprint.fnv1a!==f.expected.fnv1a)t.diagnostic('Historical fingerprint differs on '+process.version+' '+process.platform+'/'+process.arch+': '+JSON.stringify({historical:f.expected,baseline:originalFingerprint}));
+ assert.deepStrictEqual(actual,expected);
+ assert.equal(JSON.stringify(actual),JSON.stringify(expected));
+});
 test('facade shape and source inventory',async()=>{const a=createResearchEngine(),b=createResearchEngine();assert.notEqual(a,b);assert.deepEqual(Object.keys(a),["DEFAULTS","config","requestConfig","candidatePlans","compareWithHold","price","binId","cvar","newState","balances","nav","hodl","reportAt","reference","classify","risk","exitExposure","bidCap","weights","planBins","applyAction","swap","event","submit","executePending","forecast","evaluate","decide","liquidation","run","compare","demo","opportunities","createSession","analyzeRequest","evaluateSamples","scenarioSuite"]);assert.ok(Object.isFrozen(a.DEFAULTS));const files=(await readdir(new URL('./engine/',import.meta.url))).filter(x=>x.endsWith('.mjs')).sort();assert.deepEqual(engineSourcePaths.filter(x=>x.startsWith('research/engine/')).map(x=>x.split('/').at(-1)).sort(),files);for(const p of engineSourcePaths)assert.ok((await readFile(new URL('../'+p,import.meta.url))).length)});
