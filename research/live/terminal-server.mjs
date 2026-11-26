@@ -5,7 +5,7 @@ import {resolve,join,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
-import {buildReview} from './review-core.mjs';
+import {buildReview,assertSameReview} from './review-core.mjs';
 import {allocationDiagnostic} from './allocation-diagnostic.mjs';
 import {sdkWeightDiagnostic} from './sdk-weight-diagnostic.mjs';
 import {validateWalletEvidence,walletReview} from './wallet-evidence-core.mjs';
@@ -21,7 +21,8 @@ const cfg=JSON.parse(await readFile(values.config,'utf8')),pool=cfg.pool,port=Nu
 assert(poolAddress(pool)&&Number.isInteger(port)&&port>=1024&&port<=65535&&Number.isSafeInteger(maxAgeMs)&&maxAgeMs>=15000&&maxAgeMs<=600000,'INVALID_CONFIG');
 const statePath=join(DATA,'live',pool,'state.json'),origin='http://127.0.0.1:'+port;
 async function safeDataPath(path){const root=await realpath(DATA),p=await realpath(resolve(ROOT,path)),rel=relative(root,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'INVALID_DATA_PATH');return p}
-async function loadState(){return JSON.parse(await readFile(await safeDataPath(statePath),'utf8'))}
+async function boundedRead(path,limit){const h=await open(path,'r');try{const st=await h.stat();assert(st.isFile()&&st.size<=limit,'EVIDENCE_SIZE_EXCEEDED');const bytes=Buffer.alloc(st.size+1);let n=0;while(n<bytes.length){const r=await h.read(bytes,n,bytes.length-n,n);if(!r.bytesRead)break;n+=r.bytesRead;}assert(n===st.size,'EVIDENCE_SIZE_CHANGED');return bytes.subarray(0,n)}finally{await h.close()}}
+async function loadState(){return JSON.parse(await boundedRead(await safeDataPath(statePath),64*1024*1024))}
 const html=await readFile(join(ROOT,'research/live/terminal.html'));
 let busy=false,monitorTimer=null,monitorJob=null,stopping=false,monitorLock=null,monitorLockPath=null,monitorFile=null,monitorCursor=0,monitorError=null,monitorLastCycle=null;
 const monitorEnabled=cfg.monitoring?.enabled===true,monitorSeconds=cfg.monitoring?.intervalSeconds??30;
@@ -34,19 +35,19 @@ function blocked(reason){return {schemaVersion:1,pool,status:'BLOCKED',decisionR
 // Review availability is a preflight, not verification of its underlying evidence.
 async function loadReview(m,now,path=cfg.review){
  assert(path,'REVIEW_NOT_CONFIGURED');
- let bytes;try{bytes=await readFile(await safeDataPath(path))}catch{throw Error('REVIEW_FILE_UNAVAILABLE')}
+ let bytes;try{bytes=await boundedRead(await safeDataPath(path),8*1024*1024)}catch{throw Error('REVIEW_FILE_UNAVAILABLE')}
  let review;try{review=JSON.parse(bytes)}catch{throw Error('REVIEW_JSON_INVALID')}
  reviewMatches(review,m,now);
  const latest=review.observations.at(-1);assert(Array.isArray(latest.references)&&latest.references.length>=2&&latest.references.every(r=>Number.isSafeInteger(r.observedAt)&&r.observedAt<=latest.t&&now/1000-r.observedAt<review.maxAgeSeconds),'REVIEW_REFERENCE_STALE_OR_MISSING');
  const expiry=(Math.min(review.asOf,review.marketObservedAt,latest.t,...latest.references.map(r=>r.observedAt))+review.maxAgeSeconds)*1000;
- return {review,reviewHash:sha(bytes),expiresAt:expiry};
+ return {review,reviewBytes:bytes,reviewHash:sha(bytes),expiresAt:expiry};
 }
 async function managementContext(s,m,address,now){
  const p=positionCapture(s,m,address,now,maxAgeMs);
  assert(p.commonMarketCapture,'POSITION_MARKET_CAPTURE_MISMATCH');
  const entry=cfg.managementPolicies?.[address];
  assert(entry&&typeof entry.policy==='string','MANAGEMENT_POLICY_NOT_CONFIGURED');
- let bytes;try{bytes=await readFile(await safeDataPath(entry.policy))}catch{throw Error('MANAGEMENT_POLICY_UNAVAILABLE')}
+ let bytes;try{bytes=await boundedRead(await safeDataPath(entry.policy),32768)}catch{throw Error('MANAGEMENT_POLICY_UNAVAILABLE')}
  let policy;try{policy=JSON.parse(bytes)}catch{throw Error('MANAGEMENT_POLICY_INVALID')}
  const request=managementRequest(policy,m,p.report);
  const r=await loadReview(m,now,entry.review??cfg.review);
@@ -77,24 +78,25 @@ async function overview(){
 async function preview(body,mode='plans'){
  const now=Date.now(),s=await loadState(),m=currentMarket(s,pool,now,maxAgeMs);
  assert(body?.marketSlot===m.slot&&body.marketRawHash===m.rawHash,'MARKET_CHANGED_REFRESH_REQUIRED');
- let ctx=null,request,review,reviewHash,expiresAt;
+ let ctx=null,request,review,reviewBytes,reviewHash,expiresAt;
  if(mode==='management'){
   ctx=await managementContext(s,m,body.position,now);
   assert(body.positionSlot===ctx.p.report.slot&&body.positionRawHash===ctx.p.report.rawHash,'POSITION_CHANGED_REFRESH_REQUIRED');
   assert(body.policyHash===ctx.policyHash,'MANAGEMENT_POLICY_CHANGED_REFRESH_REQUIRED');
-  ({request,review,reviewHash,expiresAt}=ctx);
- }else{request=requestFromDraft(body.draft,m);({review,reviewHash,expiresAt}=await loadReview(m,now))}
+  ({request,review,reviewBytes,reviewHash,expiresAt}=ctx);
+ }else{request=requestFromDraft(body.draft,m);({review,reviewBytes,reviewHash,expiresAt}=await loadReview(m,now))}
  assert(body.reviewHash===reviewHash,'REVIEW_CHANGED_REFRESH_REQUIRED');
  const base=join(DATA,'terminal');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'analysis-'));
  try{
   const requestJson=JSON.stringify(request),requestHash=sha(requestJson);
-  for(const [name,data] of [['state',JSON.stringify(s)],['request',requestJson],['review',JSON.stringify(review)]])await writeFile(join(dir,name+'.json'),data,{mode:0o600});
+  for(const [name,data] of [['state',JSON.stringify(s)],['request',requestJson],['review',reviewBytes]])await writeFile(join(dir,name+'.json'),data,{mode:0o600});
   const r=await run(['--state',join(dir,'state.json'),'--request',join(dir,'request.json'),'--review',join(dir,'review.json'),mode==='management'?'--management':'--plans']);
   assert(r.pool===pool&&r.decisionReady===false&&r.executionReady===false,'ANALYSIS_CONTRACT_MISMATCH');
   if(r.market)assert(r.market.slot===m.slot&&r.market.rawHash===m.rawHash,'ANALYSIS_SNAPSHOT_MISMATCH');
   const latestState=await loadState(),latest=currentMarket(latestState,pool,Date.now(),maxAgeMs);assert(latest.slot===m.slot&&latest.rawHash===m.rawHash,'MARKET_CHANGED_DURING_ANALYSIS');const after=mode==='management'?await managementContext(latestState,latest,body.position,Date.now()):await loadReview(latest,Date.now());assert(after.reviewHash===reviewHash,'REVIEW_CHANGED_DURING_ANALYSIS');
   if(ctx){assert(after.policyHash===ctx.policyHash&&after.p.report.rawHash===ctx.p.report.rawHash&&after.p.report.slot===ctx.p.report.slot&&after.p.report.owner===ctx.p.report.owner,'POSITION_OR_POLICY_CHANGED_DURING_ANALYSIS');if(r.managementPreview?.status==='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED')assert(r.managementPreview.position?.address===body.position&&r.managementPreview.position?.owner===ctx.p.report.owner,'MANAGEMENT_REPORT_IDENTITY_MISMATCH')}
-  return {...r,terminalBinding:{requestHash,reviewHash,...(mode==='plans'?{researchBudget:{solRaw:request.solRaw,memeRaw:request.memeRaw,allowDispose:false,minSolReserve:request.riskConfig.minSolReserve,operationCostSol:request.riskConfig.operationCostSol}}:{}),...(ctx?{position:body.position,policyHash:ctx.policyHash,positionSlot:ctx.p.report.slot,positionRawHash:ctx.p.report.rawHash}:{}),expiresAt:Math.min(expiresAt,m.receivedAt+maxAgeMs),marketSlot:m.slot,marketRawHash:m.rawHash,sequence:s.sequence,generatedAt:Date.now(),scope:'RESEARCH_ONLY'}};
+  const finalNow=Date.now(),boundExpiry=Math.min(expiresAt,after.expiresAt,m.receivedAt+maxAgeMs,latest.receivedAt+maxAgeMs);assert(boundExpiry>finalNow,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
+  return {...r,terminalBinding:{requestHash,reviewHash,...(mode==='plans'?{researchBudget:{solRaw:request.solRaw,memeRaw:request.memeRaw,allowDispose:false,minSolReserve:request.riskConfig.minSolReserve,operationCostSol:request.riskConfig.operationCostSol}}:{}),...(ctx?{position:body.position,policyHash:ctx.policyHash,positionSlot:ctx.p.report.slot,positionRawHash:ctx.p.report.rawHash}:{}),expiresAt:boundExpiry,marketSlot:m.slot,marketRawHash:m.rawHash,sequence:s.sequence,generatedAt:Date.now(),scope:'RESEARCH_ONLY'}};
  }finally{await rm(dir,{recursive:true,force:true})}
 }
 function publicMonitor(){
@@ -155,49 +157,56 @@ function rememberReport(r,mode){
  const id=randomUUID();while(reviewReports.size>=16)reviewReports.delete(reviewReports.keys().next().value);
  reviewReports.set(id,{report:r,mode});return {...r,reviewId:id};
 }
-let walletEvidenceBusy=false;
-async function inspectReview(body){
+let walletEvidenceBusy=false,reviewBusy=false,overviewBusy=false;
+async function reviewContext(body){
  const saved=reviewReports.get(body?.reviewId);assert(saved&&saved.mode===body.mode,'RESEARCH_REPORT_UNAVAILABLE');
  const r=saved.report,b=r.terminalBinding,now=Date.now(),s=await loadState(),m=currentMarket(s,pool,now,maxAgeMs);
  let ctx=null,review;
  if(saved.mode==='management'){ctx=await managementContext(s,m,b.position,now);review=ctx}else review=await loadReview(m,now);
  assert(b.expiresAt>now&&m.receivedAt+maxAgeMs>now,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
  const result=buildReview({report:r,mode:saved.mode,rowIndex:body.rowIndex,wallet:body.wallet,market:m,position:ctx?.p.report,reviewHash:review.reviewHash,policyHash:ctx?.policyHash,now:Date.now()});
+ return {saved,r,b,m,result};
+}
+async function inspectReview(body){
+ const {saved,r,m,result}=await reviewContext(body);
  const integerAllocation=saved.mode==='plans'?allocationDiagnostic({row:r.planPreview.families[body.rowIndex].best,market:m,budget:b.researchBudget}):{status:'BLOCKED',reason:'MANAGEMENT_INTEGER_MAPPING_PENDING',executionReady:false,signingAvailable:false};
  let captureDirectory=null;if(cfg.weightDiagnostic?.inverseEnabled===true&&typeof m.capture==='string'){try{captureDirectory=await safeDataPath(m.capture)}catch{}}
  const weightDiagnostic=await sdkWeightDiagnostic(integerAllocation,m,cfg.weightDiagnostic,captureDirectory);
- assert(result.expiresAt>Date.now(),'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
- return {...result,integerAllocation,weightDiagnostic};
+ const latest=await reviewContext(body);assert(latest.saved===saved,'RESEARCH_REPORT_UNAVAILABLE');
+ const expiry=assertSameReview(result,latest.result,Date.now());
+ return {...result,expiresAt:expiry,reviewId:body.reviewId,integerAllocation,weightDiagnostic};
 }
 async function inspectWalletEvidence(body){
  assert(cfg.walletEvidence?.enabled===true,'WALLET_EVIDENCE_DISABLED');
  const genesis=cfg.walletEvidence.expectedGenesisHash;
  assert(typeof genesis==='string'&&/^[1-9A-HJ-NP-Za-km-z]{20,64}$/.test(genesis),'WALLET_EXPECTED_GENESIS_REQUIRED');
  const before=await inspectReview(body),m=currentMarket(await loadState(),pool,Date.now(),maxAgeMs);
- assert(m.slot===before.marketSlot&&before.expiresAt>Date.now(),'RESEARCH_MARKET_CHANGED');
+ assert(m.slot===before.marketSlot&&m.rawHash===before.marketRawHash&&before.expiresAt>Date.now(),'RESEARCH_MARKET_CHANGED');
  const args=['--wallet',before.wallet,'--mint-x',m.mintX,'--mint-y',m.mintY,'--decimals-x',String(m.decimalsX),'--min-slot',String(m.slot),'--genesis',genesis];
  const e=await run(args,'capture-wallet.mjs');
  if(e.status==='BLOCKED')throw Error(e.reason??'WALLET_CAPTURE_FAILED');
  validateWalletEvidence(e,{wallet:before.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now:Date.now()});
- const after=await inspectReview(body);assert(after.requestHash===before.requestHash&&after.wallet===before.wallet&&after.marketSlot===before.marketSlot,'RESEARCH_MARKET_CHANGED');
- const raw=await readFile(await safeDataPath(join(e.directory,'rpc.json')));assert(sha(raw)===e.rawHash,'WALLET_EVIDENCE_HASH_MISMATCH');
- return walletReview(e,after);
+ const raw=await boundedRead(await safeDataPath(join(e.directory,'rpc.json')),8*1024*1024);assert(sha(raw)===e.rawHash,'WALLET_EVIDENCE_HASH_MISMATCH');
+ const {result:after}=await reviewContext(body),now=Date.now(),expiry=assertSameReview(before,after,now);
+ validateWalletEvidence(e,{wallet:before.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now});
+ return {...walletReview(e,{...after,expiresAt:expiry}),reviewId:body.reviewId,mode:after.mode,rowIndex:after.rowIndex,pool:after.pool,position:after.position,marketSlot:after.marketSlot,marketRawHash:after.marketRawHash,reviewHash:after.reviewHash,policyHash:after.policyHash,positionSlot:after.positionSlot,positionRawHash:after.positionRawHash};
 }
 const server=createServer(async(req,res)=>{
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
  if(req.headers.host!=='127.0.0.1:'+port||req.headers.origin&&req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
  try{
+  if(stopping){send(res,503,blocked('SERVICE_STOPPING'));return}
   if(req.method==='GET'&&req.url==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);return}
   if(req.method==='GET'&&req.url==='/api/terminal/monitor'){send(res,200,publicMonitor());return}
-  if(req.method==='GET'&&req.url==='/api/terminal/state'){try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}return}
+  if(req.method==='GET'&&req.url==='/api/terminal/state'){if(overviewBusy){send(res,409,blocked('STATE_READ_BUSY'));return}overviewBusy=true;try{send(res,200,await overview())}catch{send(res,200,{...blocked('STATE_UNAVAILABLE'),market:null,reviewGate:{status:'BLOCKED',reason:'STATE_UNAVAILABLE'},positions:[],monitoring:[],streams:{}})}finally{overviewBusy=false}return}
   if(req.method==='POST'&&req.url==='/api/terminal/wallet-evidence'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
-   if(walletEvidenceBusy){send(res,409,blocked('WALLET_EVIDENCE_BUSY'));return}walletEvidenceBusy=true;
+   if(walletEvidenceBusy||reviewBusy){send(res,409,blocked('WALLET_EVIDENCE_BUSY'));return}walletEvidenceBusy=true;
    try{send(res,200,await inspectWalletEvidence(await jsonBody(req)))}finally{walletEvidenceBusy=false}return
   }
   if(req.method==='POST'&&req.url==='/api/terminal/review'){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
-   send(res,200,await inspectReview(await jsonBody(req)));return
+   if(reviewBusy||walletEvidenceBusy){send(res,409,blocked('REVIEW_BUSY'));return}reviewBusy=true;try{send(res,200,await inspectReview(await jsonBody(req)))}finally{reviewBusy=false}return
   }
   if(req.method==='POST'&&['/api/terminal/plans','/api/terminal/management'].includes(req.url)){
    if(req.headers.origin!==origin){send(res,403,blocked('LOCAL_ORIGIN_REQUIRED'));return}
@@ -207,7 +216,7 @@ const server=createServer(async(req,res)=>{
   send(res,404,blocked('NOT_FOUND'));
  }catch(e){const m=String(e.message);send(res,400,blocked(/^[A-Z0-9_]+$/.test(m)?m:'INPUT_OR_EVIDENCE_VALIDATION_FAILED'))}
 });
-server.requestTimeout=45000;server.headersTimeout=10000;
+server.requestTimeout=45000;server.headersTimeout=10000;server.keepAliveTimeout=2000;server.maxConnections=16;
 await new Promise((ok,fail)=>{server.once('error',fail);server.listen(port,'127.0.0.1',ok)});
 try{await startMonitor()}catch{monitorError='MONITOR_RECOVERY_OR_LOCK_FAILED'}
 console.log('Read-only Flow Terminal: '+origin);
