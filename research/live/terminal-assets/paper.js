@@ -75,7 +75,7 @@ let researchReport=null,reportGeneration=0,reportBusy=false;
 const reportName=m=>m==='NO_LP'?'HODL':m==='adaptive'?'Adaptive':names[m]??m;
 const reportDuration=ms=>Number.isFinite(ms)?(ms/3600000).toFixed(2)+' h':'—';
 const reportSol=v=>v==null?'—':paperSignedSol(v);
-function clearPaperReport(){reportGeneration++;researchReport=null;$('paperReportContent').hidden=true;$('paperReportJSON').disabled=true;$('paperReportCSV').disabled=true;$('paperReportSelect').replaceChildren();const o=document.createElement('option');o.value='';o.textContent='当前实验';$('paperReportSelect').append(o);$('paperReportSelect').value='';$('paperReportId').value='';put('paperReportStatus','选择当前或历史实验生成报告。')}
+function clearPaperReport(){reportGeneration++;researchReport=null;$('paperCompareAdd').disabled=true;$('paperReportContent').hidden=true;$('paperReportJSON').disabled=true;$('paperReportCSV').disabled=true;$('paperReportSelect').replaceChildren();const o=document.createElement('option');o.value='';o.textContent='当前实验';$('paperReportSelect').append(o);$('paperReportSelect').value='';$('paperReportId').value='';put('paperReportStatus','选择当前或历史实验生成报告。')}
 function reportSvg(tag,attrs,parent){const el=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))el.setAttribute(k,String(v));parent.append(el);return el}
 function renderPaperReportChart(){
  const r=researchReport,host=$('paperReportChart'),legend=$('paperReportLegend');host.replaceChildren();legend.replaceChildren();if(!r)return;
@@ -94,7 +94,7 @@ function renderPaperReportChart(){
  put('paperReportChartNote',(metric==='drawdownBps'?'单位 %':'单位 SOL')+' · '+pts.length+' 个展示点 / '+r.observations+' 个观测 · 缺口断线；采样图不代表完整逐点路径。');
 }
 function renderPaperResearchReport(r){
- researchReport=r;$('paperReportContent').hidden=false;$('paperReportJSON').disabled=false;$('paperReportCSV').disabled=false;
+ researchReport=r;$('paperCompareAdd').disabled=false;$('paperReportContent').hidden=false;$('paperReportJSON').disabled=false;$('paperReportCSV').disabled=false;
  put('paperReportCapital',reportSol(r.initialNavYRaw));put('paperReportDuration',reportDuration(r.elapsedMs));put('paperReportCount',r.observations);put('paperReportGaps',r.gapIntervals+' / '+r.missingObservationLogs);
  put('paperReportStatus',r.id+' · '+r.experimentStatus+' · 截至 '+new Date(r.endAt).toLocaleString()+' · '+r.historyVerification.records+' 条已提交记录');
  renderPaperReportChart();
@@ -133,7 +133,7 @@ async function loadPaperResearchReport(from){
  if(reportBusy||!target)return;const p=target,e=poolEpoch,g=++reportGeneration,id=$('paperReportId').value.trim()||$('paperReportSelect').value||undefined;
  reportBusy=true;$('paperReportLoad').disabled=true;put('paperReportStatus','正在读取已提交的历史记录…');
  try{const res=await terminalPost('/api/terminal/paper-report',{pool:p,id,from},60000),r=await res.json();if(g!==reportGeneration||!sameScope(e,p,poolEpoch,target))return;if(!res.ok||r.scope!=='PAPER_OBSERVED_RESEARCH_REPORT'||r.pool!==p||id&&id!==r.id||!Array.isArray(r.strategies)||r.strategies.length!==8||!Array.isArray(r.environments)||!Array.isArray(r.chart?.points)||r.chart.points.length>2000||!Array.isArray(r.logPage?.records)||r.logPage.records.length>30)throw Error(r.gaps?.[0]??'报告数据不可用');renderPaperResearchReport(r)}
- catch(err){if(g===reportGeneration&&sameScope(e,p,poolEpoch,target)){researchReport=null;$('paperReportContent').hidden=true;$('paperReportJSON').disabled=true;$('paperReportCSV').disabled=true;put('paperReportStatus','报告读取失败：'+err.message)}}
+ catch(err){if(g===reportGeneration&&sameScope(e,p,poolEpoch,target)){researchReport=null;$('paperCompareAdd').disabled=true;$('paperReportContent').hidden=true;$('paperReportJSON').disabled=true;$('paperReportCSV').disabled=true;put('paperReportStatus','报告读取失败：'+err.message)}}
  finally{reportBusy=false;$('paperReportLoad').disabled=false}
 }
 function reportDownload(text,type,ext){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([text],{type}));a.href=url;a.download=researchReport.id+'-report.'+ext;a.click();URL.revokeObjectURL(url)}
@@ -145,3 +145,38 @@ $('paperReportPrev').addEventListener('click',()=>{if(researchReport){$('paperRe
 $('paperReportNext').addEventListener('click',()=>{if(researchReport){$('paperReportId').value=researchReport.id;loadPaperResearchReport(researchReport.logPage.from+30)}});
 $('paperReportJSON').addEventListener('click',()=>{if(researchReport)reportDownload(JSON.stringify(researchReport,null,2),'application/json','json')});
 $('paperReportCSV').addEventListener('click',()=>{if(!researchReport)return;const fields=['mode','intervals','observedMs','missingIntervals','missingMs','netYRaw','alphaYRaw','feeAccrualYRaw','priorHoldingsRepriceYRaw','operationCostYRaw','inventoryConversionResidualYRaw'],rows=[['regime',...fields],...researchReport.environments.flatMap(e=>e.strategies.map(s=>[e.regime,...fields.map(k=>s[k])]))],csv=rows.map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\r\n');reportDownload(csv,'text/csv;charset=utf-8','csv')});
+
+
+// Pin compact report projections, not a second archive or an automatic experiment loop.
+const paperComparisons=new Map();
+function pinPaperComparison(r){
+ if(!r)return;
+ const key=r.pool+':'+r.id;
+ if(!paperComparisons.has(key)&&paperComparisons.size>=4){put('paperCompareStatus','最多四个实验，请先移除一个。');return}
+ const {pool,id,startAt,endAt,initialNavYRaw,backendHash,feeBasis,experimentConfig,experimentStatus,elapsedMs,gapMs,observations,strategies,environments,historyVerification}=r;
+ paperComparisons.set(key,{pool,id,startAt,endAt,initialNavYRaw,backendHash,feeBasis,experimentConfig,experimentStatus,elapsedMs,gapMs,observations,strategies,environments,historyHead:historyVerification?.headHash??null});
+ renderPaperComparisons();
+}
+function renderPaperComparisons(){
+ const body=$('paperCompareRows'),head=$('paperCompareEnvHead'),env=$('paperCompareEnvRows'),mode=$('paperCompareMode').value||'adaptive';for(const b of [body,head,env])b.replaceChildren();
+ const entries=[...paperComparisons.entries()],values=entries.map(([,r])=>r),same=k=>new Set(values.map(r=>r[k])).size<=1,configSame=values.every(r=>r.experimentConfig?.configHash)&&new Set(values.map(r=>r.experimentConfig.configHash)).size<=1;
+ put('paperCompareStatus',entries.length+' / 4 个固定报告 · '+(entries.length<2?'至少加入两个实验':'模型 '+(same('backendHash')?'相同':'不同')+' · 手续费口径 '+(same('feeBasis')?'相同':'不同')+' · 配置 '+(configSame?'相同':'不同或未知')+' · 观察窗口 '+(same('startAt')&&same('endAt')?'相同':'不同')+' · 不构成公平排名'));
+ const hdr=document.createElement('tr');for(const t of ['Pool / 实验',...Object.values(reportRegimes)]){const th=document.createElement('th');th.textContent=t;hdr.append(th)}head.append(hdr);
+ const pct=v=>Number.isFinite(v)?fmt(v/100)+'%':'—',bps=v=>Number.isFinite(v)?fmt(v):'—';
+ for(const [key,r] of entries){
+  const s=r.strategies.find(x=>x.mode===mode),a=s?.intervalAttribution,v=s?.endpointComparison,known=r.environments.filter(x=>x.regime!=='UNKNOWN').reduce((n,x)=>n+x.observedMs,0),tr=document.createElement('tr');
+  const idCell=cell(tr,r.pool.slice(0,8)+'… / '+r.id);idCell.title=r.pool+' / '+r.id+' / '+(r.historyHead??'');
+  cell(tr,new Date(r.startAt).toLocaleString()+' → '+new Date(r.endAt).toLocaleString()+' · '+r.experimentStatus);
+  cell(tr,reportSol(r.initialNavYRaw));const cfg=cell(tr,(r.backendHash??'').slice(0,8)+' / '+(r.experimentConfig?.configHash??'未知').slice(0,8)+' / '+r.feeBasis);
+  const detail=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent='冻结配置';pre.textContent=JSON.stringify(r.experimentConfig??null,null,2);detail.append(summary,pre);cfg.append(detail);
+  cell(tr,v?.eligible?bps(v.netReturnBps):'—');const alpha=cell(tr,v?.eligible?bps(v.alphaBps):'—');alpha.title=v?.reason??'同实验 HODL 配对';
+  cell(tr,mode==='adaptive'&&!s?.adaptiveDecisions?'—':bps(a?.alphaBpsPerHour));cell(tr,(a?.intervals??0)+' / '+(a?.missingIntervals??0));cell(tr,reportDuration(known)+' / '+reportDuration(r.gapMs));cell(tr,pct(a?.meanDeployedBps));cell(tr,pct(s?.maxDrawdownBps));
+  const td=cell(tr,''),button=document.createElement('button');button.type='button';button.textContent='移除';button.addEventListener('click',()=>{paperComparisons.delete(key);renderPaperComparisons()});td.append(button);body.append(tr);
+  const row=document.createElement('tr');cell(row,r.pool.slice(0,8)+'… / '+r.id);
+  for(const regime of Object.keys(reportRegimes)){const z=r.environments.find(e=>e.regime===regime)?.strategies.find(x=>x.mode===mode),td=cell(row,z?.intervals&&(mode!=='adaptive'||s?.adaptiveDecisions>0)?bps(z.alphaBpsPerHour):'—');if(z?.intervals)td.title=z.intervals+' 有效 / '+z.missingIntervals+' 缺失 · '+reportDuration(z.observedMs)}
+  env.append(row);
+ }
+}
+$('paperCompareAdd').addEventListener('click',()=>pinPaperComparison(researchReport));
+$('paperCompareMode').addEventListener('change',renderPaperComparisons);
+$('paperCompareClear').addEventListener('click',()=>{paperComparisons.clear();renderPaperComparisons()});

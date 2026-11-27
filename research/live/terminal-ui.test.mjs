@@ -23,6 +23,8 @@ function mount(){
   choosePosition:i=>{$('positionRows').children[i].children.at(-1).children[0].listeners.click[0]();return positionGeneration},
   ready:manageReady,
   matchesReviewResponse,
+  pinComparison:r=>{pinPaperComparison(r);return paperComparisons.size},
+  comparisonSize:()=>paperComparisons.size,
   reportReset:()=>{researchReport={id:'old'};$('paperReportContent').hidden=false;clearPaperReport();return researchReport===null},
   expireReport:()=>{report={terminalBinding:{marketSlot:1,marketRawHash:'h',expiresAt:0},reviewId:'old',planPreview:{families:[]}};archiveExpiredReport(null,null);return {preserved:!!report.planPreview,bound:!!report.terminalBinding,review:!!report.reviewId}},
   reviewScope:()=>target,
@@ -54,3 +56,5 @@ test('index expiration does not invalidate ongoing accounting, explicit scope re
 test('expired research remains visible as historical instead of clearing the result',()=>{const {api}=mount();const r=api.expireReport();assert.equal(r.preserved,true);assert.equal(r.bound,false);assert.equal(r.review,false)});
 
 test('report state is cleared when pool context changes',()=>{const {api,elements}=mount();assert.equal(api.reportReset(),true);assert.equal(elements.get('paperReportContent').hidden,true);assert.equal(elements.get('paperReportJSON').disabled,true)});
+
+test('pinned cross-experiment reports survive pool scope reset and refresh replaces same run',()=>{const {api,elements}=mount(),r={pool:'A',id:'one',startAt:1,endAt:2,strategies:[],environments:[],experimentConfig:{configHash:'a'},gapMs:0,observations:1};assert.equal(api.pinComparison(r),1);api.changePool('B');assert.equal(api.comparisonSize(),1);assert.equal(api.pinComparison({...r,pool:'B',id:'two'}),2);assert.equal(api.pinComparison({...r,endAt:3}),2);assert.equal(elements.get('paperCompareRows').children.length,2);elements.get('paperCompareClear').listeners.click[0]();assert.equal(api.comparisonSize(),0)});

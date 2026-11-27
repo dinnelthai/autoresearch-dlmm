@@ -41,3 +41,5 @@ test('horizons resolve at real elapsed time, exclude gaps, retain pending and co
  rows[1].gapCount=1;for(const x of rows.slice(2))x.gapCount=1;
  const broken=report(rows);assert.deepEqual(broken.decisionHorizons.map(h=>h.groups.find(g=>g.action==='HOLD').missing),[1,1,1]);assert.deepEqual(broken.decisionHorizons.map(h=>h.groups.find(g=>g.action==='HOLD').paired),[0,0,0]);
 });
+
+test('comparison metadata includes configuration and excludes adaptive without model decisions',()=>{const r=report([mk(1),mk(2,{feeX:1n})]);assert.equal(r.experimentConfig.configHash.length,64);assert.equal(r.experimentConfig.adaptiveEnabled,false);const a=r.strategies.find(s=>s.mode==='adaptive');assert.equal(a.endpointComparison.eligible,false);assert.equal(a.endpointComparison.alphaBps,null);assert.equal(a.endpointComparison.reason,'NO_ADAPTIVE_MODEL_DECISIONS');const s=r.strategies.find(s=>s.mode==='spot');assert.equal(s.endpointComparison.eligible,true);assert.equal(s.endpointComparison.alphaBps,90.9);const broken=report([mk(1),mk(2,{gapCount:1})]);assert.equal(broken.strategies.find(s=>s.mode==='spot').endpointComparison.eligible,false)});
