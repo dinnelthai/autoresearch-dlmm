@@ -17,6 +17,7 @@ function pair(record,row,baseline){
  const deployed=mark(integer(p.principalXRaw),integer(p.principalYRaw),price);assert(deployed>=0n&&deployed<=nav,'PAPER_REPORT_DEPLOYED_CAPITAL');
  return {price,nav,h,f,cost,deployed,status:row.status,alpha:integer(p.excessVsHoldYRaw),drawdownBps:p.drawdownBps};
 }
+function adaptiveDecision(d){return !!d&&d.kind!=='INITIAL_CONTROLS'&&d.reason!=='INITIAL_FROZEN_CONTROLS'&&(d.kind==='ADAPTIVE_MODEL'||!d.kind&&!!d.inputHash)}
 function environment(previous,current){
  const m=previous.observationLog?.market;
  if(!REPORT_REGIMES.includes(m?.regime)||m.regime==='UNKNOWN'||!m.inputBasis||!Number.isFinite(m.asOf)||!Number.isFinite(m.observationTime)||m.observationTime>m.asOf||m.asOf*1000>ms(previous)||!Number.isFinite(m.referenceExpiresAt)||m.referenceExpiresAt*1000<ms(current))return 'UNKNOWN';
@@ -46,7 +47,7 @@ export function createPaperReport(state,{maxChartPoints=2000}={}){
  let prior=null,count=0,gapIntervals=0,gapMs=0,unknownLogCount=0,firstTime=null,elapsedMs=0,decisionCount=0,timelineCount=0,lastInterval=null;
  function segment(regime,start,end){const last=timeline.at(-1);if(last?.regime===regime&&last.endAt===start){last.endAt=end;last.intervals++;return}timelineCount++;timeline.push({regime,startAt:start,endAt:end,intervals:1});if(timeline.length>1000)timeline.shift()}
  function observeFollowup(previous,current,elapsed,gap){
-  const log=previous.r.observationLog,d=log?.decision;if(!d)return;
+  const log=previous.r.observationLog,d=log?.decision;if(!d||d.kind==='INITIAL_CONTROLS'||d.reason==='INITIAL_FROZEN_CONTROLS')return;
   const op=log.operations?.find(o=>o.mode==='adaptive'&&['OPEN','REENTRY','REPOSITION','REMOVE_AND_HOLD','EXIT'].includes(o.action));
   const selected=d.selected?.action??'NO_SELECTION',action=op?.action??(selected==='HOLD'||selected==='NO_LP'?selected:'NO_OPERATION'),key=action,group=followups.get(key)??{action,decisions:0,paired:0,missing:0,observedMs:0,nextNetYRaw:0n,nextAlphaYRaw:0n,positiveAlpha:0,immediateSamples:0,immediateNavChangeYRaw:0n};
   group.decisions++;
@@ -62,9 +63,10 @@ export function createPaperReport(state,{maxChartPoints=2000}={}){
    if(gap||!continuous){for(const q of h.pending)horizonGroup(h,q.action).missing++;h.pending=[]}
    else{let done=0;while(done<h.pending.length&&h.pending[done].due<=t){const q=h.pending[done++],g=horizonGroup(h,q.action);if(v&&t-q.due<=state.policy.maxGapSeconds*1000){const alpha=v.alpha-q.alpha;g.paired++;g.sumAlphaYRaw+=alpha;g.sumNetYRaw+=v.nav-q.nav;g.elapsedMs+=t-q.start;if(alpha>0n)g.positiveAlpha++}else g.missing++}if(done)h.pending=h.pending.slice(done)}
    const l=r.observationLog,d=l?.decision,op=l?.operations?.find(o=>o.mode==='adaptive'&&['OPEN','REENTRY','REPOSITION','REMOVE_AND_HOLD','EXIT'].includes(o.action));
-   if(!d||(!op&&!d.inputHash))continue;
+   if(!d||(!op&&!adaptiveDecision(d)))continue;
    const action=op?.action??(['HOLD','NO_LP'].includes(d.selected?.action)?d.selected.action:'NO_OPERATION'),g=horizonGroup(h,action);g.eligible++;
-   if(v)h.pending.push({action,start:t,due:t+h.seconds*1000,alpha:v.alpha,nav:v.nav});else g.missing++;
+   const start=Math.max(t,Number.isFinite(d.decidedAt)?d.decidedAt:t);
+   if(v){const q={action,start,due:start+h.seconds*1000,alpha:v.alpha,nav:v.nav};const last=h.pending.at(-1);h.pending.push(q);if(last&&last.due>q.due)h.pending.sort((a,b)=>a.due-b.due)}else g.missing++;
   }
  }
  function transitionStep(regime,deltas,elapsed){

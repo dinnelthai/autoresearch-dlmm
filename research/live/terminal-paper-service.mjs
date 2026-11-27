@@ -50,7 +50,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     aggregate.add(r);if(r.sequence>=from&&r.sequence<from+30)records.push({sequence:r.sequence,slot:r.slot,time:Date.parse(r.proof.receivedAt),log:r.observationLog??null});
    }});
    const current=await active();
-   return {...aggregate.finish(),historyVerification:audit,experimentStatus:state.window?.status==='ENDPOINT_OBSERVED'?'ENDPOINT_OBSERVED':current?.id===id?(current.running?'RUNNING':current.finalStatus??'PAUSED'):'HISTORICAL',logPage:{from,limit:30,total:state.snapshotCount,records}};
+   return {...aggregate.finish(),historyVerification:audit,experimentStatus:state.window?.status==='ENDPOINT_OBSERVED'?'ENDPOINT_OBSERVED':current?.id===id?(current.running?(state.backendHash!==backendHash?'BLOCKED_MODEL_CHANGED':job?.id===id?job.status:'RUNNING'):current.finalStatus??'PAUSED'):'HISTORICAL',logPage:{from,limit:30,total:state.snapshotCount,records}};
   }finally{reporting=false}
  }
  async function context(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const m=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs);let r=null;try{r=await loadReview(m,Date.now())}catch{}const valid=r?.expiresAt>Date.now();return {schemaVersion:1,scope:'PAPER_OPEN_CONTEXT_RESEARCH_ONLY',pool,marketSlot:m.slot,marketRawHash:m.rawHash,reviewHash:valid?r.reviewHash:null,expiresAt:Math.min(valid?r.expiresAt:Infinity,m.receivedAt+maxAgeMs),executionReady:false,decisionReady:false,pnlReady:false}}
@@ -87,7 +87,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   }
   state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:reviewHash?'REVIEWED_MODEL':'FIXED_OBSERVED_BIN_CONTROL',...(optimization?{optimization:{datasetSha256:optimization.datasetSha256,nextWindowAfter:optimization.nextWindowAfter,tuning:strategyTuning(optimization.tuning),proposalHash:sha(JSON.stringify(optimization))}}:{})};
   assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
-  state.observationLog={market:marketLog(m,null,null,'INITIAL_OBSERVATION'),decision:decisionLog(r.planPreview,{slot:m.slot,observedAt:state.frozenAt,reason:'INITIAL_FROZEN_CONTROLS',inputHash:state.researchBinding.reportHash}),operations:operationLog(null,state)};
+  state.observationLog={market:marketLog(m,null,null,'INITIAL_OBSERVATION'),decision:decisionLog(r.planPreview,{slot:m.slot,observedAt:state.frozenAt,reason:'INITIAL_FROZEN_CONTROLS',kind:'INITIAL_CONTROLS',decidedAt:state.frozenAt,inputHash:state.researchBinding.reportHash}),operations:operationLog(null,state)};
   await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};features=null;lastFeatureAttempt=-Infinity;return get();
  })}
  async function finish(a,status,reason=null){await atomic(pointer,{...a,running:false,finalStatus:status,finishedAt:Date.now()});job={id:a.id,status,running:false,...(reason?{reason}:{})}}
@@ -112,7 +112,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     const sample=features?.observation,prior=state.collectedObservations??[];
     if(sample?.basis===PAPER_OBSERVATION_BASIS&&sample.receivedAt<=Date.parse(snapshot.proof.requestedAt)&&sample.slot<m.slot&&sample.event.t>(prior.at(-1)?.event.t??-1))next.collectedObservations=[...prior,sample].slice(-12);
     const row=next.rows.find(r=>r.mode==='adaptive'),beforeDecision=row?.points.at(-1),req=next.adaptiveRequest??next.researchRequest;
-    let logMarket=marketLog(m,null,null,'MODEL_INPUT_UNAVAILABLE'),logDecision=decisionLog(null,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),reason:windowCapture==='ENDPOINT'?'WINDOW_ENDPOINT':next.adaptiveRequest?'NO_ELIGIBLE_ADAPTIVE_PATH':'ADAPTIVE_DISABLED'});
+    let logMarket=marketLog(m,null,null,'MODEL_INPUT_UNAVAILABLE'),logDecision=decisionLog(null,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),kind:'NO_MODEL_DECISION',reason:windowCapture==='ENDPOINT'?'WINDOW_ENDPOINT':next.adaptiveRequest?'NO_ELIGIBLE_ADAPTIVE_PATH':'ADAPTIVE_DISABLED'});
     if(req&&next.collectedObservations?.length){try{const collected=collectedPaperInputs({m,req,samples:next.collectedObservations,asOf:Math.floor(Date.parse(snapshot.proof.receivedAt)/1000)});logMarket=marketLog(m,collected,paperEnvironment(collected))}catch(e){logMarket=marketLog(m,null,null,errorCode(e,'PAPER_MARKET_ENVIRONMENT_UNAVAILABLE'))}}
     if(windowCapture!=='ENDPOINT'&&next.adaptiveRequest&&['HOLD_ONLY','OPEN_PROXY'].includes(row?.status)){
      try{
@@ -133,11 +133,11 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
       const management=virtualManagement({state:next,row,snapshot,reviewed});
       next=updateAdaptiveSnapshot(next,{snapshot,reviewed,preview:management,reviewHash,now:Date.now()});
       next.adaptiveInputBasis=reviewed.basis??'REVIEWED_MODEL';
-      const decided=next.rows.find(r=>r.mode==='adaptive');logDecision=decisionLog(management,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),inputHash:reviewHash,outcome:decided.adaptiveReason});
-     }catch(e){const reason=errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE');next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:reason}:r)};logDecision=decisionLog(null,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),reason,outcome:'NO_ACTION'})}
+      const decided=next.rows.find(r=>r.mode==='adaptive');logDecision=decisionLog(management,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),kind:'ADAPTIVE_MODEL',decidedAt:Date.now(),inputHash:reviewHash,input:{basis:reviewed.basis??'REVIEWED_MODEL',asOf:reviewed.asOf,latest:reviewed.latest,observationCount:reviewed.observations.length,observationsHash:sha(JSON.stringify(reviewed.observations)),configHash:sha(JSON.stringify(reviewed.cfg))},outcome:decided.adaptiveReason});
+     }catch(e){const reason=errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE');next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:reason}:r)};logDecision=decisionLog(null,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),reason,kind:'NO_MODEL_DECISION',decidedAt:Date.now(),outcome:'NO_ACTION'})}
     }
     if(windowCapture==='ENDPOINT')next={...next,window:finishPaperWindow(state.window,'ENDPOINT_OBSERVED',Date.parse(snapshot.proof.receivedAt))};
-    next.observationLog={market:logMarket,decision:logDecision,operations:operationLog(state,next,logDecision.selected?beforeDecision:null)};
+    next.observationLog={market:logMarket,decision:logDecision,featureCollection:features?{slot:features.slot,observedAt:features.observedAt,sources:features.sources,modelInputStatus:features.modelInputStatus??null,modelInputReason:features.modelInputReason??null}:null,operations:operationLog(state,next,logDecision.selected?beforeDecision:null)};
     next=await save(next,state);
     if(windowCapture==='ENDPOINT'){await finish(a,'ENDPOINT_OBSERVED');return}
     if(next.snapshotCount>=PAPER_SNAPSHOT_LIMIT){await finish(a,'SNAPSHOT_LIMIT_REACHED');return}
