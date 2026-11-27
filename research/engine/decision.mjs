@@ -1,7 +1,7 @@
 // Extracted from the offline research engine; calculations unchanged.
 import {EPS} from './numeric.mjs';
 import {balances} from './accounting.mjs';
-import {fresh,classify,marketAdmission} from './market.mjs';
+import {fresh,classify,marketAdmission,referenceUncertainty} from './market.mjs';
 import {risk} from './risk.mjs';
 import {forecast} from './forecast.mjs';
 import {evaluate,compareWithHold} from './evaluation.mjs';
@@ -42,7 +42,7 @@ function decide(s,c,mode="adaptive"){
   const feasible=results.filter(a=>a.feasible).sort((a,b)=>b.utility-a.utility);
   if(!s.bins.length&&!base?.feasible)return {action:{type:'NO_LP'},reason:'BASELINE_UNAVAILABLE_NO_DEPLOYMENT',regime:g.regime,risk:r,candidates:results};
   if(!feasible.length)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"RISK_BLOCKED",regime:g.regime,risk:r,candidates:results};
-  let best=selectByUtility(results,base,c,{requireBaseline:!s.bins.length});
+  let best=selectByUtility(results,base,{...c,uncertaintySol:referenceUncertainty(s,c)},{requireBaseline:!s.bins.length});
   if(best.action.type==="REPOSITION"&&(s.market.t-s.lastActionTime<c.cooldownSeconds||s.rebalances>=c.maxRebalances||s.turnover+s.rebalanceTurnover>=c.maxTurnoverSol)){if(base.feasible)best=base;else best=feasible.find(v=>v.action.type!=="REPOSITION")||{action:{type:"REMOVE_AND_HOLD"},feasible:false,reason:"REBALANCE_BUDGET"};}
   return {action:best.action,reason:best===base?"BASELINE_WINS_OR_MARGIN":"MAX_FEASIBLE_UTILITY",regime:g.regime,risk:r,selected:best,candidates:results,forecastLabel:"SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED"};
 }

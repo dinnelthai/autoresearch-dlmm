@@ -40,8 +40,13 @@ function classify(s,c){
   else if(efficiency>c.trendEfficiencyThreshold&&trend < -c.trendLogReturnThreshold)regime="DOWNTREND";
   return {regime,flags,features:{trend,volatility,efficiency,buyImbalance:m.buyImbalance,holderOutflow:m.holderOutflow,markout:mature},calibration:"UNCALIBRATED_RULES"};
 }
+// Lower-confidence sources need a wider economic improvement margin, not a hard gate.
+function referenceUncertainty(s,c){
+  const confidence=s.market?.ref?.confidence;
+  return c.uncertaintySol*(confidence==='LOW'?2:confidence==='MEDIUM'?1.5:1);
+}
 // Shared admission rule for all research and paper decision adapters.
 function marketAdmission(g){
   return ['HEALTHY_RANGE','UPTREND','DOWNTREND'].includes(g.regime)&&!g.flags.includes('HOLDER_CONCENTRATION');
 }
-export {reference,fresh,classify,marketAdmission};
+export {reference,fresh,classify,marketAdmission,referenceUncertainty};
