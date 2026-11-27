@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import config
+from config import primary_metric_name as metric_name, primary_metric_value as metric_value
 
 
 ROOT = Path(__file__).parent
@@ -276,14 +277,6 @@ def latest_val_result(before: set[str] | None = None) -> Path:
     return candidates[-1]
 
 
-def metric_name(metrics: dict) -> str:
-    return metrics.get("primary_metric_name", "net_pnl_pct")
-
-
-def metric_value(metrics: dict) -> float:
-    return float(metrics.get("primary_metric_value", metrics.get("net_pnl_pct", float("-inf"))))
-
-
 def run_backtest(args: argparse.Namespace, horizon_mode: str) -> tuple[dict, Path]:
     config.EXPERIMENTS_DIR.mkdir(exist_ok=True)
     before = {path.name for path in config.EXPERIMENTS_DIR.glob("*_val.json")}
@@ -318,25 +311,6 @@ def run_backtest(args: argparse.Namespace, horizon_mode: str) -> tuple[dict, Pat
     if not math.isfinite(metric_value(metrics)):
         raise RuntimeError("Non-finite validation metric")
     return metrics, val_file
-
-
-def best_metric() -> float:
-    history_path = config.EXPERIMENTS_DIR / "history.jsonl"
-    if not history_path.exists():
-        return float("-inf")
-
-    best = float("-inf")
-    with open(history_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            record = json.loads(line)
-            if record.get("label") not in {"val", "validation set"}:
-                continue
-            metric = metric_value(record.get("metrics", {}))
-            best = max(best, metric)
-    return best
 
 
 def build_prompt(

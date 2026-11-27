@@ -10,6 +10,7 @@ on:
       - 'research/test.mjs'
       - 'research/integer.mjs'
       - 'research/live/**'
+      - '*.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -33,6 +34,10 @@ jobs:
           node --version
           git rev-parse HEAD
           git status --porcelain
+      - name: Legacy Python metric and syntax smoke check
+        run: |
+          python3 -m py_compile config.py prepare.py simulator.py strategy.py backtest.py loop.py memory.py
+          python3 -c 'import config; assert config.primary_metric_name({}) == "net_pnl_pct"; assert config.primary_metric_value({"net_pnl_pct": -2}) == -2; assert config.primary_metric_value({"primary_metric_value": 3, "net_pnl_pct": -2}) == 3'
       - name: Native engine and paper lifecycle tests
         shell: bash
         run: |

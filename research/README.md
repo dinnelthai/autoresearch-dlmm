@@ -1,6 +1,6 @@
 # Offline Adaptive Inventory LP — business entry and model integration
 
-Status: runnable offline research prototype. No RPC, API subscription, wallet, signing, transactions, or parameter calibration. Existing Python OHLCV engine remains unchanged and must not be treated as protocol PnL.
+Status: runnable offline research prototype. No RPC, API subscription, wallet, signing, transactions, or parameter calibration. The legacy Python OHLCV simulator remains a separate heuristic; its scores are not protocol PnL and cannot serve as normalized-event optimization samples. The primary real-market Paper workflow is in [the integration runbook](../docs/integration-handoff.md).
 
 ## Run
 

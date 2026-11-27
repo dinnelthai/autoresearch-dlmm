@@ -1,378 +1,58 @@
 # autoresearch-dlmm
 
-Autonomous AI research for **Meteora DLMM** LP strategy optimization on Solana. Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch).
+Meteora DLMM adaptive liquidity research on Solana, inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) and adapted from [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos).
 
-This repo is adapted from [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) for DLMM data prep, backtesting, strategy iteration, and now horizon-aware autonomous loops.
+## Primary workflow
 
-Give an AI agent a DLMM backtesting setup and let it experiment autonomously. It modifies the LP strategy, backtests against historical candle data, checks if the objective improved, keeps or discards the change, and repeats. In `v2`, those experiments also build a lightweight memory so the agent can learn from prior runs instead of searching blind every time. In `v3`, the objective is no longer just one lucky continuous path: strategies are scored across many fixed-horizon start times.
+Real market observations → market features → JS mathematical strategy engine → virtual Paper accounting → matched HODL comparison → parameter research.
 
-## Current primary business path
+The terminal uses virtual SOL/MEME capital; it does not sign or submit transactions. Observed-bin fee accounting is a proxy, not protocol-exact income. Automatic Adaptive uses collected market features or matched reviewed evidence. A missing input does not fabricate an observation.
 
-The current JS terminal runs read-only real-market Paper experiments using virtual SOL/MEME capital. The Python OHLCV optimizer below is a separate exploratory research tool; its simulated returns are not interchangeable with the JS snapshot model.
+Follow the [current integration runbook](docs/integration-handoff.md) for the installed Node 22 runtime, pinned SDK, collector configuration, terminal and local verification. The terminal normally runs at http://127.0.0.1:8790.
 
-Start, inspect and troubleshoot the current terminal using [the current integration runbook](docs/integration-handoff.md). The normalized-event mathematical engine and optimizer are documented in [research/README.md](research/README.md). No on-chain trading or proven live returns are implied.
+For standalone normalized-event research (no SDK or RPC required):
 
-## Legacy Python research: How It Works
+```sh
+node research/test.mjs
+node research/cli.mjs demo range
+node research/cli.mjs compare dataset.json
+node research/cli.mjs optimize samples.json > optimization.json
+node research/cli.mjs paper-next paper-request.json optimization.json
+```
 
-| File | Modified By | Purpose |
-|------|-------------|---------|
-| `prepare.py` | Nobody | Fetches candles from Meteora + top LP data from LP Agent API |
-| `simulator.py` | Nobody | DLMM backtesting engine — bin-by-bin fees, IL, position management |
-| `strategy.py` | **AI Agent** | LP strategy: bins, shape, rebalance logic, indicators |
-| `backtest.py` | Nobody | Runs strategy, reports metrics, compares to top LP benchmarks |
-| `loop.py` | Nobody | Runs the autonomous keep/revert loop for one selected pool |
-| `memory.py` | Nobody | Stores structured experiment history and generates the v2 learning report |
-| `config.py` | Nobody | Environment config, API key rotation, and horizon presets |
-| `program.md` | **Human** | Instructions for the AI agent |
+The final command requires an already running local terminal and an accepted proposal with a later market capture. It starts a new virtual experiment, not a funded trade. The optimizer consumes genuine normalized event samples supplied by the caller; automatic conversion from archived live snapshots into such samples is not implemented. Read [research/README.md](research/README.md) for the event schema, parameter search and limitations.
 
-The agent iterates on `strategy.py` to maximize a **validation objective**. In `v3`, the default objective is a rolling-window score across many start times, which makes the search more robust than a single held-out path.
+## Code ownership
 
-## Data Sources
+| Area | Responsibility |
+|---|---|
+| `research/engine/`, `research/engine.mjs` | Canonical strategy, risk, normalized-event simulation and optimizer |
+| `research/integer.mjs` | Exact integer reconciliation |
+| `research/live/` | Raw captures, market/feature normalization, observed-share Paper, local terminal |
+| `docs/` | Current runbooks, mathematical specifications and acceptance evidence |
+| Root Python scripts | Separate historical candle exploration and LP benchmark collection |
 
-### Meteora DLMM API (public, no auth)
-- OHLCV candle data
-- Volume history
-- Pool metadata (bin step, fees, TVL)
+## Legacy Python research
 
-### LP Agent API (key required)
-- **Top LPers per pool** — ranked by PnL, with win rates, APR, hold times, fee capture
-- **Wallet positions** — open and historical, with exact tick ranges, strategy types, P&L
-- **Pool statistics** — on-chain metrics, position distributions
+The Python pipeline is intentionally separate: OHLCV candles cannot reconstruct actual per-bin swap fills, fee growth or liquidity shares. Its approximate PnL and rolling-window metrics must not be fed into the JS optimizer or promoted to live results. Python keeps the original market-data collection, LP Agent benchmark acquisition, heuristic simulator, strategy, learning history and optional agent-edit loop.
 
-The top LP data gives the agent a benchmark to beat and features to learn from. Without LP Agent keys, the system still works — it just optimizes blind without benchmarks.
-
-## Quick Start
-
-```bash
-# 1. Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Clone and install
-git clone https://github.com/<your-username>/autoresearch-dlmm.git
-cd autoresearch-dlmm
+```sh
 uv sync
-
-# 3. Configure API keys
 cp .env.example .env
-# Edit .env and add your LP Agent API key(s)
-# Get keys at: https://lpagent.mintlify.app/api-key-dashboard/dashboard
-
-# 4. Fetch data (default horizon: swing)
-uv run prepare.py
-
-# 5. Run baseline backtest
-uv run backtest.py --eval-mode rolling
-
-# 6. Run the autonomous loop
-uv run loop.py --rounds 20 \
-  --eval-mode rolling \
-  --agent-cmd 'codex exec $(cat {prompt_file})'
+uv run prepare.py --horizon swing
+uv run backtest.py --horizon swing --eval-mode rolling --split both
+uv run loop.py --horizon swing --rounds 20 --agent-cmd 'codex exec $(cat {prompt_file})'
 ```
 
-## Horizon Modes
+Use the same pool and horizon across all three legacy commands. The old agent loop repeatedly uses validation for development and cannot establish unbiased out-of-sample performance. See [program.md](program.md) and the [full historical Python guide](https://github.com/dinnelthai/autoresearch-dlmm/blob/d35b9301a38d0fee9bb3cf545c367149dac6a069/README.md) for every flag, horizon preset, benchmark description and original project structure. Neither Python nor its dependencies are required for the primary JS Paper workflow.
 
-The repo is single-pool per run, but it is horizon-aware. Use `--horizon` to tell the system whether you are optimizing for short LPs or slow multi-day holds.
+## Validation
 
-Supported modes:
+- [Local acceptance runbook](docs/t17-acceptance-runbook.md)
+- [Real-source startup evidence](docs/business-first-live-2026-11-27.md)
+- [Historical fixed-bin experiment](docs/one-case-live-2026-11-27.md)
+- [SDK source build](docs/sdk-source-build.md)
 
-- `scalp`: `5m` candles, 7-day lookback, benchmark LPs held roughly `0` to `6` hours
-- `intraday`: `30m` candles, 14-day lookback, benchmark LPs held roughly `6` to `36` hours
-- `swing`: `1h` candles, 30-day lookback, benchmark LPs held roughly `36` to `168` hours
-- `7d_profile`: `1h` candles, 45-day lookback, benchmark LPs held roughly `72` to `240` hours
+Native CI tests do not establish actual chain execution, calibrated returns, or full live Adaptive acceptance.
 
-`7d_profile` is a multi-day hold preset, not a literal rolling 7-day evaluator. The strategy is tuned with slower defaults and longer-hold LP benchmarks, while the backtest still runs over the prepared history window. The old name `7d_hold` still works as a backward-compatible alias.
-
-If you also pass `--days` or `--timeframe`, those explicit flags override the preset defaults.
-
-## v3 Evaluation Mode
-
-`v3` adds rolling multi-start evaluation. Instead of asking "did this strategy work on one continuous historical path?", the repo can now:
-
-- sample many entry starts from the prepared candle history
-- run a fixed holding window from each start
-- aggregate the distribution of outcomes
-
-This is the new default when you run `backtest.py` or `loop.py` without overriding `--eval-mode`.
-
-Why it matters:
-
-- it reduces one-path overfitting
-- it makes the score depend on many possible entry times
-- it stops ultra-wide always-in-range strategies from winning by default just because one long sample happened to reward them
-
-The rolling evaluator reports:
-
-- primary score
-- median rolling net P&L
-- average rolling net P&L
-- p25 rolling net P&L
-- worst rolling net P&L
-- latest-window net P&L
-- rolling win rate
-- average time in range
-- average rebalances
-
-For example, `7d_profile` now defaults to:
-
-- rolling window: `168h`
-- new start every: `12h`
-- objective: `balanced`
-
-The `balanced` objective scores a strategy on both the median and lower-quartile outcome, which makes it much harder for one lucky start time to dominate the search.
-
-## Common Commands
-
-### Default run
-
-```bash
-uv run prepare.py
-uv run backtest.py --split both
-
-uv run loop.py --rounds 20 \
-  --eval-mode rolling \
-  --agent-cmd 'codex exec $(cat {prompt_file})'
-```
-
-### Multi-day meme pool
-
-```bash
-uv run prepare.py \
-  --pool 81GpCm4d13y8TozYtThabuSCLQN2o3bbrvDogXFPn8sA \
-  --horizon 7d_profile
-
-uv run backtest.py \
-  --pool 81GpCm4d13y8TozYtThabuSCLQN2o3bbrvDogXFPn8sA \
-  --horizon 7d_profile \
-  --eval-mode rolling \
-  --split both
-
-uv run loop.py \
-  --pool 81GpCm4d13y8TozYtThabuSCLQN2o3bbrvDogXFPn8sA \
-  --horizon 7d_profile \
-  --eval-mode rolling \
-  --rounds 25 \
-  --sleep-seconds 300 \
-  --agent-cmd 'codex exec $(cat {prompt_file})'
-```
-
-### Fast meme pool
-
-```bash
-uv run prepare.py --pool <POOL_ADDRESS> --horizon scalp
-uv run backtest.py --pool <POOL_ADDRESS> --horizon scalp --eval-mode rolling --window-hours 3 --start-every-hours 0.5 --split both
-```
-
-### Six-hour-old token
-
-If a token is only a few hours old, do not use `7d_profile`. There is not enough history for 7-day rolling windows. Use a short horizon and a shorter rolling window instead:
-
-```bash
-uv run prepare.py --pool 3HPpJBCtbYpt8HwFcx4JHxXfo1jeAhqcbCo3Ez2MdnYw --horizon scalp --days 1 --timeframe 5m
-uv run backtest.py --pool 3HPpJBCtbYpt8HwFcx4JHxXfo1jeAhqcbCo3Ez2MdnYw --horizon scalp --eval-mode rolling --window-hours 3 --start-every-hours 0.5 --split both
-```
-
-When you switch pools, run `prepare.py`, `backtest.py`, and `loop.py` with the same `--pool`. When you switch hold style, use the same `--horizon` across all three commands so cached candles, benchmark filtering, and strategy defaults stay aligned.
-
-## Flag Reference
-
-### `prepare.py`
-
-- `--pool <POOL_ADDRESS>`: choose the pool to cache and benchmark
-- `--horizon <MODE>`: one of `scalp`, `intraday`, `swing`, `7d_profile`
-- `7d_hold` is accepted as an alias for `7d_profile`
-- `--days <N>`: override the preset lookback window
-- `--timeframe <5m|30m|1h|2h|4h|12h|24h>`: override the preset candle resolution
-- `--top-wallets <N>`: number of top LP wallets to deep-dive for position history
-- `--skip-lp`: skip LP Agent and fetch only Meteora market data
-
-### `backtest.py`
-
-- `--pool <POOL_ADDRESS>`: choose which cached pool to evaluate
-- `--horizon <MODE>`: inject the horizon mode into strategy defaults and reporting
-- `--split <train|val|both>`: choose which split(s) to run
-- `--eval-mode <split|rolling>`: choose one-path evaluation or multi-start rolling evaluation
-- `--window-hours <N>`: rolling hold window in hours
-- `--start-every-hours <N>`: spacing between rolling start times
-- `--objective <balanced|median|mean|worst>`: primary score used for rolling evaluation
-
-### `loop.py`
-
-- `--pool <POOL_ADDRESS>`: choose the pool to optimize
-- `--horizon <MODE>`: choose the LP hold style
-- `--eval-mode <split|rolling>`: evaluation mode used by each round
-- `--window-hours <N>`: rolling hold window in hours
-- `--start-every-hours <N>`: spacing between rolling start times
-- `--objective <balanced|median|mean|worst>`: objective that decides keep vs revert
-- `--rounds <N>`: number of autonomous edit/evaluate rounds
-- `--sleep-seconds <N>`: wait time between rounds; use `300` for a five-minute cadence
-- `--agent-cmd '<CMD>'`: shell command used to invoke your coding agent
-- `--min-improvement <FLOAT>`: minimum validation improvement needed to keep a change
-- `--prepare-if-missing`: auto-run `prepare.py` before the loop if the pool cache does not exist
-- `--days <N>` / `--timeframe <...>`: only used with `--prepare-if-missing`, to override the horizon preset for bootstrap
-- `--top-wallets <N>`: only used with `--prepare-if-missing`
-- `--skip-lp`: only used with `--prepare-if-missing`
-
-## API Key Rotation
-
-LP Agent rate-limits to **5 requests per minute per key**. Add multiple keys for higher throughput:
-
-```env
-# .env
-LPAGENT_API_KEYS=lpagent_key1,lpagent_key2,lpagent_key3
-```
-
-With 3 keys you get 15 RPM. The `KeyManager` in `config.py` automatically rotates across keys, tracks per-key call timestamps, and waits when all keys are rate-limited.
-
-## Running the Agent
-
-Point Claude Code, Codex, or any AI coding agent at the repo:
-
-```
-Have a look at program.md and let's kick off a new experiment! Let's do the setup first.
-```
-
-The agent will:
-1. Read `program.md` for instructions
-2. Run the baseline backtest
-3. Examine benchmark data from top LPers
-4. Read `experiments/learning_report.md` to see what has already worked or failed
-5. Start iterating on `strategy.py` — one change at a time
-6. Keep improvements, revert failures
-7. Grow a memory of the pool through `experiments/history.jsonl`
-
-## What Changed In v2
-
-`v1` was the original autoresearch pattern adapted to DLMMs: modify `strategy.py`, run a backtest, compare metrics, keep or revert.
-
-`v2` adds a learning layer on top of that loop:
-
-- Every train/validation run is appended to `experiments/history.jsonl`
-- Each record includes strategy parameters, pool config, benchmark context, and a market-regime summary
-- `experiments/learning_report.md` is regenerated after each run with:
-  - best validation run so far
-  - recent experiments
-  - which shapes have performed best on average
-  - current LP benchmark context
-
-This keeps the project lightweight while making the search process cumulative.
-
-## What Changed In v3
-
-`v3` changes how strategies are judged.
-
-- `backtest.py` can now evaluate many fixed-horizon windows instead of only one continuous split
-- the primary score can optimize for robust distributional outcomes, not just one lucky run
-- `loop.py` keeps or reverts changes based on the selected rolling objective
-- the learning report now carries rolling-window context alongside prior experiment memory
-
-The practical effect is that the repo is now closer to a real deployment question:
-
-- "If I started LPing at many different times in this history, how often would this setup have worked?"
-
-instead of only:
-
-- "Did this setup work on this one path?"
-
-## Autonomous Loop
-
-`loop.py` turns the repo into the full autoresearch workflow:
-
-1. establish a baseline on the current `strategy.py`
-2. hand the next-round prompt to a coding agent
-3. run `backtest.py` with the configured evaluation mode
-4. keep the strategy change only if validation improves
-5. revert regressions automatically
-6. repeat for the requested number of rounds
-
-It is single-pool by design, which is usually what you want for meme pools because each pool has very different volatility, fee behavior, and rebalance patterns. The `--horizon` flag lets the same repo behave very differently for `scalp` versus `7d_profile`, and `v3` makes the loop judge those profiles across many start times instead of one path.
-
-Example:
-
-```bash
-uv run loop.py \
-  --pool 9d9mb8kooFfaD3SctgZtkxQypkshx6ezhbKio89ixyy2 \
-  --horizon scalp \
-  --rounds 25 \
-  --sleep-seconds 300 \
-  --agent-cmd 'codex exec $(cat {prompt_file})'
-```
-
-Set `--sleep-seconds 300` if you want a five-minute cadence similar to the original training loop. Leave it at `0` if you want the backtest loop to iterate as fast as the agent can make changes.
-
-## How v2 Was Built
-
-This repo started from the `autoresearch-macos` idea of autonomous iteration, but the domain changed from language-model training to DLMM LP optimization.
-
-The `v2` work added six pieces:
-
-1. Live-data-safe Meteora integration.
-   `prepare.py` now unwraps Meteora response envelopes, parses timestamps safely, and reads pool fee/bin config from `pool_config`.
-
-2. Pool-correct benchmark loading.
-   `backtest.py` injects the active pool's benchmark features into `strategy.py`, so `--pool` runs no longer read the default pool by mistake.
-
-3. Structured experiment memory.
-   `memory.py` captures the tunable strategy parameters, hashes the current strategy source, summarizes the train/val market regime, and appends normalized records to `experiments/history.jsonl`.
-
-4. Agent-readable learning summaries.
-   After every backtest, `backtest.py` regenerates `experiments/learning_report.md`, giving the agent a compact view of what has worked so far.
-
-5. An autonomous loop runner.
-   `loop.py` shells out to a coding agent, evaluates each proposed strategy change, and automatically keeps or reverts it based on validation performance.
-
-6. Horizon-aware optimization.
-   `config.py` now defines horizon presets, `prepare.py` filters LP benchmarks to matching hold times, `backtest.py` injects the selected horizon into strategy runtime context, and `strategy.py` adopts slower multi-day defaults for modes like `7d_profile` unless the agent has already tuned them away.
-
-## What the Agent Experiments With
-
-- **Liquidity shape**: spot vs curve vs bid_ask, dynamic switching based on regime
-- **Bin count**: narrow concentrated vs wide passive, volatility-adaptive
-- **Rebalance logic**: threshold, MA crossover, volume-spike, time-based triggers
-- **Center price**: SMA, EMA, VWAP, momentum-adjusted
-- **Indicators**: RSI, Bollinger Bands, ATR, volume profiles
-- **Regime detection**: trending vs ranging market adaptation
-- **Benchmark calibration**: matching hold times and shapes of top LPers
-- **Exit conditions**: when to pull liquidity entirely
-
-## Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **net_pnl_pct** | Primary. Net P&L as % of capital (fees - IL). Higher = better. |
-| time_in_range_pct | % of candles where price was in range. Low = too narrow. |
-| num_rebalances | Each costs gas IRL. Fewer is better at equal performance. |
-| gross_apr / net_apr | Gap = how much IL eats your fees. |
-| **Benchmark comparison** | Your strategy vs top LPers on the same pool. |
-
-## Project Structure
-
-```
-config.py         — env loading, API key rotation
-prepare.py        — data fetching (Meteora + LP Agent)
-simulator.py      — DLMM backtesting engine
-strategy.py       — LP strategy (agent modifies this)
-backtest.py       — run + report + benchmark comparison
-loop.py           — autonomous single-pool experiment runner
-memory.py         — v2 experiment memory + learning report generation
-program.md        — agent instructions
-.env.example      — API key template
-data/             — cached data (auto-created, gitignored)
-experiments/      — run logs + history.jsonl + learning_report.md (auto-created, gitignored)
-```
-
-## Contributing
-
-PRs welcome. The main areas for improvement:
-
-- **Simulator fidelity** — model real bin liquidity distributions, dynamic fee spikes, slippage on rebalance
-- **More data sources** — Birdeye price feeds, on-chain bin distributions via Helius
-- **Multi-pool support** — optimize across multiple pools simultaneously
-- **Live execution** — connect strategy output to LP Agent's Zap-In API for live deployment
-
-## License
-
-MIT
-
-## Offline Adaptive Inventory research terminal
-
-The business-to-math offline engine is separate from the legacy candle heuristic. See [research/README.md](research/README.md). Start with `node research/serve.mjs` (localhost:8787) and `node research/test.mjs` (Node 20+). The new prototype uses synthetic/unverified normalized events, not protocol-exact or calibrated returns.
+License: MIT.

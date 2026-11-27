@@ -21,13 +21,11 @@ LEARNING_REPORT = "learning_report.md"
 
 
 def record_primary_metric_name(record: dict[str, Any]) -> str:
-    metrics = record.get("metrics", {})
-    return metrics.get("primary_metric_name", "net_pnl_pct")
+    return config.primary_metric_name(record.get("metrics", {}))
 
 
 def record_primary_metric_value(record: dict[str, Any]) -> float:
-    metrics = record.get("metrics", {})
-    return float(metrics.get("primary_metric_value", metrics.get("net_pnl_pct", float("-inf"))))
+    return config.primary_metric_value(record.get("metrics", {}))
 
 
 def record_eval_mode(record: dict[str, Any]) -> str:

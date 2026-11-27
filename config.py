@@ -255,3 +255,12 @@ class KeyManager:
 
 # Global key manager instance
 keys = KeyManager()
+
+
+# Legacy candle research only. This metric is not the JS Paper alpha objective.
+def primary_metric_name(metrics: dict) -> str:
+    return metrics.get("primary_metric_name", "net_pnl_pct")
+
+
+def primary_metric_value(metrics: dict) -> float:
+    return float(metrics.get("primary_metric_value", metrics.get("net_pnl_pct", float("-inf"))))

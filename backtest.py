@@ -23,6 +23,7 @@ from pathlib import Path
 from tabulate import tabulate
 
 import config
+from config import primary_metric_name, primary_metric_value
 import memory
 from prepare import (
     aggregate_window_metrics,
@@ -85,14 +86,6 @@ def make_pool_config(pool_info: dict) -> PoolConfig:
         protocol_fee_pct=runtime["protocol_fee_pct"],
         name=runtime["name"],
     )
-
-
-def primary_metric_name(metrics: dict) -> str:
-    return metrics.get("primary_metric_name", "net_pnl_pct")
-
-
-def primary_metric_value(metrics: dict) -> float:
-    return float(metrics.get("primary_metric_value", metrics.get("net_pnl_pct", float("-inf"))))
 
 
 def run_single_path(candles, pool_config, strategy_fn, capital=1000.0):
