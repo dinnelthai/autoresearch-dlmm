@@ -17,6 +17,13 @@ function mergeHistory(previous,rows,limit=2000){
 }
 function streamHealth(stream,now,maxAgeMs){if(!stream||stream.status!=="CAPTURED_UNVERIFIED"||!Number.isFinite(stream.receivedAt)||stream.receivedAt>now||now-stream.receivedAt>maxAgeMs)return "UNAVAILABLE_OR_STALE";return "RECENT_UNVERIFIED";}
 function pendingStream(old,startedAt){return {status:"PENDING",startedAt,previousEvidence:old?.evidence??old?.previousEvidence??null};}
+// Preserve the verified signature index when a complete bounded capture contains no
+// decoded events. This says nothing about elapsed-window or swap-flow completeness.
+function completeEmptyEventIndex(manifest,decoded){
+ const a=manifest?.signatures,b=decoded?.transactions;
+ if(decoded?.status!=='PARTIAL'||!Array.isArray(decoded.gaps)||decoded.gaps.length||!Array.isArray(decoded.events)||decoded.events.length||!Array.isArray(decoded.positionEvents)||decoded.positionEvents.length||!Array.isArray(a)||!a.length||!Array.isArray(b)||b.length!==a.length||decoded.indexEvidence?.signatures!==a.length)return false;
+ const slots=new Map(a.map(x=>[x.signature,x.slot]));return slots.size===a.length&&new Set(b.map(x=>x.signature)).size===b.length&&b.every(x=>slots.has(x.signature)&&slots.get(x.signature)===x.slot);
+}
 // Round robin one history stream per service tick. --once retains full diagnostic sweep.
 function historyBatch(addresses,cursor,once=false){if(!Array.isArray(addresses)||!addresses.length||!Number.isSafeInteger(cursor)||cursor<0)throw Error("invalid history scheduler");const i=cursor%addresses.length;return {addresses:once?addresses.slice():[addresses[i]],nextCursor:(i+1)%addresses.length};}
-export {mergeHistory,streamHealth,pendingStream,historyBatch};
+export {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex};

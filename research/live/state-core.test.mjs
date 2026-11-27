@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import {mergeHistory,streamHealth,pendingStream,historyBatch} from './state-core.mjs';
+import {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex} from './state-core.mjs';
+const emptyManifest={signatures:[{signature:'a',slot:1},{signature:'b',slot:2}]};
+const emptyDecoded={status:'PARTIAL',gaps:[],events:[],positionEvents:[],transactions:[{signature:'a',slot:1},{signature:'b',slot:2}],indexEvidence:{signatures:2}};
+assert.equal(completeEmptyEventIndex(emptyManifest,emptyDecoded),true);
+assert.equal(completeEmptyEventIndex(emptyManifest,{...emptyDecoded,gaps:[{reason:'MISSING'}]}),false);
+assert.equal(completeEmptyEventIndex(emptyManifest,{...emptyDecoded,transactions:[{signature:'a',slot:1}]}),false);
+assert.equal(completeEmptyEventIndex(emptyManifest,{...emptyDecoded,transactions:[{signature:'a',slot:1},{signature:'b',slot:3}]}),false);
+assert.equal(completeEmptyEventIndex(emptyManifest,{...emptyDecoded,indexEvidence:null}),false);
 const a=mergeHistory(null,[{signature:'a',slot:1}]);
 const b=mergeHistory(a,[{signature:'b',slot:2},{signature:'a',slot:1}]);
 assert.equal(b.records.length,2);assert.equal(b.added,1);assert.equal(b.overlap,1);

@@ -6,7 +6,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
-import {mergeHistory,streamHealth,pendingStream,historyBatch} from './state-core.mjs';
+import {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex} from './state-core.mjs';
 import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
 import {repairPlan,advanceRepair,failedRepair,historyCoverage} from './history-repair.mjs';
 import {dependencyPlan,sameAccounts} from './account-dependency-plan.mjs';
@@ -134,7 +134,8 @@ try{
   if(m.status!=='BOUNDED_SAMPLE_CAPTURED_UNVERIFIED'||m.gaps?.length){failRepair('CAPTURE_PARTIAL');return {capture:relative(ROOT,p),historyStatus:'CAPTURE_PARTIAL',repairCapture:plan.repair,repair:state.history[address]?.repair??null,signatureCount:m.signatures.length,gapCount:m.gaps?.length??0,gapReasons:[...new Set((m.gaps??[]).map(g=>g.reason))].slice(0,20),added:0,overlap:0}}
   let decoded;try{decoded=await inspect('inspect-swaps.mjs',p)}catch(e){failRepair('DECODE_FAILED');throw e}
   assert(decoded.pool===pool&&decoded.position===(address===pool?null:address)&&Array.isArray(decoded.transactions)&&Array.isArray(decoded.gaps),'history report mismatch');
-  if(decoded.status!=='EVENTS_DECODED_UNVERIFIED'||decoded.gaps.length){failRepair('DECODE_PARTIAL');return {capture:relative(ROOT,p),historyStatus:'DECODE_PARTIAL',repairCapture:plan.repair,repair:state.history[address]?.repair??null,added:0,overlap:0,decoded}}
+  const emptyIndex=completeEmptyEventIndex(m,decoded);
+  if((decoded.status!=='EVENTS_DECODED_UNVERIFIED'&&!emptyIndex)||decoded.gaps.length){failRepair('DECODE_PARTIAL');return {capture:relative(ROOT,p),historyStatus:'DECODE_PARTIAL',repairCapture:plan.repair,repair:state.history[address]?.repair??null,added:0,overlap:0,decoded}}
   // Keep evidence, never convert these aggregate events to per-bin fills.
   const merged=mergeHistory(state.history[address],m.signatures.map(s=>({signature:s.signature,slot:s.slot,capture:relative(ROOT,p)})),historyRetention);
   const repair=advanceRepair(previous,m.signatures,m,plan);
@@ -143,7 +144,7 @@ try{
   if(!plan.repair&&previous?.headSignatures?.length&&!previous.headSignatures.some(o=>m.signatures.some(n=>n.signature===o.signature))){merged.gapObserved=true;merged.status='OVERLAP_MISSING'}
   const coverage=historyCoverage(merged,repair);
   state.history[address]={...merged,repair,repairTurn:turn,headSignatures,coverage};
-  return {capture:relative(ROOT,p),historyStatus:coverage,historyGapObserved:merged.gapObserved,historyComplete:false,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
+  return {capture:relative(ROOT,p),historyStatus:emptyIndex?'DECODE_PARTIAL':coverage,historyGapObserved:merged.gapObserved,historyComplete:false,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
  }
  async function reference(){
   assert(references.length>=2,'manual reference pools not configured');
