@@ -23,7 +23,7 @@ This contract governs new development, refactoring and acceptance. Prefer a comp
 
 ## 一键启动
 
-在仓库根目录执行 `./start.sh`（或 `bash start.sh`）。默认使用现有 basket 配置和 8788/8790 端口，依次启动采集服务及 Web 服务，检查 HTTP 健康接口，日志保存在 `data/run-logs/` 下本次启动目录。保持终端打开；Ctrl+C 同时停止两个服务。HTTP 就绪不代表行情已经就绪。可通过 `NODE_BIN`、`LIVE_CONFIG`、`TERMINAL_CONFIG` 指定现有本地运行环境与配置；不自动安装依赖、不修改配置、不自动发起实验。
+在仓库根目录执行 `./start.sh`（或 `bash start.sh`）。默认使用现有 basket 配置和 8788/8790 端口，自动识别并正常停止本仓库占用端口的旧服务，再依次启动采集服务及 Web 服务，检查 HTTP 健康接口（不误杀其他程序；旧服务无法正常退出时提示日志），日志保存在 `data/run-logs/` 下本次启动目录。保持终端打开；Ctrl+C 同时停止两个服务。HTTP 就绪不代表行情已经就绪。可通过 `NODE_BIN`、`LIVE_CONFIG`、`TERMINAL_CONFIG` 指定现有本地运行环境与配置；不自动安装依赖、不修改配置、不自动发起实验。
 
 ## 联调日志导出
 

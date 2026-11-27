@@ -4,7 +4,7 @@ Primary path: real Meteora DLMM observations → collected features → existing
 
 ## Start existing services
 
-Use the installed/pinned Node 22 and SDK from the existing local setup. For normal interactive startup run `./start.sh` from the repository root. The launcher starts both services, checks HTTP health, retains both stdout/stderr logs under `data/run-logs/`, and stops both on Ctrl+C. HTTP health is not market readiness. The manual commands below are for separate service troubleshooting; do not launch them alongside the launcher.
+Use the installed/pinned Node 22 and SDK from the existing local setup. For normal interactive startup run `./start.sh` from the repository root. The launcher gracefully stops existing listeners belonging to this checkout (Web first), refuses unrelated listeners, then starts both services, checks HTTP health, retains both stdout/stderr logs under `data/run-logs/`, and stops both on Ctrl+C. HTTP health is not market readiness. The manual commands below are for separate service troubleshooting; do not launch them alongside the launcher.
 
 ```sh
 git status --short
