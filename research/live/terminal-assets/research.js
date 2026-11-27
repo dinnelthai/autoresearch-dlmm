@@ -18,7 +18,7 @@ async function refreshResearchCatalog(){
   if(g!==catalogGeneration||!sameScope(e,p,poolEpoch,target))return;
   if(!res.ok||x.scope!=='HISTORICAL_ARCHIVE_INDEX_ONLY'||x.pool!==p||x.decisionReady!==false||x.executionReady!==false||!Array.isArray(x.entries)||x.entries.length>64)throw Error('归档索引不可用');
   const list=$('researchCatalogSelect');list.replaceChildren();const empty=document.createElement('option');empty.value='';empty.textContent='选择本池历史归档';list.append(empty);
-  for(const a of x.entries){if(a.pool!==p||!hash(a.id)||!hash(a.snapshotId)||!['snapshot','candidate','run'].includes(a.kind))continue;const o=document.createElement('option');o.value=a.kind==='run'?'run:'+a.id:'snapshot:'+a.snapshotId;o.textContent=a.kind+' · Slot '+a.marketSlot+' · '+a.id.slice(0,10)+' · '+a.status;list.append(o)}
+  for(const a of x.entries){if(a.pool!==p||!hash(a.id)||!hash(a.snapshotId)||!['snapshot','candidate','run'].includes(a.kind))continue;const o=document.createElement('option');o.value=a.kind==='run'?'run:'+a.id:'snapshot:'+a.snapshotId;o.textContent=(a.kind==='run'?'run':'snapshot')+' · Slot '+a.marketSlot+' · '+(a.kind==='run'?a.id:a.snapshotId).slice(0,10)+' · '+a.status;list.append(o)}
  }catch(e2){if(sameScope(e,p,poolEpoch,target)&&g===catalogGeneration)put('researchSnapshotStatus','归档索引不可用')}
 }
 function showHistoricalRun(x,p){

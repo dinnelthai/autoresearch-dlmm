@@ -1,3 +1,5 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {catalogEntry,addCatalog} from './research-catalog.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import {catalogEntry,addCatalog,visibleCatalog} from './research-catalog.mjs';
 const h='a'.repeat(64),pool='A'.repeat(32),e={pool,kind:'snapshot',id:h,snapshotId:h,marketSlot:1,marketRawHash:h,createdAt:10,status:'NOT_AVAILABLE'};
 test('catalog isolated, bounded and rejects conflicting identities',()=>{const x=catalogEntry(e,pool);assert.deepEqual(addCatalog([x],e),[x]);assert.throws(()=>addCatalog([x],{...e,createdAt:11}));assert.throws(()=>catalogEntry(e,'B'.repeat(32)));const r={...e,kind:'run',id:'b'.repeat(64),createdAt:20,mode:'management',position:'C'.repeat(32)};assert.equal(addCatalog([e],r,1)[0].id,r.id);assert.throws(()=>catalogEntry({...r,position:null},pool))});
+
+test('legacy candidate and snapshot are one visible archive without hiding historical runs',()=>{const a=catalogEntry(e,pool),candidate=catalogEntry({...e,kind:'candidate',id:'b'.repeat(64),status:'RESEARCH_CANDIDATE_ONLY'},pool),run=catalogEntry({...e,kind:'run',id:'c'.repeat(64),mode:'plans'},pool);assert.deepEqual(visibleCatalog([candidate,run,a]),[run,a]);assert.deepEqual(visibleCatalog([candidate,run]),[candidate,run])});

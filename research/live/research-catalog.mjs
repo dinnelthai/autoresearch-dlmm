@@ -16,14 +16,20 @@ export function addCatalog(rows,entry,limit=64){
  const same=valid.find(x=>x.kind===e.kind&&x.id===e.id);if(same){assert(JSON.stringify(same)===JSON.stringify(e),'RESEARCH_CATALOG_CONFLICT');return valid}
  return [...valid,e].sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id)).slice(0,limit);
 }
+// Legacy candidates point at the same snapshot. Prefer the actual snapshot entry;
+ // retain a candidate pointer when its snapshot index entry has already aged out.
+export function visibleCatalog(rows){
+ const snapshots=new Set(rows.filter(x=>x.kind==='snapshot').map(x=>x.snapshotId)),seen=new Set();
+ return rows.filter(x=>{if(x.kind==='run')return true;if(x.kind==='candidate'&&snapshots.has(x.snapshotId)||seen.has(x.snapshotId))return false;seen.add(x.snapshotId);return true});
+}
 export function researchCatalog(data,readBounded){
  const dir=p=>{assert(key(p),'RESEARCH_CATALOG_SCOPE');return join(data,'research-catalog',p)};
- async function list(pool){
+ async function stored(pool){
   try{const bytes=await readBounded(join(dir(pool),'index.json'),128*1024),rows=JSON.parse(bytes);assert(Array.isArray(rows)&&rows.length<=64,'RESEARCH_CATALOG_LIMIT');return rows.map(x=>catalogEntry(x,pool))}catch(e){if(e.code==='ENOENT')return [];throw e}
  }
  async function add(entry){
   const d=dir(entry.pool);await mkdir(d,{recursive:true,mode:0o700});
-  await withWriterLock(d,async()=>atomicJson(join(d,'index.json'),addCatalog(await list(entry.pool),entry)))
+  await withWriterLock(d,async()=>atomicJson(join(d,'index.json'),addCatalog(visibleCatalog(await stored(entry.pool)),entry)))
  }
- return {list,add};
+ return {list:async pool=>visibleCatalog(await stored(pool)),add};
 }

@@ -46,6 +46,7 @@ async function captureResearchSnapshot(body,pinned=null){
  const externalLast=marketObservations.external(scope);
  const external=externalLast?.pool===scope&&externalLast.marketSlot===m.slot&&externalLast.marketRawHash===m.rawHash&&externalLast.expiresAt>now?externalLast:null,holder=marketObservations.holder(scope,m.mintX);
  const diagnostic=inputStatus({pool:scope,market:m,history:state.streams?.['history:'+scope],external,holder,review:reviewed?.review,reviewReason:reviewStatus,now,maxAgeMs});
+ if(pinned?.collection)diagnostic.collection=pinned.collection;
  const frozen={...state,streams:{market:state.streams.market},history:{}};
  for(const [k,x] of Object.entries(state.streams??{}))if(k.startsWith('position:')&&x.status==='CAPTURED_UNVERIFIED'&&x.evidence?.slot===m.slot&&x.evidence?.report?.rawHash===m.rawHash)frozen.streams[k]=x;
  const files=new Map([['state.json',Buffer.from(JSON.stringify(frozen))],['diagnostic.json',Buffer.from(JSON.stringify(diagnostic))],['capture-manifest.json',mb]]);
@@ -98,14 +99,12 @@ async function buildResearchCandidate(body){
   (async()=>{try{await marketObservations.holderObservation({pool:scope},m)}catch(e){reason('HOLDER',e)}})()
  ]);
  const at=Date.now();currentMarket(state,scope,at,maxAgeMs);
- const {snapshot,diagnostic}=await captureResearchSnapshot({pool:scope,marketSlot:m.slot,marketRawHash:m.rawHash},{state,at});
+ const {snapshot,diagnostic}=await captureResearchSnapshot({pool:scope,marketSlot:m.slot,marketRawHash:m.rawHash},{state,at,collection:{clock,sourceErrors}});
  const candidate=assembleCandidate({market:m,snapshot,diagnostic,clock,sourceErrors,createdAt:at});
- const dest=await saveArchive(join(DATA,'research-candidates',scope),candidate.candidateId,candidate);
- await archives.add({kind:'candidate',pool:scope,id:candidate.candidateId,snapshotId:snapshot.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:at,status:'RESEARCH_CANDIDATE_ONLY'});
  let replay=null,replayReason=null;
  if(body.draft&&candidate.replayEligible){try{replay=await replayResearchSnapshot({pool:scope,snapshotId:snapshot.snapshotId,draft:body.draft})}catch(e){replayReason=errorCode(e,'REPLAY_VALIDATION_FAILED')}}
  else replayReason=body.draft?'MATCHED_REVIEW_REQUIRED':'EXPLICIT_RESEARCH_BUDGET_REQUIRED';
- return {...candidate,capture:relative(ROOT,dest),replay,replayReason};
+ return {...candidate,capture:snapshot.capture,replay,replayReason};
 }
 
 async function loadResearchRun(body){
