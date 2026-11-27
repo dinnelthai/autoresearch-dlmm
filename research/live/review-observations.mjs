@@ -2,16 +2,17 @@
 import {Engine} from '../engine.mjs';
 import {checkTime} from './engine-input.mjs';
 import {distinctReferenceArtifacts} from './quote-evidence.mjs';
-import {assert,hash} from './research-contract.mjs';
+import {assert,hash,finite} from './research-contract.mjs';
 import {boundedSwapObservation} from './research-input-status.mjs';
 import {featureProjection} from './market-features.mjs';
-const finite=(v,min,max=Infinity)=>typeof v==='number'&&Number.isFinite(v)&&v>=min&&v<=max;
 export async function reviewedObservations({m,req,review,evidence,now=Date.now()}){
  assert(req.pool===m.pool&&review.pool===m.pool&&review.marketSlot===m.slot&&review.marketRawHash===m.rawHash&&review.mintX===m.mintX&&review.mintY===m.mintY,'review/request identity mismatch');
   const asOf=review.asOf,maxAge=review.maxAgeSeconds;
   assert(Number.isSafeInteger(asOf)&&asOf<=Math.floor(now/1000)&&Number.isSafeInteger(maxAge)&&maxAge>0&&maxAge<=600,'invalid research time boundary');
   checkTime(review.marketObservedAt,review.marketAvailableAt,asOf,maxAge);
-  await evidence(review.marketTimeEvidence?.path,review.marketTimeEvidence?.sha256);
+  const checked=new Map();
+  const check=async r=>{if(checked.has(r?.path)){assert(checked.get(r.path)===r.sha256,'REVIEW_EVIDENCE_CONFLICT');return}await evidence(r?.path,r?.sha256);checked.set(r.path,r.sha256)};
+  await check(review.marketTimeEvidence);
   assert(Array.isArray(review.observations)&&review.observations.length>=3&&review.observations.length<=1000,'at least three sourced market observations required');
   assert(['sol','holding','position'].includes(req.entry)&&req.capitalScope==='USER_DECLARED_ALLOCATION'&&['balanced','defensive','growth'].includes(req.goal),'invalid explicit capital request');
   assert(Number.isSafeInteger(req.horizonSeconds)&&req.horizonSeconds>0,'explicit horizon required');
@@ -22,14 +23,14 @@ export async function reviewedObservations({m,req,review,evidence,now=Date.now()
    assert(typeof o.id==='string'&&o.id&&!ids.has(o.id)&&Number.isSafeInteger(o.t)&&o.t>last&&o.t<=asOf,'duplicate or out-of-order market observation');
    ids.add(o.id);last=o.t;
    // Observations carry independently reviewed raw artifacts; file integrity is not semantic acceptance.
-   await evidence(o.evidence?.path,o.evidence?.sha256);
+   await check(o.evidence);
    assert(typeof o.tokenSafe==='boolean'&&finite(o.holderShare,0,1)&&finite(o.holderOutflow,0,1)&&finite(o.buyImbalance,-1,1)&&finite(o.flowSol,0)&&finite(o.exitDepth,0),'missing holder/flow/exit features');
    assert(Array.isArray(o.references)&&o.references.length>=2&&distinctReferenceArtifacts(o.references),'independent reference artifacts missing or reused');
    const pools=new Set(),venues=new Set(),sources=new Set();
    for(const r of o.references){
     assert(typeof r.pool==='string'&&r.pool!==m.pool&&!pools.has(r.pool)&&r.mintX===m.mintX&&r.mintY===m.mintY&&typeof r.venue==='string'&&r.venue&&typeof r.source==='string'&&r.source&&finite(r.price,Number.MIN_VALUE)&&finite(r.depth,cfg.minDepthSol),'invalid reference identity/depth');
     checkTime(r.observedAt,r.availableAt,o.t,maxAge);
-    await evidence(r.evidence?.path,r.evidence?.sha256);
+    await check(r.evidence);
     pools.add(r.pool);venues.add(r.venue);sources.add(r.source);
    }
    assert(venues.size>=2&&sources.size>=2,'same-venue or same-source reference set insufficient for this bridge');

@@ -44,14 +44,8 @@ $('paperAutoStart').addEventListener('click',async()=>{
   const policy={evaluationDays:Number($('paperEvaluationDays').value),maxDrawdownBps:Math.round(dd),maxGapSeconds:gap,maxLossSolRaw:paperSolRaw($('paperAutoLoss').value.trim()),exitCostSolRaw:paperSolRaw($('paperAutoExitCost').value.trim())};
   if($('paperAdaptiveEnabled').checked)policy.adaptive={cooldownSeconds:number('paperAdaptiveCooldown'),maxRebalances:number('paperAdaptiveCount'),maxTurnoverSol:number('paperAdaptiveTurnover')};
   paperAutoBusy=true;paperAutoGeneration++;$('paperAutoStart').disabled=true;put('paperAutoStatus','正在生成并冻结虚拟方案…');
-  let binding={};
-  if(policy.adaptive){
-   try{const cr=await terminalGet('/api/terminal/paper-context',p),ctx=await cr.json();
-    if(cr.ok&&ctx.pool===p&&hash(ctx.marketRawHash)&&hash(ctx.reviewHash)&&Number.isSafeInteger(ctx.marketSlot)&&ctx.expiresAt>Date.now())binding={marketSlot:ctx.marketSlot,marketRawHash:ctx.marketRawHash,reviewHash:ctx.reviewHash};
-   }catch{}
-  }
   if(p!==target||draft!==d)throw Error('Pool 或草稿已变化');
-  const res=await terminalPost('/api/terminal/paper-start',{draft:d,policy,...binding},45000),r=await res.json();
+  const res=await terminalPost('/api/terminal/paper-start',{draft:d,policy},45000),r=await res.json();
   if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'启动失败');renderAutoPaper(validateAutoPaper(r,p))
  }catch(e){if(p===target)put('paperAutoStatus','启动失败：'+e.message)}
  finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}

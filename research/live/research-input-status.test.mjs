@@ -31,3 +31,5 @@ test('collected paper bridge derives bounded features and three causal reference
  assert.equal(x.observations.length,3);assert.equal(x.latest.ref.valid,true);assert.throws(()=>collectedPaperInputs({m,req:{goal:'balanced',horizonSeconds:600,riskConfig:{}},samples,asOf:t+200}),/PAPER_COLLECTED_MODEL_WARMUP/);
  assert.throws(()=>collectedPaperObservation({m,external:{...e,rawEvidenceCheck:{...e.rawEvidenceCheck,venues:[refs[0]]}},holder:h,history,now}),/PAPER_TWO_REFERENCE_QUOTES_REQUIRED/);
 });
+
+test('shared evidence reader returns matching bytes and rejects invalid digests',async()=>{const {sha,verifiedEvidence}=await import('./evidence-digest.mjs');const b=Buffer.from('observed'),read=async()=>b;assert.equal(await verifiedEvidence(read,'data/raw/a',sha(b)),b);await assert.rejects(()=>verifiedEvidence(read,'data/raw/a','0'.repeat(64)),/EVIDENCE_HASH_MISMATCH/);await assert.rejects(()=>verifiedEvidence(read,'data/raw/a',null),/EVIDENCE_HASH_MISMATCH/)});

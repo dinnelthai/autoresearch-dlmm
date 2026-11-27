@@ -41,3 +41,5 @@ The legacy Python optimizer is separate OHLCV exploration; use it for historical
 25 completed implementation and partial acceptance notes were retired from the active tree. See [their original versions](https://github.com/dinnelthai/autoresearch-dlmm/tree/b55608f2f3de5f6a9dca313b7e48b9d1708460df/docs). The current runbook and revision-specific tests supersede historical phase statuses.
 
 New evidence-builder requests archive the collection clock and source errors in the snapshot's hashed `diagnostic.json`. The response still includes a candidate summary for compatibility; its `capture` points to the snapshot, not a separate candidate directory. The catalog lists each snapshot once and retains old candidate-only pointers. Existing candidate directories are untouched.
+
+The Paper page starts directly with fixed observed-bin controls and an optional flat Adaptive row. The automatic decision path prefers collected observations, falling back to a matched reviewed observation if needed. Explicit legacy API review-bound opening remains available. The observation basis remains visible; neither source implies calibrated profitability.

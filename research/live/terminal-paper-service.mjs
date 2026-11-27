@@ -12,7 +12,7 @@ import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
 import {reviewedObservations,collectedPaperInputs,PAPER_OBSERVATION_BASIS} from './review-observations.mjs';
 import {fixedPaperReport} from './paper-share-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
-import {sha} from './evidence-digest.mjs';
+import {sha,verifiedEvidence} from './evidence-digest.mjs';
 import {freezePaperWindow,paperWindowCapture,paperWindowExpired,finishPaperWindow} from './paper-window-core.mjs';
 import {createSnapshotStore} from './paper-history-store.mjs';
 export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,refreshFeatures,isStopping,idlPath='data/raw/dlmm-idl.json'}){
@@ -86,17 +86,18 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     const row=next.rows.find(r=>r.mode==='adaptive');
     if(windowCapture!=='ENDPOINT'&&next.adaptiveRequest&&['HOLD_ONLY','OPEN_PROXY'].includes(row?.status)){
      try{
-      let reviewed,reviewHash;
-      try{
-      const review=await loadReview(m,Date.now());
-      const evidence=async(path,digest)=>{assert(hash(digest),'PAPER_ADAPTIVE_EVIDENCE_HASH');const bytes=await read(path,8*1024*1024);assert(sha(bytes)===digest,'PAPER_ADAPTIVE_EVIDENCE_CHANGED');return bytes};
-      reviewed=await reviewedObservations({m,req:next.adaptiveRequest,review:review.review,evidence});
-      assert(review.expiresAt>Date.now()&&m.receivedAt+maxAgeMs>Date.now(),'PAPER_ADAPTIVE_REVIEW_EXPIRED');
-      reviewHash=review.reviewHash;
-      }catch(reviewError){
-       if(!next.collectedObservations?.length)throw reviewError;
-       reviewed=collectedPaperInputs({m,req:next.adaptiveRequest,samples:next.collectedObservations,asOf:Math.floor(Date.parse(snapshot.proof.receivedAt)/1000)});
-       reviewHash=sha(JSON.stringify(next.collectedObservations));
+      let reviewed,reviewHash,collectedError;
+      if(next.collectedObservations?.length){
+       try{reviewed=collectedPaperInputs({m,req:next.adaptiveRequest,samples:next.collectedObservations,asOf:Math.floor(Date.parse(snapshot.proof.receivedAt)/1000)});reviewHash=sha(JSON.stringify(next.collectedObservations))}
+       catch(e){collectedError=e}
+      }
+      if(!reviewed){
+       try{
+        const review=await loadReview(m,Date.now());
+        reviewed=await reviewedObservations({m,req:next.adaptiveRequest,review:review.review,evidence:(path,digest)=>verifiedEvidence(p=>read(p,8*1024*1024),path,digest,'PAPER_ADAPTIVE_EVIDENCE_CHANGED')});
+        assert(review.expiresAt>Date.now()&&m.receivedAt+maxAgeMs>Date.now(),'PAPER_ADAPTIVE_REVIEW_EXPIRED');
+        reviewHash=review.reviewHash;
+       }catch(e){throw collectedError??e}
       }
       const management=virtualManagement({state:next,row,snapshot,reviewed});
       next=updateAdaptiveSnapshot(next,{snapshot,reviewed,preview:management,reviewHash,now:Date.now()});

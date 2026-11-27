@@ -2,7 +2,7 @@
 import {readFile} from 'node:fs/promises';
 import {resolve,relative,isAbsolute,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {createHash} from 'node:crypto';
+import {sha,verifiedEvidence} from './evidence-digest.mjs';
 import {parseArgs} from 'node:util';
 import {Engine} from '../engine.mjs';
 import {IntegerKernel as K} from '../integer.mjs';
@@ -11,9 +11,7 @@ import {previewPlans} from './preview-plans.mjs';
 import {previewManagement} from './preview-management.mjs';
 import {reviewedObservations} from './review-observations.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=resolve(ROOT,'data');
-import {assert,blockAnalysis,errorCode} from './research-contract.mjs';
-const sha=b=>createHash('sha256').update(b).digest('hex');
-const finite=(v,min,max=Infinity)=>typeof v==='number'&&Number.isFinite(v)&&v>=min&&v<=max;
+import {assert,blockAnalysis,errorCode,finite} from './research-contract.mjs';
 function dataPath(path){assert(typeof path==='string','missing evidence path');const p=resolve(ROOT,path),rel=relative(DATA,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'evidence must be under data/');return p;}
 const localRead=path=>readFile(dataPath(path));
 async function verifyCapture(m,readData){
@@ -25,7 +23,7 @@ async function verifyCapture(m,readData){
 }
 // Shared service and CLI analysis; inputs remain pinned to their captured market.
 export async function analyzeState({state,req,review,plans=false,management=false,readData=localRead}){
- const evidence=async(path,hash)=>{assert(/^[0-9a-f]{64}$/.test(hash),'evidence hash required');const b=await readData(path);assert(sha(b)===hash,'evidence hash mismatch');return b};
+ const evidence=(path,digest)=>verifiedEvidence(readData,path,digest,'EVIDENCE_HASH_MISMATCH');
  const report={schemaVersion:1,pool:state.pool??null,sequence:state.sequence??null,status:'BLOCKED',decisionReady:false,executionReady:false,calibrated:false,protocolExact:false,limitations:['Read-only research diagnostic; not live recommendation, execution, or actual PnL.','Archive hashes and declared review metadata do not prove real-world correctness.','No synthetic observations or aggregate-Swap-to-bin conversion.'],gaps:[]};
  try{
   const m=extractMarket(state);await verifyCapture(m,readData);
@@ -33,7 +31,6 @@ export async function analyzeState({state,req,review,plans=false,management=fals
   const active=m.bins.find(b=>b.binId===m.activeId);
   report.market.activeBinPriceQ64Raw=active?.priceQ64Raw??null;
   if(!req||!review){report.gaps.push('REVIEWED_MARKET_EVIDENCE_AND_EXPLICIT_CAPITAL_REQUEST_REQUIRED');return report;}
-  assert(req.pool===m.pool&&review.pool===m.pool&&review.marketSlot===m.slot&&review.marketRawHash===m.rawHash&&review.mintX===m.mintX&&review.mintY===m.mintY,'review/request identity mismatch');
   const {asOf,cfg,observations,latest}=await reviewedObservations({m,req,review,evidence});
   const request={pool:m.pool,entry:req.entry,meme:rawHuman(req.memeRaw,m.decimalsX),sol:rawHuman(req.solRaw,m.decimalsY),initialPrice:latest.ref.price,goal:req.goal,horizonSeconds:req.horizonSeconds,allowDispose:false};
   const own=new Map();let positionReport=null;

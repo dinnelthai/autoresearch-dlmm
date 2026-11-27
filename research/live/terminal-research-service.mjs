@@ -8,7 +8,7 @@ import {assembleCandidate,reviewStructureRequired} from './evidence-builder.mjs'
 import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-snapshot.mjs';
 import {replayRequest,replayResult} from './research-replay.mjs';
 import {assert,errorCode,hash} from './research-contract.mjs';
-import {sha} from './evidence-digest.mjs';
+import {sha,verifiedEvidence} from './evidence-digest.mjs';
 export function createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,marketObservations,sourceHashes}){
 const read=(path,limit)=>safeDataPath(path).then(p=>boundedRead(p,limit));
 async function saveArchive(base,id,manifest,files=[]){
@@ -19,7 +19,7 @@ async function saveArchive(base,id,manifest,files=[]){
 }
 async function reviewedBytes(refs,reason){
  let budget=64*1024*1024;const files=new Map();
- for(const r of refs){const b=await read(r.path,Math.min(budget,8*1024*1024));assert(sha(b)===r.sha256,reason);budget-=b.length;files.set(r.path,b)}
+ for(const r of refs){const b=await verifiedEvidence(p=>read(p,Math.min(budget,8*1024*1024)),r.path,r.sha256,reason);budget-=b.length;files.set(r.path,b)}
  return files;
 }
 async function researchInputs(scope){
