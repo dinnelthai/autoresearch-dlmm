@@ -1,23 +1,35 @@
-# Dynamic LP 主流程联调验收（R09/R10）
+# Dynamic LP 核心业务联调（当前唯一执行任务）
 
-目标：仅运行用户指定 Meteora 池子的 Adaptive Paper 实验；不新增策略、不使用真实资金。NO_LP 是原始资产核算基准。以下是待执行验收，不是通过报告。
+2026-11-27 用户确认：先跑通核心业务，让实验持续运行。不需要等待实验结束，不以实验生命周期或完整报告作为本轮验收门槛。本文件是当前联调的最高优先级任务清单，覆盖此前宽泛的联调清单；其他事项记录后暂缓。
 
-## 1. 本地预检
-- 同步 main，记录 HEAD、Node 版本、SDK 版本、配置与数据源；不要覆盖用户未提交修改。
-- 执行 `node research/live/verify-offline.mjs`。先修复失败的原生测试，不能通过跳过测试宣称通过。
-- 重点检查 engine-admission、engine-regime-config、engine-bid-budget、engine-selection、paper-decision-config、terminal-core、preview-plans、preview-management、paper-adaptive-core、paper-snapshot-run-core。
-- 本轮库存预算改变候选分配；检查旧 fixture 是否依赖旧预算，先判断数学正确性再更新断言。
+## P0：三个核心业务任务
 
-## 2. 真实数据业务路径
-1. 用户指定流动性良好的 Meteora 池；不自动选币。记录 pool、mint、decimals、binStep、slot、activeId。
-2. 启动现有 Terminal / collector，使用 Meteora 优先的参考价、Bin 及成交数据，记录实际缺失项；不扩展供应商。确认市场观察按配置累积，区分数据缺失和策略拒绝。
-3. 通过现有 Paper start API 启动单一 Adaptive 实验。验证 strategyScope=ADAPTIVE_ONLY，仅 Adaptive 与 NO_LP 核算基准两行。
-4. 确认 frozen adaptiveRequest、有效 cfg、市场状态、准入原因、候选预算、效用和整数映射均可在实际日志中追踪；NO_LP 是合法结果，不强迫开仓。
-5. 在实际可行的候选出现时验证后续快照重新确认、虚拟 OPEN、费用增长、NAV、HOLD/REDUCE/REPOSITION/REMOVE_AND_HOLD；不保证真实行情出现所有动作，未出现的动作以离线 fixture 验证并注明。
-6. 到期结束实验，读取报告与账本；核对本金、费用、成本、NAV、相对原始持仓收益、最大回撤，检查无重复费用、无重置本金。若未到期，报告为进行中，不伪造完成窗口。
+| 任务 | 实际操作 | 验收证据 |
+|---|---|---|
+| C01 数学决策 | 同步最新 main，使用现有本地 Node/SDK/collector/Terminal，接入用户已指定的 Meteora 目标池；将当前真实快照输入 M01/M02/M07 和唯一 Adaptive 策略 | 最新 Slot、Active Bin、价格、有效配置、市场状态、资金预算、候选分布、效用及真实拒绝原因 |
+| C02 模拟开仓 | 将可行的数学候选转换为虚拟 LP 份额；检查整数映射、Bin 方向、资金预算、费用和本金守恒；实际选中 OPEN 后验证执行及账本 | OPEN 动作、实际 Bin/份额、钱包和仓位余额、操作成本、初始本金 |
+| C03 持续运行 | 保持实验运行，观察后续真实快照驱动的 NAV、手续费、库存、净收益及动态决策；实际触发调仓时核对映射和账本 | 多个连续更新的真实 Slot、仓位及收益记录、HOLD/REDUCE/REPOSITION 等真实决策及原因 |
 
-## 3. M12 参数验证
-按同一输入、仅改一个参数的方法验证：regimeLookback、regimeMinObservations、trendEfficiencyThreshold、trendLogReturnThreshold、stressLogReturnThreshold、holderOutflowThreshold、toxicMarkoutBps、toxicMarkoutMinSamples；maxInventoryRatio、maxInventoryTokens、minSolReserve、maxLossSol、stressDrop、maxBinShare；lambda、kappaSol、targetRatio、beta、minImprovementSol、uncertaintySol；cooldownSeconds、executionDelaySeconds、maxRebalances、maxTurnoverSol；feeBps、protocolShare、operationCostSol、slippageBps、forecastSteps、forecastHorizonSeconds、minDepthSol、minFlowSol、maxHolderShare、maxReferenceAge、maxReferenceDivergence、markoutSeconds。区分策略配置、市场事实和固定内部常量。对每个参数记录调用位置、可触发输入、输出差异、测试证据；未接入、条件不可达或仅研究路径生效的参数分别列出。Paper 不应声称已经有实测 Markout（需要真实可归因成交路径，当前快照模型不具备该证据）。
+优先跑通已有池子；用户要求分别验证 DLMM 和 DLMM V2，先核实实际协议/账户布局（不能把 BinArray 版本直接当协议版本）。一个池子或版本受阻，不阻塞另一个。不要自动选择池子，不扩大数据供应商，不增加策略或对照组。NO_LP 仅为原始资产核算基准。
 
-## 4. 联调交付
-输出 HEAD、命令及退出码、通过/失败测试数、实际池和时间范围、API 请求响应摘要、各动作原因、报告路径、缺失数据与下一步。区分离线通过、真实数据接通、真实数据实验完成三种状态。不要把代理收益当成真实成交收益。
+## 执行顺序与额度控制
+
+1. 同步 main，保留本地改动。先使用现有运行环境及已接通的真实数据，不重新研究 SDK。
+2. 直接运行现有主流程；仅执行与实际失败点有关的原生测试，记录命令和结果。不要求先跑完全部离线测试。
+3. 若没有开仓，先区分：输入未进入模型、模型正常拒绝、候选映射失败、执行未完成。定位第一处实际失败，做最小修复，再重复当前环节。
+4. 若候选经济效用不足，NO_LP 是正常结果，不强制开仓、不虚构成交量或手续费、不放宽用户风险预算。用现有离线 fixture 验证未出现的动作，并注明真实开仓尚未验收。
+5. C01–C03 正常后停止开发，保留运行中的实验，汇报结果。不等 7/30 天窗口结束，不为验收强制退出。
+
+## 当前不做（Deferred Backlog）
+
+- F08–F11：仅实际阻塞数据输入或整数映射时最小修复，不主动重写映射/协议模块。
+- F12：仅实际阻塞模拟执行时修改，保留真实数据时序。
+- F13–F14：数据恢复与手续费异常隔离，仅遇到影响当前业务的具体问题时处理。
+- F15：周期已放开，不再开发生命周期。
+- F16–F17：版本迁移与阶段报告扩展暂缓；保留历史实验。
+- 全量 CI、39 参数逐项敏感性、完整窗口报告、非核心 SDK 兼容、外围安全审计、UI/UX、其他数据源、历史多策略、架构重构全部暂缓。
+- 不进行真实交易。核心数学公式、实际资产守恒、价格/Bin 映射、手续费核算、用户资金与风险约束不可绕过。增强数据缺失标记不可用，不作为外围强制启动门槛。
+
+## 本轮交付
+
+记录 HEAD、池地址及协议身份、C01/C02/C03 各自状态（PASS/FAIL/NOT_TRIGGERED）、实际数据和动作、首个核心阻塞、必要修复 commit。成功时直接保持实验运行。尚未实际开仓或调仓必须注明，不能用静态代码或 NO_LP 冒充完整业务验收。M12 后续依据 docs/m12-parameter-reachability.md 优化，不是本轮前置条件。
