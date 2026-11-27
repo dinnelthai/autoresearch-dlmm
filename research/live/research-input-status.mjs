@@ -6,22 +6,30 @@ const positive=v=>typeof v==='string'&&/^\d{1,20}$/.test(v)&&BigInt(v)<(1n<<64n)
 import {hash,finite} from './research-contract.mjs';
 const fresh=(v,now,max)=>Number.isSafeInteger(v)&&v<=now&&now-v<=max;
 const evidence=v=>typeof v?.path==='string'&&hash(v?.sha256);
-export function boundedSwapObservation(stream,pool,now,maxAgeMs){
- stream=observedStream(stream);const d=stream?.evidence?.decoded;
- if(stream?.status!=='CAPTURED_UNVERIFIED'||!fresh(stream.receivedAt,now,maxAgeMs)||d?.pool!==pool||d.position!=null||d.status!=='EVENTS_DECODED_UNVERIFIED'||!Array.isArray(d.gaps)||d.gaps.length||!Array.isArray(d.events)||!d.events.length||d.events.length>20000||!Array.isArray(d.transactions))return null;
+export function boundedSwapObservation(stream,pool,now,maxAgeMs,{recentOnly=false}={}){
+ stream=observedStream(stream);
+ // A complete decoded head sample is useful even if the older history has an unresolved overlap gap.
+ // Do not promote partial transactions or a backfill page to a recent observation.
+ if(recentOnly&&stream?.evidence?.repairCapture===true)stream=stream.evidence.recentHead??null;
+ const d=stream?.evidence?.decoded,headOnly=recentOnly&&stream?.status==='PARTIAL'&&['OVERLAP_MISSING','BACKFILL_PENDING','UNRESOLVED_GAP'].includes(stream.evidence?.historyStatus)&&stream.evidence?.repairCapture!==true;
+ if(stream?.status!=='CAPTURED_UNVERIFIED'&&!headOnly||!fresh(stream.receivedAt,now,maxAgeMs)||d?.pool!==pool||d.position!=null||d.status!=='EVENTS_DECODED_UNVERIFIED'||!Array.isArray(d.gaps)||d.gaps.length||!Array.isArray(d.events)||!d.events.length||d.events.length>20000||!Array.isArray(d.transactions))return null;
  let buy=0n,sell=0n,buyCount=0,sellCount=0,minTime=Infinity,maxTime=-Infinity;
  if(d.transactions.length>20000||d.transactions.some(t=>typeof t?.signature!=='string'||!Number.isSafeInteger(t.slot)||t.slot<0))return null;
- const txs=new Map(d.transactions.map(t=>[t.signature,t]));if(txs.size!==d.transactions.length)return null;const ids=new Set();
+ const txs=new Map(d.transactions.map(t=>[t.signature,t]));if(txs.size!==d.transactions.length)return null;const ids=new Set(),used=new Set();
  for(const e of d.events){
   const t=txs.get(e.signature);
   if(e.pool!==pool||typeof e.id!=='string'||ids.has(e.id)||!t||t.success!==true||t.slot!==e.slot||t.blockTime!==e.blockTime||!Number.isSafeInteger(e.blockTime)||e.blockTime<=0||e.blockTime>Math.floor(now/1000)||!positive(e.amountInRaw)||!positive(e.amountOutRaw))return null;
-  ids.add(e.id);minTime=Math.min(minTime,e.blockTime);maxTime=Math.max(maxTime,e.blockTime);
+  ids.add(e.id);
+  if(!((e.direction==='Y_TO_X'&&e.swapForY===false)||(e.direction==='X_TO_Y'&&e.swapForY===true)))return null;
+  if(recentOnly&&e.blockTime<Math.ceil((now-maxAgeMs)/1000))continue;
+  used.add(e.id);minTime=Math.min(minTime,e.blockTime);maxTime=Math.max(maxTime,e.blockTime);
   if(e.direction==='Y_TO_X'&&e.swapForY===false){buy+=BigInt(e.amountInRaw);buyCount++}
   else if(e.direction==='X_TO_Y'&&e.swapForY===true){sell+=BigInt(e.amountOutRaw);sellCount++}
   else return null;
  }
+ if(!used.size)return null;
  const recent=minTime>=Math.floor((now-maxAgeMs)/1000),sampleKind=stream.evidence.repairCapture===true?'HISTORICAL_BACKFILL':recent?'RECENT_EVENT_SAMPLE':'OLDER_EVENT_SAMPLE';
- return {scope:'BOUNDED_SAMPLE_ONLY',sampleKind,collectionReceivedAt:stream.receivedAt,eventAgeSeconds:Math.floor(now/1000)-maxTime,buyLamports:buy.toString(),sellLamports:sell.toString(),grossLamports:(buy+sell).toString(),buyCount,sellCount,firstEventTime:minTime,lastEventTime:maxTime,eventCount:ids.size,capture:stream.evidence.capture??null,coverageVerified:false,modelFlowEligible:false};
+ return {scope:'BOUNDED_SAMPLE_ONLY',sampleKind,collectionReceivedAt:stream.receivedAt,eventAgeSeconds:Math.floor(now/1000)-maxTime,buyLamports:buy.toString(),sellLamports:sell.toString(),grossLamports:(buy+sell).toString(),buyCount,sellCount,firstEventTime:minTime,lastEventTime:maxTime,eventCount:used.size,sourceEventCount:ids.size,windowSeconds:Math.ceil(maxAgeMs/1000),historyCoverage:stream.evidence.historyStatus??null,capture:stream.evidence.capture??null,coverageVerified:false,modelFlowEligible:false};
 }
 export function reviewShape(review,m,now){
  if(!review||!m)return {status:'MISSING',observations:0,missing:['REVIEW_ARTIFACT_REQUIRED']};

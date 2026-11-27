@@ -62,7 +62,7 @@ async function captureMarketTime(m){
   const out={slot:m.slot,observedAt:Date.now(),sources:{}};
   const reason=e=>typeof e?.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(e.message)?e.message:'FEATURE_COLLECTION_FAILED';
   let state,reference=null,external=null,holder=null;
-  const holderTask=holderObservation({pool:m.pool},m).then(v=>{holder=v;out.sources.holder={status:'OBSERVED',capture:v.capture,evidenceHash:v.evidenceHash}},e=>{out.sources.holder={status:'UNAVAILABLE',reason:reason(e)}});
+  const holderTask=holderObservation({pool:m.pool},m).then(v=>{holder=v;out.sources.holder={status:v.status??'OBSERVED',capture:v.capture,evidenceHash:v.evidenceHash,gaps:v.gaps??[],cohortReady:!!v.cohort}},e=>{out.sources.holder={status:'UNAVAILABLE',reason:reason(e)}});
   try{
    state=await loadState(m.pool);
    const stream=observedStream(state.streams?.references),e=stream?.evidence;
@@ -75,6 +75,10 @@ async function captureMarketTime(m){
   }catch(e){out.sources.reference={status:'UNAVAILABLE',reason:reason(e)}}
   if(!reference&&cfg.externalMarket?.fallback===true){try{external=await externalObservation({pool:m.pool},m);out.sources.external={status:'OBSERVED',capture:external.capture,evidenceHash:external.evidenceHash}}catch(e){out.sources.external={status:'UNAVAILABLE',reason:reason(e)}}}
   await holderTask;out.observedAt=Date.now();
+ // Refresh the history view after slower holder reads; it may have advanced meanwhile.
+ try{state=await loadState(m.pool)}catch{}
+ const flowStream=observedStream(state?.streams?.['history:'+m.pool]);
+ out.sources.history={status:flowStream?.status??'UNAVAILABLE',reason:flowStream?.reason??flowStream?.evidence?.historyStatus??null,capture:flowStream?.evidence?.capture??null};
   try{
    assert(reference||external,out.sources.reference?.reason??'METEORA_REFERENCE_UNAVAILABLE');
    out.observation=collectedPaperObservation({m,reference,external,holder,history:state?.streams?.['history:'+m.pool],now:out.observedAt,maxAgeMs:120000});

@@ -36,7 +36,7 @@ test('shared evidence reader returns matching bytes and rejects invalid digests'
 
 test('Meteora reference bridge recomputes SDK quotes, rejects stale or target references and duplicate capture warmup',async()=>{
  const {meteoraReferenceInputs,collectedPaperInputs}=await import('./review-observations.mjs'),{quoteMath}=await import('./reference-math.mjs');
- const m={pool:'A'.repeat(32),mintX:'B'.repeat(32),mintY:'C'.repeat(32),decimalsX:6,binStep:100,slot:10};
+ const m={pool:'A'.repeat(32),mintX:'B'.repeat(32),mintY:'C'.repeat(32),decimalsX:6,decimalsY:9,binStep:100,slot:10};
  const now=100000,iso=t=>new Date(t).toISOString(),bid={status:'FULL_QUOTE',inRaw:'10000000',outRaw:'10000000',minOutRaw:'9950000'},ask={status:'FULL_QUOTE',inRaw:'10010000',outRaw:'10000000',minOutRaw:'9950000'},ladder=[bid,{status:'FULL_QUOTE',inRaw:'3000000000',outRaw:'3000000000',minOutRaw:'2985000000'}],math=quoteMath(bid,ask,ladder,200);
  const refs=['D','E'].map(k=>({pool:k.repeat(32),venue:'METEORA_DLMM',status:'QUOTES_CAPTURED_UNVERIFIED',before:{slot:1,receivedAt:iso(now-2000)},after:{slot:2,receivedAt:iso(now-1000)},bid,ask,...math}));
  const reference={capture:'data/raw/ref',manifestHash:'a'.repeat(64),report:{pool:m.pool,mint:m.mintX,decimals:6,commitment:'finalized',status:'REFERENCE_EVIDENCE_UNVERIFIED',completedAt:iso(now-500),maxDiscountBps:200,references:refs}};
@@ -46,4 +46,15 @@ test('Meteora reference bridge recomputes SDK quotes, rejects stale or target re
  const req={goal:'balanced',horizonSeconds:600,riskConfig:{}};assert.throws(()=>collectedPaperInputs({m,req,samples,asOf:102}),/PAPER_COLLECTED_MODEL_WARMUP/);
  for(let i=0;i<3;i++)samples[i].evidence.reference.sha256=String(i).repeat(64);
  assert.equal(collectedPaperInputs({m,req,samples,asOf:102}).observations.length,3);
+});
+
+test('Paper takes only validated recent head swaps, not old events or historical gaps as full coverage',()=>{
+ const d=history.evidence.decoded,older={...d.events[0],id:'old:0',signature:'old',blockTime:t-600,amountInRaw:'99999'};
+ const head={...history,status:'PARTIAL',evidence:{...history.evidence,historyStatus:'UNRESOLVED_GAP',decoded:{...d,transactions:[...d.transactions,{signature:'old',success:true,slot:1,blockTime:t-600}],events:[older,...d.events]}}};
+ assert.equal(boundedSwapObservation(head,pool,now,10000),null);
+ const s=boundedSwapObservation(head,pool,now,10000,{recentOnly:true});assert.equal(s.grossLamports,'19');assert.equal(s.eventCount,2);assert.equal(s.sourceEventCount,3);assert.equal(s.coverageVerified,false);assert.equal(s.historyCoverage,'UNRESOLVED_GAP');
+ const backfill={...history,evidence:{...history.evidence,repairCapture:true,recentHead:head}};
+ assert.equal(boundedSwapObservation(backfill,pool,now,10000,{recentOnly:true}).grossLamports,'19');
+ assert.equal(boundedSwapObservation({...backfill,evidence:{...backfill.evidence,recentHead:null}},pool,now,10000,{recentOnly:true}),null);
+ assert.equal(boundedSwapObservation({...head,evidence:{...head.evidence,decoded:{...head.evidence.decoded,gaps:[{reason:'MISSING'}]}}},pool,now,10000,{recentOnly:true}),null);
 });

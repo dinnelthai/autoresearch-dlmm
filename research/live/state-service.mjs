@@ -7,7 +7,7 @@ import {createServer} from 'node:http';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
 import {decodeMarketCapture} from './inspect-bins.mjs';
-import {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex} from './state-core.mjs';
+import {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex,observedStream} from './state-core.mjs';
 import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
 import {repairPlan,advanceRepair,failedRepair,historyCoverage} from './history-repair.mjs';
 import {dependencyPlan,sameAccounts} from './account-dependency-plan.mjs';
@@ -128,6 +128,8 @@ try{
  async function history(address){
   const args=['--pool',pool,'--provider',provider,'--pages',String(historyPages),'--limit',String(historyLimit)];
   if(address!==pool)args.push('--position',address);
+  const oldHead=observedStream(state.streams['history:'+address]);
+  const head=oldHead?.evidence?.repairCapture===true?oldHead.evidence.recentHead:oldHead;
   const previous=state.history[address],turn=(previous?.repairTurn??0)+1,plan=values.once?{repair:false,before:null}:repairPlan(previous,turn);if(plan.before)args.push('--before',plan.before);
   if(previous)state.history[address]={...previous,repairTurn:turn};
   const failRepair=reason=>{if(plan.repair&&previous)state.history[address]={...state.history[address],repair:failedRepair(previous,plan,reason),repairTurn:turn}};
@@ -148,7 +150,7 @@ try{
   if(!plan.repair&&previous?.headSignatures?.length&&!previous.headSignatures.some(o=>m.signatures.some(n=>n.signature===o.signature))){merged.gapObserved=true;merged.status='OVERLAP_MISSING'}
   const coverage=historyCoverage(merged,repair);
   state.history[address]={...merged,repair,repairTurn:turn,headSignatures,coverage};
-  return {capture:relative(ROOT,p),historyStatus:emptyIndex?'DECODE_PARTIAL':coverage,historyGapObserved:merged.gapObserved,historyComplete:false,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
+  return {capture:relative(ROOT,p),...(plan.repair&&head?.evidence?.decoded?.status==='EVENTS_DECODED_UNVERIFIED'?{recentHead:{status:head.status,receivedAt:head.receivedAt,evidence:{capture:head.evidence.capture,historyStatus:head.evidence.historyStatus,repairCapture:false,decoded:head.evidence.decoded}}}:{}),historyStatus:emptyIndex?'DECODE_PARTIAL':coverage,historyGapObserved:merged.gapObserved,historyComplete:false,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
  }
  let referenceDiscovery=null;
  async function reference(){

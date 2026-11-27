@@ -65,8 +65,9 @@ export function meteoraReferenceInputs({m,reference,now,maxAgeMs=120000}){
  return refs;
 }
 export function collectedPaperObservation({m,reference,external,holder,history,now=Date.now(),maxAgeMs=120000}){
- const h=featureProjection(holder,m,now,maxAgeMs),flow=boundedSwapObservation(history,m.pool,now,maxAgeMs);
- assert(h?.distribution?.supplyConserved&&finite(h.distribution.topShare,0,1)&&finite(h.cohort?.netDecreaseShare,0,1)&&Array.isArray(h.safety?.flags),'PAPER_HOLDER_FEATURES_UNAVAILABLE');
+ const h=featureProjection(holder,m,now,maxAgeMs),flow=boundedSwapObservation(history,m.pool,now,maxAgeMs,{recentOnly:true});
+ assert(h?.distribution?.supplyConserved&&finite(h.distribution.topShare,0,1)&&Array.isArray(h.safety?.flags),'PAPER_HOLDER_FEATURES_UNAVAILABLE');
+ assert(finite(h.cohort?.netDecreaseShare,0,1),'PAPER_HOLDER_COHORT_WARMUP');
  assert(flow?.sampleKind==='RECENT_EVENT_SAMPLE'&&flow.eventCount>0,'PAPER_FLOW_SAMPLE_UNAVAILABLE');
  let refs,referenceEvidence;
  if(reference){refs=meteoraReferenceInputs({m,reference,now,maxAgeMs});referenceEvidence={source:'METEORA_DLMM_SDK',capture:reference.capture,sha256:reference.manifestHash}}
@@ -83,7 +84,7 @@ export function collectedPaperObservation({m,reference,external,holder,history,n
  const buy=BigInt(flow.buyLamports),sell=BigInt(flow.sellLamports),gross=buy+sell;
  assert(gross>0n,'PAPER_FLOW_SAMPLE_EMPTY');
  const t=Math.floor(now/1000);
- return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{reference:referenceEvidence,holder:h.evidenceHash,history:flow.capture},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(...refs.map(r=>r.depth))}};
+ return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{reference:referenceEvidence,holder:h.evidenceHash,history:flow.capture,flowSample:{kind:flow.sampleKind,eventCount:flow.eventCount,sourceEventCount:flow.sourceEventCount,firstEventTime:flow.firstEventTime,lastEventTime:flow.lastEventTime,windowSeconds:flow.windowSeconds,historyCoverage:flow.historyCoverage,coverageVerified:false}},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(...refs.map(r=>r.depth))}};
 }
 export function collectedPaperInputs({m,req,samples,asOf}){
  const cfg=Engine.requestConfig(req,{...req.riskConfig,binStepBps:m.binStep,anchorPrice:10**(m.decimalsX-m.decimalsY),maxReferenceAge:120,forecastHorizonSeconds:req.horizonSeconds});
