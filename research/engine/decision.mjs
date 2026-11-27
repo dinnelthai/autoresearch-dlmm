@@ -19,6 +19,17 @@ function candidatePlans(s,c,mode="adaptive"){
   if(mode==="adaptive")for(const a of [0,.25,.5,.75,1])for(const b of [0,.25,.5,.75,1]){plans.push({type:open?"REPOSITION":"OPEN",label:"hybrid_grid",spec:{shape:"hybrid",width:4,bidFraction:g.regime==="DOWNTREND"||g.flags.includes("TOXIC_BID")?0:.5,askFraction:g.flags.includes("TOXIC_ASK")?0:.5,alphaBid:a,alphaAsk:b,active:0}})}
   return plans;
 }
+// Shared economic selection; callers retain their own execution and protective gates.
+// Stable ranking preserves candidate order on equal scores.
+function selectByUtility(rows,base,c,{scoreKey='utility',requireBaseline=true}={}){
+  const valid=r=>r?.feasible===true&&Number.isFinite(r[scoreKey]);
+  const baseline=valid(base)?base:null;
+  if(requireBaseline&&!baseline)return null;
+  const ranked=rows.filter(r=>r!==base&&valid(r)).sort((a,b)=>b[scoreKey]-a[scoreKey]);
+  const best=ranked[0];
+  if(!baseline)return best??null;
+  return best&&best[scoreKey]-baseline[scoreKey]>c.minImprovementSol+c.uncertaintySol?best:baseline;
+}
 function decide(s,c,mode="adaptive"){
   if(!fresh(s,c))return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"UNKNOWN_REFERENCE",candidates:[],regime:"UNKNOWN"};
   const g=classify(s,c),p=s.market.ref.price,r=risk(s,c,p);
@@ -31,9 +42,8 @@ function decide(s,c,mode="adaptive"){
   const feasible=results.filter(a=>a.feasible).sort((a,b)=>b.utility-a.utility);
   if(!s.bins.length&&!base?.feasible)return {action:{type:'NO_LP'},reason:'BASELINE_UNAVAILABLE_NO_DEPLOYMENT',regime:g.regime,risk:r,candidates:results};
   if(!feasible.length)return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"RISK_BLOCKED",regime:g.regime,risk:r,candidates:results};
-  let best=feasible[0];
-  if(base.feasible&&best.action.type!==base.action.type&&best.utility-base.utility<=c.uncertaintySol+c.minImprovementSol)best=base;
+  let best=selectByUtility(results,base,c,{requireBaseline:!s.bins.length});
   if(best.action.type==="REPOSITION"&&(s.market.t-s.lastActionTime<c.cooldownSeconds||s.rebalances>=c.maxRebalances||s.turnover+s.rebalanceTurnover>=c.maxTurnoverSol)){if(base.feasible)best=base;else best=feasible.find(v=>v.action.type!=="REPOSITION")||{action:{type:"REMOVE_AND_HOLD"},feasible:false,reason:"REBALANCE_BUDGET"};}
   return {action:best.action,reason:best===base?"BASELINE_WINS_OR_MARGIN":"MAX_FEASIBLE_UTILITY",regime:g.regime,risk:r,selected:best,candidates:results,forecastLabel:"SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED"};
 }
-export {candidatePlans,decide};
+export {candidatePlans,decide,selectByUtility};
