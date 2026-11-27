@@ -23,9 +23,9 @@ export function cohortChange(previous,current,now){
  if(!before)return null;
  return {scope:'PREVIOUS_TOP_OWNER_COHORT_NET_BALANCE_CHANGE_NOT_SELL_FLOW',previousSlot:previous.slot,slot:current.slot,windowMs:current.receivedAt-previous.receivedAt,previousRaw:before.toString(),currentRaw:after.toString(),netDecreaseShare:ratio(before>after?before-after:0n,before)};
 }
-export function mintSafety({mintAuthority,freezeAuthority,initialized,classic,decimals}){
- assert(typeof initialized==='boolean'&&typeof classic==='boolean'&&Number.isInteger(decimals)&&decimals>=0&&decimals<=18&&(mintAuthority===null||key(mintAuthority))&&(freezeAuthority===null||key(freezeAuthority)),'MINT_FACTS_INVALID');
- const flags=[];if(!classic)flags.push('TOKEN_PROGRAM_UNSUPPORTED');if(!initialized)flags.push('MINT_NOT_INITIALIZED');if(mintAuthority)flags.push('MINT_AUTHORITY_PRESENT');if(freezeAuthority)flags.push('FREEZE_AUTHORITY_PRESENT');
+export function mintSafety({mintAuthority,freezeAuthority,initialized,classic,decimals,supported=classic}){
+ assert(typeof initialized==='boolean'&&typeof classic==='boolean'&&typeof supported==='boolean'&&Number.isInteger(decimals)&&decimals>=0&&decimals<=18&&(mintAuthority===null||key(mintAuthority))&&(freezeAuthority===null||key(freezeAuthority)),'MINT_FACTS_INVALID');
+ const flags=[];if(!supported)flags.push('TOKEN_PROGRAM_UNSUPPORTED');if(!initialized)flags.push('MINT_NOT_INITIALIZED');if(mintAuthority)flags.push('MINT_AUTHORITY_PRESENT');if(freezeAuthority)flags.push('FREEZE_AUTHORITY_PRESENT');
  return {scope:'MINT_AUTHORITY_FACTS_ONLY',mintAuthorityRevoked:mintAuthority===null,freezeAuthorityRevoked:freezeAuthority===null,flags,tokenSafe:null,modelEligible:false};
 }
 export function featureProjection(feature,m,now,maxAgeMs){

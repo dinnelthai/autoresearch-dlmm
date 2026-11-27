@@ -5,9 +5,9 @@ import {createHash} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import anchor from '@coral-xyz/anchor';
 import {Connection,PublicKey} from '@solana/web3.js';
-import {NATIVE_MINT,TOKEN_PROGRAM_ID,getExtensionTypes} from '@solana/spl-token';
+import {NATIVE_MINT,getExtensionTypes} from '@solana/spl-token';
 import DLMM from './sdk-runtime.mjs';
-import {PROGRAM,SDK_COMMIT} from './inspect-pool.mjs';
+import {PROGRAM,SDK_COMMIT,paperTokenSupported} from './inspect-pool.mjs';
 import {quoteMath} from './reference-math.mjs';
 const assert=(v,m)=>{if(!v)throw Error(m);};
 const key=v=>new PublicKey(v).toBase58();
@@ -48,7 +48,7 @@ async function main(){
   assert(rawAccount&&!rawAccount.executable&&rawAccount.owner.equals(PROGRAM),'not a Meteora pool');
   const dlmm=await DLMM.create(conn,pk,{programId:PROGRAM});
   const x=dlmm.tokenX,y=dlmm.tokenY;
-  assert(x.owner.equals(TOKEN_PROGRAM_ID)&&y.owner.equals(TOKEN_PROGRAM_ID)&&!getExtensionTypes(x.mint.tlvData).length&&!getExtensionTypes(y.mint.tlvData).length,'unsupported token program/extensions');
+  assert([x,y].every(t=>paperTokenSupported({tokenProgram:t.owner.toBase58(),mintExtensions:getExtensionTypes(t.mint.tlvData),vaultExtensions:[],vaultFrozen:false})),'unsupported token program/extensions');
   assert(y.publicKey.equals(NATIVE_MINT)&&y.mint.decimals===9&&!x.publicKey.equals(y.publicKey),'unsupported token orientation');
   return dlmm;
  }

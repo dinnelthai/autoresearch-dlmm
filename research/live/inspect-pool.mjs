@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {parseArgs} from 'node:util';
 import anchor from '@coral-xyz/anchor';
 import {PublicKey} from '@solana/web3.js';
-import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,NATIVE_MINT,unpackMint,unpackAccount,getExtensionTypes} from '@solana/spl-token';
+import {TOKEN_PROGRAM_ID,TOKEN_2022_PROGRAM_ID,NATIVE_MINT,unpackMint,unpackAccount,getExtensionTypes,ExtensionType} from '@solana/spl-token';
 const SDK_COMMIT='1532e540db41ac405dbf4c5bb2ddfceaa1f98ff1';
 const IDL_BLOB='6715f5cf19dffa8651a185ac0dd823218c6a2a75';
 const PROGRAM=new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo');
@@ -38,6 +38,10 @@ function tokenProgram(info){
  assert(info.owner.equals(TOKEN_PROGRAM_ID)||info.owner.equals(TOKEN_2022_PROGRAM_ID),'unknown token program');
  return info.owner;
 }
+export function paperTokenSupported(s){
+ const classic=s.tokenProgram===TOKEN_PROGRAM_ID.toBase58(),token2022=s.tokenProgram===TOKEN_2022_PROGRAM_ID.toBase58();
+ return !s.vaultFrozen&&!s.vaultExtensions.length&&(classic&&!s.mintExtensions.length||token2022&&s.mintExtensions.every(x=>[ExtensionType.MetadataPointer,ExtensionType.TokenMetadata].includes(x)));
+}
 export async function loadMarketCapture(capture,idlPath){
  const bytes=await readFile(idlPath);assert(blob(bytes)===IDL_BLOB,'pinned IDL mismatch');
  const idl=JSON.parse(bytes);assert(idl.address===PROGRAM.toBase58(),'IDL program mismatch');
@@ -64,9 +68,9 @@ export function decodePool({m,accounts,pair}){
   return {mint,vault,tokenProgram:program.toBase58(),decimals:decodedMint.decimals,mintExtensions:getExtensionTypes(decodedMint.tlvData),vaultExtensions:getExtensionTypes(decodedVault.tlvData),vaultAmountRaw:decodedVault.amount.toString(),vaultFrozen:decodedVault.isFrozen};
  });
  result.sides=sides;result.orientation=mintY===NATIVE_MINT.toBase58()?'MEME_X_SOL_Y':mintX===NATIVE_MINT.toBase58()?'SOL_X_MEME_Y':'NON_SOL';
- const supported=result.orientation==='MEME_X_SOL_Y'&&sides[1].decimals===9&&sides.every(s=>s.tokenProgram===TOKEN_PROGRAM_ID.toBase58()&&!s.mintExtensions.length&&!s.vaultExtensions.length&&!s.vaultFrozen);
+ const supported=result.orientation==='MEME_X_SOL_Y'&&sides[1].decimals===9&&sides.every(paperTokenSupported);
  result.status=supported?'IDENTITY_CHECKED_UNVERIFIED':'UNSUPPORTED_ENGINE_INPUT';
- result.limitations=['Input evidence is a supplied T01 capture, not independent RPC verification.','Token-2022 and reverse token orientation are not supported by the current strategy adapter.','No BinArray, historical state, execution or income validation.'];
+ result.limitations=['Input evidence is a supplied T01 capture, not independent RPC verification.','Only metadata-only Token-2022 mints are supported for Paper; reverse token orientation is unsupported.','No BinArray, historical state, execution or income validation.'];
  return result;
 }
 async function main(){
