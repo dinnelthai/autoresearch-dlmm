@@ -119,8 +119,8 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const tuned=JSON.parse(await readFile(join(DATA,'paper-auto',A,waiting.id,'checkpoint.json'),'utf8'));assert.equal(tuned.adaptiveRequest.riskConfig.lambda,1.25);
  now+=10000;await capture(5,110n,now-1000,now);await resumed.tick();
  const observed=await resumed.get();assert.equal(observed.snapshotCount,2);assert.equal(observed.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');assert.equal(observed.rows.find(r=>r.mode==='adaptive').adaptiveReason,'UNEXPECTED_REVIEW');
- assert.deepEqual(featureCalls,[4,5]);assert.equal(observed.featureCollection.slot,5);
- now+=10000;await capture(6,120n,now-1000,now);await resumed.tick();assert.deepEqual(featureCalls,[4,5]);assert.equal((await resumed.get()).snapshotCount,3);
+ assert.deepEqual(featureCalls,[2,3,4,5]);assert.equal(observed.featureCollection.slot,5);
+ now+=10000;await capture(6,120n,now-1000,now);await resumed.tick();assert.deepEqual(featureCalls,[2,3,4,5]);assert.equal((await resumed.get()).snapshotCount,3);
  await resumed.pause({pool:A,id:waiting.id});
  const proposal={status:'PROPOSED_FOR_NEW_PAPER_WINDOW',source:'UNVERIFIED_NORMALIZED_EVENT_OPTIMIZATION',datasetSha256:'e'.repeat(64),validationPools:[A],nextWindowAfter:Math.floor(now/1000),tuning:{lambda:1.5}};
  const optBody={draft:{...draft,memeHuman:'10'},policy:{...body.policy,adaptive:{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30},optimization:proposal}};
