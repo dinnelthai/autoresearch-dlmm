@@ -35,7 +35,7 @@ export function auditRelativeImports(modules){
 }
 
  // Freeze calculation and decoding sources, not terminal, archive, diagnostics or optimizer orchestration.
-const paperModelFiles=new Set(['engine.mjs','integer.mjs','engine-input.mjs','paper-snapshot-run-core.mjs','paper-share-core.mjs','paper-adaptive-core.mjs','paper-fee-core.mjs','paper-map-plans.mjs','allocation-diagnostic.mjs','preview-plans.mjs','preview-management.mjs','review-observations.mjs','research-input-status.mjs','market-features.mjs','state-core.mjs','reference-math.mjs','quote-evidence.mjs','external-market.mjs','capture-holder-features.mjs','inspect-pool.mjs','inspect-bins.mjs','sdk-runtime.mjs','bin-version.mjs','bitmap.mjs','research-contract.mjs','package.json','package-lock.json']);
+const paperModelFiles=new Set(['engine.mjs','integer.mjs','engine-input.mjs','paper-snapshot-run-core.mjs','paper-share-core.mjs','paper-adaptive-core.mjs','paper-fee-core.mjs','allocation-diagnostic.mjs','preview-plans.mjs','preview-management.mjs','review-observations.mjs','research-input-status.mjs','market-features.mjs','state-core.mjs','reference-math.mjs','quote-evidence.mjs','external-market.mjs','capture-holder-features.mjs','inspect-pool.mjs','inspect-bins.mjs','sdk-runtime.mjs','bin-version.mjs','bitmap.mjs','research-contract.mjs','package.json','package-lock.json']);
 export function paperModelFingerprint(entries){
  return sha(JSON.stringify(entries.filter(({path})=>path.startsWith('research/engine/')||paperModelFiles.has(path.replace(/^research\/(?:live\/)?/,'')))));
 }

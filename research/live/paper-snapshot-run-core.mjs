@@ -1,6 +1,6 @@
 // Fixed opening allocation, observed-share proxy. Independent of swap replay.
 import {IntegerKernel as K} from '../integer.mjs';
-import {mapPaperPlans} from './paper-share-core.mjs';
+import {mapPaperPlans,principalForShares as principal} from './paper-share-core.mjs';
 import {adaptiveIntent,remapAdaptive} from './paper-adaptive-core.mjs';
 import {snapshotRows,intervalFees,INTERVAL_FEE_BASIS} from './paper-fee-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
@@ -11,7 +11,6 @@ export const PAPER_FEE_BASIS=INTERVAL_FEE_BASIS;
 const RETAINED_POINTS=1000;
 function appendPoint(row,point){const points=[...row.points,point];return {points:points.slice(-RETAINED_POINTS),pointsDropped:(row.pointsDropped??0)+Math.max(0,points.length-RETAINED_POINTS),maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps)}}
 const modes=['NO_LP','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid','adaptive'];
-const limits=['openOrderAmountRaw','totalProcessingOrderAmountRaw','processedOrderRemainingAmountRaw'];
 function facts(snapshot){
  const {identity:i,map}=snapshotRows(snapshot),active=map.get(i.activeId);
  assert(active&&raw(active.priceQ64Raw)>0n&&i.sides?.length===2&&i.sides[1].decimals===9,'PAPER_SNAPSHOT_MARK_UNAVAILABLE');
@@ -21,13 +20,6 @@ function facts(snapshot){
 }
 function mark(x,y,p){return y+x*p/Q}
 function scope(a,b){assert(['pool','mintX','mintY','vaultX','vaultY','binStep','sdkCommit','idlBlob'].every(k=>a.i[k]===b.i[k])&&a.i.sides.every((v,n)=>v.mint===b.i.sides[n].mint&&v.decimals===b.i.sides[n].decimals),'PAPER_SNAPSHOT_SCOPE_CHANGED')}
-function principal(map,rows){
- let x=0n,y=0n;
- for(const r of rows){const b=map.get(r.binId),share=raw(r.shareRaw);assert(b&&[2,3].includes(b.version)&&limits.every(k=>b.version===2?b[k]===null:raw(b[k],64)===0n),'PAPER_SNAPSHOT_BIN_UNAVAILABLE');
-  const supply=raw(b.liquiditySupplyRaw);assert(supply>0n&&share*10n<=supply,'PAPER_SNAPSHOT_SHARE_LIMIT');
-  x+=share*raw(b.amountXRaw,64)/supply;y+=share*raw(b.amountYRaw,64)/supply}
- return {x,y};
-}
 function samplePoint({slot,received,price,wallet,principal,fees,initial,hold,peak,cost,status}){
  const nav=mark(wallet.x+principal.x+fees.x,wallet.y+principal.y+fees.y,price);
  const nextPeak=nav>peak?nav:peak,drawdown=nextPeak?(nextPeak-nav)*10000n/nextPeak:0n;

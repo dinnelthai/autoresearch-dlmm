@@ -4,8 +4,8 @@ import {rawHuman} from './engine-input.mjs';
 import {snapshotRows} from './paper-fee-core.mjs';
 import {previewManagement} from './preview-management.mjs';
 import {previewPlans} from './preview-plans.mjs';
-import {allocationDiagnostic,scaledFloat} from './allocation-diagnostic.mjs';
-import {proportionalShare,assertProjectedShareLimit} from './paper-share-core.mjs';
+import {scaledFloat} from './allocation-diagnostic.mjs';
+import {mapAllocation,principalForShares} from './paper-share-core.mjs';
 import {assert,errorCode} from './research-contract.mjs';
 const raw=v=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v),'PAPER_ADAPTIVE_RAW');return BigInt(v)};
 export function adaptivePolicy(p){
@@ -47,14 +47,12 @@ export function remapAdaptive({row,selected,snapshot,state,cfg}){
  if(selected.action.type==='REMOVE_AND_HOLD')return {mapping:null,walletX:x,walletY:y,principalX:0n,principalY:0n,cost,turnover:oldTurnover+value(principalX,principalY),status:'HOLD_ONLY'};
  assert((opening?row.status==='HOLD_ONLY':selected.action.type==='REPOSITION'&&row.status==='OPEN_PROXY'&&row.rebalances<cfg.maxRebalances)&&Array.isArray(selected.allocation?.bins)&&selected.allocation.bins.length>0,'PAPER_ADAPTIVE_REPOSITION');
  const bins=selected.allocation.bins,lo=Math.min(...bins.map(b=>b.binId)),hi=Math.max(...bins.map(b=>b.binId));
- const d=allocationDiagnostic({row:{family:'adaptive',action:{type:'OPEN'},feasible:true,allocation:{...selected.allocation,lowerBinId:lo,upperBinId:hi}},market:{activeId:i.activeId,decimalsX:i.sides[0].decimals,decimalsY:9,bins:[...map.values()]},budget:{allowDispose:false,memeRaw:String(x),solRaw:String(y),minSolReserve:cfg.minSolReserve,operationCostSol:0}});
- assert(d.status==='INTEGER_DIAGNOSTIC_ONLY'&&d.rows.length<=256&&!d.zeroRows,'PAPER_ADAPTIVE_ALLOCATION_BLOCKED');
- const rows=d.rows.map(v=>proportionalShare(map.get(v.binId),v,i.activeId)),dx=raw(d.totalMemeRaw),dy=raw(d.totalSolRaw);
- assertProjectedShareLimit(rows,cfg.maxBinShare);
+ const mapping=mapAllocation({mode:'adaptive',row:{family:'adaptive',action:{type:'OPEN'},feasible:true,allocation:{...selected.allocation,lowerBinId:lo,upperBinId:hi}},identity:i,map,budget:{allowDispose:false,memeRaw:String(x),solRaw:String(y),minSolReserve:cfg.minSolReserve,operationCostSol:0,maxBinShare:cfg.maxBinShare}});
+ const d=mapping.integerAllocation,dx=raw(d.totalMemeRaw),dy=raw(d.totalSolRaw);
  const reentry=opening&&(row.entries??0)>0;
  assert(!reentry||(row.rebalances??0)<cfg.maxRebalances,'PAPER_ADAPTIVE_REENTRY_BUDGET');
  const turnover=opening&&!reentry?oldTurnover:oldTurnover+value(principalX,principalY)+value(dx,dy);
  assert(turnover<=scaledFloat(cfg.maxTurnoverSol,9)&&y-dy>=raw(state.policy.exitCostSolRaw),'PAPER_ADAPTIVE_TURNOVER_OR_RESERVE');
- const pX=rows.reduce((n,r)=>n+raw(r.shareRaw)*raw(map.get(r.binId).amountXRaw)/raw(map.get(r.binId).liquiditySupplyRaw),0n),pY=rows.reduce((n,r)=>n+raw(r.shareRaw)*raw(map.get(r.binId).amountYRaw)/raw(map.get(r.binId).liquiditySupplyRaw),0n);
- return {mapping:{mode:'adaptive',status:'SHARE_PROXY_MAPPED_UNVERIFIED',rows,integerAllocation:d,allocation:{schemaVersion:1,pool:i.pool,mintX:i.mintX,mintY:i.mintY,openingSlot:i.slot,openingRawHash:i.rawHash,shares:rows.map(r=>({binId:r.binId,shareRaw:r.shareRaw}))}},walletX:x-dx,walletY:y-dy,principalX:pX,principalY:pY,cost,turnover,status:'OPEN_PROXY'};
+ const principal=principalForShares(map,mapping.rows);
+ return {mapping,walletX:x-dx,walletY:y-dy,principalX:principal.x,principalY:principal.y,cost,turnover,status:'OPEN_PROXY'};
 }

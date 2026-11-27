@@ -26,6 +26,21 @@ export function assertProjectedShareLimit(rows,maxBinShare){
  const cap=scaledFloat(maxBinShare,9);
  assert(cap>0n&&rows.every(r=>raw(r.shareRaw)*1000000000n<=cap*raw(r.projectedSupplyRaw)),'PAPER_SHARE_CONFIGURED_LIMIT');
 }
+// Shared fixed/adaptive allocation mapping and principal marking.
+export function mapAllocation({mode,row,identity:i,map,budget}){
+ const d=allocationDiagnostic({row,market:{activeId:i.activeId,decimalsX:i.sides[0].decimals,decimalsY:9,bins:[...map.values()]},budget});
+ assert(d.status==='INTEGER_DIAGNOSTIC_ONLY',d.reason??'INTEGER_MAPPING_UNAVAILABLE');
+ assert(d.rows.length<=256&&d.zeroRows===0,'PAPER_SHARE_DUST_OR_RANGE');
+ const rows=d.rows.map(v=>proportionalShare(map.get(v.binId),v,i.activeId));assertProjectedShareLimit(rows,budget.maxBinShare??.1);
+ return {mode,status:'SHARE_PROXY_MAPPED_UNVERIFIED',reason:null,integerAllocation:d,rows,allocation:{schemaVersion:1,pool:i.pool,mintX:i.mintX,mintY:i.mintY,openingSlot:i.slot,openingRawHash:i.rawHash,shares:rows.map(r=>({binId:r.binId,shareRaw:r.shareRaw}))}};
+}
+export function principalForShares(map,rows){
+ let x=0n,y=0n;
+ for(const r of rows){const b=map.get(r.binId),share=raw(r.shareRaw);assert(b&&[2,3].includes(b.version)&&orders.every(k=>b.version===2?b[k]===null:raw(b[k],64)===0n),'PAPER_SNAPSHOT_BIN_UNAVAILABLE');
+  const supply=raw(b.liquiditySupplyRaw);assert(supply>0n&&share*10n<=supply,'PAPER_SNAPSHOT_SHARE_LIMIT');
+  x+=share*raw(b.amountXRaw,64)/supply;y+=share*raw(b.amountYRaw,64)/supply}
+ return {x,y};
+}
 // Fixed comparison controls: observed one-sided bins only, no reference/flow forecast.
 export function fixedPaperReport({snapshot,budget}){
  const {identity:i,map}=snapshotRows(snapshot),decimalsX=i.sides[0].decimals;
@@ -62,19 +77,12 @@ export function mapPaperPlans({snapshot,report,budget}){
   assert(budget?.allowDispose===false&&raw(budget.memeRaw,64)+raw(budget.solRaw,64)>0n&&Number.isFinite(budget.minSolReserve)&&budget.minSolReserve>=0&&Number.isFinite(budget.operationCostSol)&&budget.operationCostSol>=0,'PAPER_SHARE_BUDGET');
   const maxBinShare=budget.maxBinShare??.1;assertProjectedShareLimit([],maxBinShare);
   if(report.terminalBinding?.researchBudget){const frozen=report.terminalBinding.researchBudget;assert(['memeRaw','solRaw','allowDispose','minSolReserve','operationCostSol','maxBinShare'].every(k=>budget[k]===frozen[k]),'PAPER_SHARE_REPORT_BUDGET_CHANGED')}
-  const market={...m,bins:[...map.values()]};
   function mapping(mode,row){
    const blocked=reason=>({mode,status:'BLOCKED',reason,allocation:null,rows:[]});
    if(!row||row.feasible!==true)return blocked('NO_FEASIBLE_PLAN');
    if(!modes.includes(row.family)||mode!=='adaptive'&&mode!==row.family)return blocked('PAPER_SHARE_FAMILY_MISMATCH');
    if(row.family==='NO_LP'&&row.action?.type==='NO_LP')return {mode,status:'NO_LP',reason:null,allocation:null,rows:[]};
-   const d=allocationDiagnostic({row,market,budget});
-   if(d.status!=='INTEGER_DIAGNOSTIC_ONLY')return blocked(d.reason??'INTEGER_MAPPING_UNAVAILABLE');
-   try{
-    assert(d.rows.length<=256&&d.zeroRows===0,'PAPER_SHARE_DUST_OR_RANGE');
-    const rows=d.rows.map(v=>proportionalShare(map.get(v.binId),v,i.activeId));assertProjectedShareLimit(rows,maxBinShare);
-    return {mode,status:'SHARE_PROXY_MAPPED_UNVERIFIED',reason:null,integerAllocation:d,rows,allocation:{schemaVersion:1,pool:i.pool,mintX:i.mintX,mintY:i.mintY,openingSlot:i.slot,openingRawHash:i.rawHash,shares:rows.map(r=>({binId:r.binId,shareRaw:r.shareRaw}))}};
-   }catch(e){return blocked(errorCode(e,'PAPER_SHARE_MAPPING_FAILED'))}
+   try{return mapAllocation({mode,row,identity:i,map,budget})}catch(e){return blocked(errorCode(e,'PAPER_SHARE_MAPPING_FAILED'))}
   }
   result.rows=modes.map(mode=>mapping(mode,p.families.find(r=>r.family===mode).best));result.rows.push(p.selected?mapping('adaptive',p.selected):{...mapping('adaptive',null),reason:p.adaptiveReason??'NO_FEASIBLE_PLAN'});
   result.status='PAPER_SHARE_DIAGNOSTIC_UNVERIFIED';result.openingSlot=i.slot;result.openingRawHash=i.rawHash;result.mintX=i.mintX;result.mintY=i.mintY;result.sdkCommit=K.SDK_COMMIT;
