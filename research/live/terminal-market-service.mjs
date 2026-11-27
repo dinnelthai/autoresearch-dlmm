@@ -9,6 +9,7 @@ import {featureSeries} from './feature-series.mjs';
 import {verifyQuoteEvidence} from './quote-evidence.mjs';
 import {createReadRpc} from './rpc-read.mjs';
 import {chainTimeFact} from './evidence-builder.mjs';
+import {collectedPaperObservation} from './review-observations.mjs';
 import {assert,sha} from './terminal-runtime.mjs';
 export function createMarketObservationService({ROOT,DATA,cfg,maxAgeMs,validateScope,loadState,safeDataPath,boundedRead}){
  const externalCache=new Map(),externalAttempts=new Map(),holderAttempts=new Map(),holderCache=new Map(),series=featureSeries(DATA);
@@ -59,7 +60,13 @@ async function captureMarketTime(m){
  async function refreshPaperFeatures(m){
   const names=['external','holder','chainTime'];
   const results=await Promise.allSettled([externalObservation({pool:m.pool},m),holderObservation({pool:m.pool},m),captureMarketTime(m)]);
-  return {slot:m.slot,observedAt:Date.now(),sources:Object.fromEntries(results.map((r,i)=>[names[i],r.status==='fulfilled'?{status:'OBSERVED',capture:r.value.capture,evidenceHash:r.value.evidenceHash}:{status:'UNAVAILABLE',reason:typeof r.reason?.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(r.reason.message)?r.reason.message:'FEATURE_COLLECTION_FAILED'}]))};
+  const out={slot:m.slot,observedAt:Date.now(),sources:Object.fromEntries(results.map((r,i)=>[names[i],r.status==='fulfilled'?{status:'OBSERVED',capture:r.value.capture,evidenceHash:r.value.evidenceHash}:{status:'UNAVAILABLE',reason:typeof r.reason?.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(r.reason.message)?r.reason.message:'FEATURE_COLLECTION_FAILED'}]))};
+  try{
+   const state=await loadState(m.pool);
+   out.observation=collectedPaperObservation({m,external:results[0].value,holder:results[1].value,history:state.streams?.['history:'+m.pool],now:Date.now(),maxAgeMs:120000});
+   out.modelInputStatus='OBSERVED_PROXY';
+  }catch(e){out.modelInputStatus='WAITING';out.modelInputReason=typeof e.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(e.message)?e.message:'PAPER_FEATURE_INPUT_UNAVAILABLE'}
+  return out;
  }
  return {holderObservation,externalObservation,captureMarketTime,refreshPaperFeatures,external:scope=>scope?externalCache.get(scope)??null:[...externalCache.values()].at(-1)??null,holder:(scope,mint)=>holderCache.get(scope+':'+mint)?.public??null};
 }

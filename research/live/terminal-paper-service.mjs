@@ -9,7 +9,7 @@ import {nextPaperCapture,paperPublic} from './paper-auto-core.mjs';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {strategyTuning} from '../engine/numeric.mjs';
 import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
-import {reviewedObservations} from './review-observations.mjs';
+import {reviewedObservations,collectedPaperInputs,PAPER_OBSERVATION_BASIS} from './review-observations.mjs';
 import {fixedPaperReport} from './paper-share-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
@@ -76,15 +76,26 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     const windowCapture=paperWindowCapture(state.window,snapshot.proof);
     if(windowCapture==='MISSED_ENDPOINT'){await finish(a,'MISSED_ENDPOINT');return}
     let next=await advancePaperCapture(state,{load,snapshot,backendHash,now:Date.now(),exit:windowCapture==='ENDPOINT'});
+    const sample=features?.observation,prior=state.collectedObservations??[];
+    if(sample?.basis===PAPER_OBSERVATION_BASIS&&sample.receivedAt<=Date.parse(snapshot.proof.requestedAt)&&sample.slot<m.slot&&sample.event.t>(prior.at(-1)?.event.t??-1))next.collectedObservations=[...prior,sample].slice(-12);
     const row=next.rows.find(r=>r.mode==='adaptive');
     if(windowCapture!=='ENDPOINT'&&next.adaptiveRequest&&['HOLD_ONLY','OPEN_PROXY'].includes(row?.status)){
      try{
+      let reviewed,reviewHash;
+      try{
       const review=await loadReview(m,Date.now());
       const evidence=async(path,digest)=>{assert(hash(digest),'PAPER_ADAPTIVE_EVIDENCE_HASH');const bytes=await read(path,8*1024*1024);assert(sha(bytes)===digest,'PAPER_ADAPTIVE_EVIDENCE_CHANGED');return bytes};
-      const reviewed=await reviewedObservations({m,req:next.adaptiveRequest,review:review.review,evidence});
-      const management=virtualManagement({state:next,row,snapshot,reviewed});
+      reviewed=await reviewedObservations({m,req:next.adaptiveRequest,review:review.review,evidence});
       assert(review.expiresAt>Date.now()&&m.receivedAt+maxAgeMs>Date.now(),'PAPER_ADAPTIVE_REVIEW_EXPIRED');
-      next=updateAdaptiveSnapshot(next,{snapshot,reviewed,preview:management,reviewHash:review.reviewHash,now:Date.now()});
+      reviewHash=review.reviewHash;
+      }catch(reviewError){
+       if(!next.collectedObservations?.length)throw reviewError;
+       reviewed=collectedPaperInputs({m,req:next.adaptiveRequest,samples:next.collectedObservations,asOf:Math.floor(Date.parse(snapshot.proof.receivedAt)/1000)});
+       reviewHash=sha(JSON.stringify(next.collectedObservations));
+      }
+      const management=virtualManagement({state:next,row,snapshot,reviewed});
+      next=updateAdaptiveSnapshot(next,{snapshot,reviewed,preview:management,reviewHash,now:Date.now()});
+      next.adaptiveInputBasis=reviewed.basis??'REVIEWED_MODEL';
      }catch(e){next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}:r)}}
     }
     if(windowCapture==='ENDPOINT')next={...next,window:finishPaperWindow(state.window,'ENDPOINT_OBSERVED',Date.parse(snapshot.proof.receivedAt))};

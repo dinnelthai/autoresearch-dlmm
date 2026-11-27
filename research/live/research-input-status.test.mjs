@@ -9,3 +9,11 @@ test('missing and mismatched evidence cannot produce readiness',()=>{const r=inp
 test('old and backfill events cannot look like recent market flow',()=>{const old={...history,evidence:{...history.evidence,decoded:{...history.evidence.decoded,events:history.evidence.decoded.events.map(x=>({...x,blockTime:t-86400})),transactions:history.evidence.decoded.transactions.map(x=>({...x,blockTime:t-86400}))}}};const a=inputStatus({pool,market,history:old,now});assert.equal(a.swapSample.sampleKind,'OLDER_EVENT_SAMPLE');assert.equal(a.tasks.find(x=>x.id==='history').state,'HISTORICAL_ONLY');const b=inputStatus({pool,market,history:{...history,evidence:{...history.evidence,repairCapture:true}},now});assert.equal(b.swapSample.sampleKind,'HISTORICAL_BACKFILL');assert.equal(b.tasks.find(x=>x.id==='history').state,'HISTORICAL_ONLY');assert.equal(b.swapSample.modelFlowEligible,false)});
 
 test('duplicate transaction records fail closed even when events are distinct',()=>{const d=history.evidence.decoded;assert.equal(boundedSwapObservation({...history,evidence:{...history.evidence,decoded:{...d,transactions:[...d.transactions,...d.transactions]}}},pool,now,10000),null)});
+
+// The automatic paper bridge does not manufacture observations from absent diagnostics.
+test('collected paper inputs reject missing sources and incomplete warmup',async()=>{
+ const {collectedPaperObservation,collectedPaperInputs}=await import('./review-observations.mjs');
+ const m={pool:'A'.repeat(32),mintX:'B'.repeat(32),mintY:'C'.repeat(32),slot:10,rawHash:'a'.repeat(64),binStep:100,decimalsX:6,decimalsY:9};
+ assert.throws(()=>collectedPaperObservation({m,now:100000}),/PAPER_HOLDER_FEATURES_UNAVAILABLE/);
+ assert.throws(()=>collectedPaperInputs({m,req:{goal:'balanced',horizonSeconds:600,riskConfig:{}},samples:[],asOf:100}),/PAPER_COLLECTED_MODEL_WARMUP/);
+});

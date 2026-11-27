@@ -2,7 +2,9 @@
 import {Engine} from '../engine.mjs';
 import {checkTime} from './engine-input.mjs';
 import {distinctReferenceArtifacts} from './quote-evidence.mjs';
-import {assert} from './research-contract.mjs';
+import {assert,hash} from './research-contract.mjs';
+import {boundedSwapObservation} from './research-input-status.mjs';
+import {featureProjection} from './market-features.mjs';
 const finite=(v,min,max=Infinity)=>typeof v==='number'&&Number.isFinite(v)&&v>=min&&v<=max;
 export async function reviewedObservations({m,req,review,evidence,now=Date.now()}){
  assert(req.pool===m.pool&&review.pool===m.pool&&review.marketSlot===m.slot&&review.marketRawHash===m.rawHash&&review.mintX===m.mintX&&review.mintY===m.mintY,'review/request identity mismatch');
@@ -40,4 +42,32 @@ export async function reviewedObservations({m,req,review,evidence,now=Date.now()
   assert(latest.ref.expiresAt>=asOf,'reference expired at analysis boundary');
 
  return {asOf,cfg,observations,latest};
+}
+
+export const PAPER_OBSERVATION_BASIS='COLLECTED_MARKET_FEATURE_PROXY_V1';
+// Paper only. Receipt-time quotes, tested exit notionals, bounded swap samples and
+// mint/cohort diagnostics are explicitly distinct from reviewed market evidence.
+export function collectedPaperObservation({m,external,holder,history,now=Date.now(),maxAgeMs=120000}){
+ const h=featureProjection(holder,m,now,maxAgeMs),flow=boundedSwapObservation(history,m.pool,now,maxAgeMs);
+ assert(h?.distribution?.supplyConserved&&finite(h.distribution.topShare,0,1)&&finite(h.cohort?.netDecreaseShare,0,1)&&Array.isArray(h.safety?.flags),'PAPER_HOLDER_FEATURES_UNAVAILABLE');
+ assert(flow?.sampleKind==='RECENT_EVENT_SAMPLE'&&flow.eventCount>0,'PAPER_FLOW_SAMPLE_UNAVAILABLE');
+ assert(external?.marketSlot===m.slot&&external.marketRawHash===m.rawHash&&external.pool===m.pool&&external.mintX===m.mintX&&external.mintY===m.mintY&&external.expiresAt>=now&&hash(external.evidenceHash)&&external.rawEvidenceCheck?.scope==='RAW_QUOTE_RECHECK_ONLY','PAPER_REFERENCE_QUOTES_UNAVAILABLE');
+ const refs=external.rawEvidenceCheck.venues.map(v=>{
+  const q=external[v.venue],records=external.evidence.filter(e=>e.file===(v.venue==='orca'?'orca-':'')+'ask.json'||e.file===(v.venue==='orca'?'orca-':'')+'bid-0.json');
+  const depth=Number(v.bestTestedExit?.minOutRaw)/1e9,observedAt=Math.floor(Math.min(...records.map(r=>r.receivedAt))/1000);
+  assert(q?.pool===v.pool&&records.length===2&&records.every(r=>hash(r.sha256))&&finite(v.midSolPerMeme,Number.MIN_VALUE)&&finite(depth,Number.MIN_VALUE)&&Number.isSafeInteger(observedAt),'PAPER_REFERENCE_DEPTH_UNAVAILABLE');
+  return {pool:v.pool,price:v.midSolPerMeme,depth,observedAt,availableAt:Math.floor(external.fetchedAt/1000)};
+ });
+ assert(refs.length>=2&&new Set(refs.map(r=>r.pool)).size===refs.length&&refs.every(r=>r.pool!==m.pool),'PAPER_TWO_REFERENCE_QUOTES_REQUIRED');
+ const buy=BigInt(flow.buyLamports),sell=BigInt(flow.sellLamports),gross=buy+sell;
+ assert(gross>0n,'PAPER_FLOW_SAMPLE_EMPTY');
+ const t=Math.floor(now/1000);
+ return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{external:external.evidenceHash,holder:h.evidenceHash,history:history.evidence?.capture??null},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(...refs.map(r=>r.depth))}};
+}
+export function collectedPaperInputs({m,req,samples,asOf}){
+ const cfg=Engine.requestConfig(req,{...req.riskConfig,binStepBps:m.binStep,anchorPrice:10**(m.decimalsX-m.decimalsY),maxReferenceAge:120,forecastHorizonSeconds:req.horizonSeconds});
+ const observations=samples.filter(s=>s.basis===PAPER_OBSERVATION_BASIS&&s.event.pool===m.pool&&s.slot<=m.slot&&s.event.t<=asOf).map(s=>({...s.event,ref:Engine.reference(s.event,cfg)})).filter(e=>e.ref.valid);
+ const latest=observations.at(-1);
+ assert(observations.length>=3&&latest&&latest.ref.expiresAt>=asOf&&asOf-latest.t<=cfg.maxReferenceAge,'PAPER_COLLECTED_MODEL_WARMUP');
+ return {asOf,cfg,observations,latest,basis:PAPER_OBSERVATION_BASIS};
 }
