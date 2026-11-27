@@ -7,7 +7,7 @@ function renderActualMarket(m){
  if(!m||d?.kind!=='POOL_OBSERVATION_ONLY'||!Array.isArray(d.rows)||d.rows.length>1500||m.expiresAt<=Date.now())return;
  const p=d.activeBinPriceSolPerMeme;
  put('observedPrice',Number.isFinite(p)&&p>0?p.toPrecision(8):'—');
- put('actualBinStatus','Slot '+m.slot+' · '+d.rows.length+'/'+d.totalBins+' Bins · 未验收');
+ put('actualBinStatus',d.rows.length+'/'+d.totalBins+' Bins · 未验收');$('actualBinStatus').title='Slot '+m.slot;
  const total=(v,dec)=>{if(typeof v!=='string'||!/^\d{1,40}$/.test(v)||!Number.isInteger(dec)||dec<0||dec>18)return '—';let a=v.padStart(dec+1,'0');return dec?a.slice(0,-dec)+'.'+a.slice(-dec):a};
  put('actualBinTotals','MM 本金合计：'+total(d.totalYRaw,9)+' SOL / '+total(d.totalXRaw,m.decimalsX)+' MEME（不含订单流动性及费用）');
  const nearby=d.rows.filter(b=>Math.abs(b.binId-m.activeId)<=40);

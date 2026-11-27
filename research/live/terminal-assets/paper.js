@@ -25,7 +25,7 @@ function renderAutoPaper(r){
  const statusLabels={NO_EXPERIMENT:'尚未启动',WAITING_FOR_OBSERVATION:'等待新快照',UPDATED_UNVERIFIED:'观察中',BLOCKED:'数据或模型阻塞',PAUSED:'已暂停',ENDPOINT_OBSERVED:'已完成',MISSED_ENDPOINT:'观察期限缺失',SNAPSHOT_LIMIT_REACHED:'达到快照上限'};
  const status=r?statusLabels[r.status]??r.status:'等待读取状态',d=r?.currentDecision,range=r?.positionRange;
  const badge=$('workspaceRunBadge');badge.textContent=status;badge.dataset.state=r?.status==='BLOCKED'?'error':r?.running&&r?.checkpointFresh?'live':'idle';
- put('paperLiveState',r?[status,r.checkpointFresh?'最新观察':'非实时检查点',r.slot!=null?'Slot '+r.slot:null].filter(Boolean).join(' · '):status);
+ put('paperLiveState',r?[status,r.slot!=null?(r.checkpointFresh?'最新观察':'历史检查点'):null].filter(Boolean).join(' · '):status);$('paperLiveState').title=r?.slot!=null?'Slot '+r.slot:'';
  put('workspacePosition',x?({OPEN_PROXY:'模拟 LP 已开仓',HOLD_ONLY:'空仓 / 持有资产',EXITED_PROXY:'已退出',BLOCKED:'仓位更新阻塞'}[x.status]??x.status):'未开仓');
  put('workspaceRange',range?'Bin '+range.lower+' 至 '+range.upper+' · '+range.binCount+' 档':'暂无已映射范围');
  const actionLabels={OPEN:'开仓',NO_LP:'暂不开仓',HOLD:'继续持有',REDUCE:'减仓',REPOSITION:'调仓',REMOVE_AND_HOLD:'撤出 LP 并持有'};
@@ -33,13 +33,13 @@ function renderAutoPaper(r){
  put('workspaceReason',d?.reason?reasonText(d.reason):r?.reason?reasonText(r.reason):x?.adaptiveReason?reasonText(x.adaptiveReason):'—');
  put('workspaceCandidates',d?((reportRegimes[d.regime]??d.regime??'市场未知')+' · '+(d.feasibleCount??'—')+'/'+(d.candidateCount??'—')+' 可行'):'—');
  put('workspaceDecisionTime',Number.isFinite(d?.observedAt)?new Date(d.observedAt).toLocaleTimeString()+(r.checkpointFresh?'':' · 历史观察'):'—');
- for(const [id,val] of [['paperLiveNav',v?.navYRaw],['paperLivePnl',v?.pnlYRaw],['paperLiveAlpha',v?.excessVsHoldYRaw],['paperLiveFee',v?.totalFeeYRaw]])put(id,paperSignedSol(val));
+ for(const [id,val] of [['paperLiveNav',v?.navYRaw],['paperLivePnl',v?.pnlYRaw],['paperLiveAlpha',v?.excessVsHoldYRaw],['paperLiveFee',v?.totalFeeYRaw]]){put(id,paperSignedSol(val));const el=$(id);delete el.dataset.sign;if((id==='paperLivePnl'||id==='paperLiveAlpha')&&typeof val==='string'&&/^-?\d{1,80}$/.test(val)){const n=BigInt(val);el.dataset.sign=n>0n?'positive':n<0n?'negative':'neutral'}}
  put('paperLiveDrawdown',Number.isFinite(v?.maxDrawdownBps)?fmt(v.maxDrawdownBps/100)+'%':'—');
  put('paperLiveEntries',x?String(x.entries??'—')+' / '+String(x.rebalances??'—'):'—');
  if(!r){put('paperAutoStatus','等待当前 Pool 的实验状态');return}
  const summary=[r.status,r.reason,r.checkpointFresh?'最近观察':'非当前观察',r.slot!=null?'Slot '+r.slot+' · '+r.snapshotCount+' 个快照':null,r.window? (r.window.days<1?Math.round(r.window.days*1440)+'分钟':r.window.days+'天')+' · '+r.window.status:null,r.adaptiveInputBasis,r.comparison?'估值有效 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 缺口 '+r.comparison.gapCount:null,r.comparison?.completedEvaluation?.rows?.length?'期末观察分 '+r.comparison.completedEvaluation.rows[0].mode+' '+fmt(r.comparison.completedEvaluation.rows[0].scoreBps)+' bps':null];
  put('paperAutoStatus',[status,r.reason?reasonText(r.reason):null,x?.adaptiveReason?reasonText(x.adaptiveReason):null,r.snapshotCount!=null?r.snapshotCount+' 次快照':null].filter(Boolean).join(' · '));
- $('paperAutoStatus').title=summary.filter(Boolean).join(' · ');
+ $('paperAutoStatus').title=summary.filter(Boolean).join(' · ');$('paperAutoStatus').dataset.state=r.status==='BLOCKED'?'error':'normal';
  for(const x of r.rows){const tr=document.createElement('tr');cell(tr,x.mode==='NO_LP'?'No LP / HODL':names[x.mode]??x.mode);cell(tr,x.status+(x.reason?' · '+x.reason:'')+(x.adaptiveReason?' · '+x.adaptiveReason:'')+(x.mode==='adaptive'?' · 开仓 '+(x.entries??'—')+' · 调仓/再入场 '+x.rebalances:''));cell(tr,paperSignedSol(x.initialNavYRaw));for(const k of ['navYRaw','pnlYRaw','excessVsHoldYRaw','costYRaw'])cell(tr,paperSignedSol(x.latest?.[k]));cell(tr,Number.isFinite(x.latest?.maxDrawdownBps)?fmt(x.latest.maxDrawdownBps/100)+'%':'—');body.append(tr)}
 }
 function validateAutoPaper(r,scope){if(r?.scope!=='PAPER_AUTO_RESEARCH_ONLY'||r.pool!==scope||typeof r.running!=='boolean'||!Array.isArray(r.rows)||r.rows.length>8)throw Error('模拟服务响应不符');return r}
