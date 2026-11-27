@@ -37,3 +37,5 @@ Use the existing CLI diagnostics for raw account inspection, exact integer/share
 The original detailed 116 KB T01–T17/CR handoff is preserved at [the immutable prior revision](https://github.com/dinnelthai/autoresearch-dlmm/blob/aa5deb7b131df06b0e6fbbdd600d6b4cdfb8a632/docs/integration-handoff.md). All earlier phase notes, prototype reviews and acceptance records remain accessible in [the historical docs tree](https://github.com/dinnelthai/autoresearch-dlmm/tree/aa5deb7b131df06b0e6fbbdd600d6b4cdfb8a632/docs). They are evidence of earlier work, not current operating instructions. Core mathematical specifications, real observation records, and detailed acceptance runbooks remain in the current tree.
 
 The legacy Python optimizer is separate OHLCV exploration; use it for historical research, not as a substitute for the current JS Paper accounting.
+
+25 completed implementation and partial acceptance notes were retired from the active tree. See [their original versions](https://github.com/dinnelthai/autoresearch-dlmm/tree/b55608f2f3de5f6a9dca313b7e48b9d1708460df/docs). The current runbook and revision-specific tests supersede historical phase statuses.
