@@ -2,7 +2,7 @@
   "pool": "REPLACE_WITH_POOL_ADDRESS",
   "positions": [],
   "references": [],
-  "probeSolRaw": "REPLACE_WITH_LAMPORTS",
+  "probeSolRaw": "10000000",
   "sellRaw": [],
   "provider": "solana-rpc",
   "idl": "data/raw/dlmm-idl.json",
@@ -14,6 +14,8 @@
   "historyRetention": 2000,
   "historyTimeoutSeconds": 120,
   "positionPollSeconds": 60,
-  "referencePollSeconds": 120,
-  "historyPollSeconds": 60
+  "referencePollSeconds": 60,
+  "historyPollSeconds": 60,
+  "referenceDepthSolRaw": "3000000000",
+  "autoReferenceDiscovery": true
 }

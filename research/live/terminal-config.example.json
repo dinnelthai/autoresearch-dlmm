@@ -25,7 +25,8 @@
   "externalMarket": {
     "probeSolRaw": "10000000",
     "slippageBps": 50,
-    "maxDiscountBps": 200
+    "maxDiscountBps": 200,
+    "fallback": false
   },
   "researchReviews": {},
   "performanceWindows": {},

@@ -90,6 +90,8 @@ jobs:
             research/live/paper-pool-manager.test.mjs \
             research/live/terminal-ui.test.mjs \
             research/live/research-input-status.test.mjs \
+            research/live/market-api.test.mjs \
+            research/live/reference-math.test.mjs \
             research/live/state-core.test.mjs \
             research/live/source-inventory.test.mjs \
             research/live/paper-history-store.test.mjs \

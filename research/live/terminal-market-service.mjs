@@ -9,7 +9,8 @@ import {featureSeries} from './feature-series.mjs';
 import {verifyQuoteEvidence} from './quote-evidence.mjs';
 import {createReadRpc} from './rpc-read.mjs';
 import {chainTimeFact} from './evidence-builder.mjs';
-import {collectedPaperObservation} from './review-observations.mjs';
+import {collectedPaperObservation,meteoraReferenceInputs} from './review-observations.mjs';
+import {observedStream} from './state-core.mjs';
 import {assert,sha} from './terminal-runtime.mjs';
 export function createMarketObservationService({ROOT,DATA,cfg,maxAgeMs,validateScope,loadState,safeDataPath,boundedRead}){
  const externalCache=new Map(),externalAttempts=new Map(),holderAttempts=new Map(),holderCache=new Map(),series=featureSeries(DATA);
@@ -58,15 +59,29 @@ async function captureMarketTime(m){
 }
 
  async function refreshPaperFeatures(m){
-  const names=['external','holder'];
-  const results=await Promise.allSettled([externalObservation({pool:m.pool},m),holderObservation({pool:m.pool},m)]);
-  const out={slot:m.slot,observedAt:Date.now(),sources:Object.fromEntries(results.map((r,i)=>[names[i],r.status==='fulfilled'?{status:'OBSERVED',capture:r.value.capture,evidenceHash:r.value.evidenceHash}:{status:'UNAVAILABLE',reason:typeof r.reason?.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(r.reason.message)?r.reason.message:'FEATURE_COLLECTION_FAILED'}]))};
+  const out={slot:m.slot,observedAt:Date.now(),sources:{}};
+  const reason=e=>typeof e?.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(e.message)?e.message:'FEATURE_COLLECTION_FAILED';
+  let state,reference=null,external=null,holder=null;
+  const holderTask=holderObservation({pool:m.pool},m).then(v=>{holder=v;out.sources.holder={status:'OBSERVED',capture:v.capture,evidenceHash:v.evidenceHash}},e=>{out.sources.holder={status:'UNAVAILABLE',reason:reason(e)}});
   try{
-   const state=await loadState(m.pool);
-   out.observation=collectedPaperObservation({m,external:results[0].value,holder:results[1].value,history:state.streams?.['history:'+m.pool],now:Date.now(),maxAgeMs:120000});
+   state=await loadState(m.pool);
+   const stream=observedStream(state.streams?.references),e=stream?.evidence;
+   assert(stream?.status==='CAPTURED_UNVERIFIED'&&typeof e?.capture==='string','METEORA_REFERENCE_STREAM_UNAVAILABLE');
+   const bytes=await boundedRead(await safeDataPath(join(ROOT,e.capture,'manifest.json')),16*1024*1024);
+   assert(sha(bytes)===e.manifestHash,'METEORA_REFERENCE_MANIFEST_CHANGED');
+   const candidate={capture:e.capture,manifestHash:e.manifestHash,report:JSON.parse(bytes)};
+   meteoraReferenceInputs({m,reference:candidate,now:Date.now()});reference=candidate;
+   out.sources.reference={status:'OBSERVED',source:'METEORA_DLMM_SDK',capture:e.capture,evidenceHash:e.manifestHash};
+  }catch(e){out.sources.reference={status:'UNAVAILABLE',reason:reason(e)}}
+  if(!reference&&cfg.externalMarket?.fallback===true){try{external=await externalObservation({pool:m.pool},m);out.sources.external={status:'OBSERVED',capture:external.capture,evidenceHash:external.evidenceHash}}catch(e){out.sources.external={status:'UNAVAILABLE',reason:reason(e)}}}
+  await holderTask;out.observedAt=Date.now();
+  try{
+   assert(reference||external,out.sources.reference?.reason??'METEORA_REFERENCE_UNAVAILABLE');
+   out.observation=collectedPaperObservation({m,reference,external,holder,history:state?.streams?.['history:'+m.pool],now:out.observedAt,maxAgeMs:120000});
    out.modelInputStatus='OBSERVED_PROXY';
-  }catch(e){out.modelInputStatus='WAITING';out.modelInputReason=typeof e.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(e.message)?e.message:'PAPER_FEATURE_INPUT_UNAVAILABLE'}
+  }catch(e){out.modelInputStatus='WAITING';out.modelInputReason=reason(e)}
   return out;
  }
+
  return {holderObservation,externalObservation,captureMarketTime,refreshPaperFeatures,external:scope=>scope?externalCache.get(scope)??null:[...externalCache.values()].at(-1)??null,holder:(scope,mint)=>holderCache.get(scope+':'+mint)?.public??null};
 }

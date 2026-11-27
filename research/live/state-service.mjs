@@ -12,6 +12,10 @@ import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
 import {repairPlan,advanceRepair,failedRepair,historyCoverage} from './history-repair.mjs';
 import {dependencyPlan,sameAccounts} from './account-dependency-plan.mjs';
 import {diagnosticLog} from './diagnostic-log.mjs';
+import {extractMarket} from './engine-input.mjs';
+import {getSamePairReferences} from './market-api.mjs';
+import {referenceProbeSizes} from './reference-math.mjs';
+import {sha} from './evidence-digest.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url));
 const RAW=resolve(ROOT,'data/raw');
 const assert=(v,m)=>{if(!v)throw Error(m);};
@@ -32,7 +36,7 @@ assert(Number.isInteger(historyPages)&&historyPages>=1&&historyPages<=20&&Number
 const historyRetention=cfg.historyRetention??2000,historyTimeoutSeconds=cfg.historyTimeoutSeconds??120;
 assert(Number.isSafeInteger(historyRetention)&&historyRetention>=historyPages*historyLimit&&historyRetention<=20000,'invalid history retention');
 assert(Number.isSafeInteger(historyTimeoutSeconds)&&historyTimeoutSeconds>=30&&historyTimeoutSeconds<=900,'invalid history timeout');
-const positionSeconds=cfg.positionPollSeconds??interval,referenceSeconds=cfg.referencePollSeconds??Math.max(interval,120),historySeconds=cfg.historyPollSeconds??interval;
+const positionSeconds=cfg.positionPollSeconds??interval,referenceSeconds=cfg.referencePollSeconds??Math.max(interval,60),historySeconds=cfg.historyPollSeconds??interval;
 assert([positionSeconds,referenceSeconds,historySeconds].every(v=>Number.isInteger(v)&&v>=15&&v<=3600),'invalid stream intervals');
 const idl=resolve(ROOT,cfg.idl??'data/raw/dlmm-idl.json');
 const dir=join(ROOT,'data',marketOnly?'live-preview':'live',pool);await mkdir(dir,{recursive:true,mode:0o700});
@@ -146,13 +150,25 @@ try{
   state.history[address]={...merged,repair,repairTurn:turn,headSignatures,coverage};
   return {capture:relative(ROOT,p),historyStatus:emptyIndex?'DECODE_PARTIAL':coverage,historyGapObserved:merged.gapObserved,historyComplete:false,added:merged.added,overlap:merged.overlap,repair,repairCapture:plan.repair,decoded};
  }
+ let referenceDiscovery=null;
  async function reference(){
-  assert(references.length>=2,'manual reference pools not configured');
-  assert(typeof cfg.probeSolRaw==='string'&&Array.isArray(cfg.sellRaw),'quote size config missing');
-  const r=await run('research/live/capture-references.mjs',['--pool',pool,'--provider',provider,...references.flatMap(a=>['--reference',a]),'--probe-sol-raw',cfg.probeSolRaw,...cfg.sellRaw.flatMap(a=>['--sell-raw',String(a)])]);
+  assert(cfg.autoReferenceDiscovery!==false||references.length>=2,'REFERENCES_NOT_CONFIGURED');
+  let market;try{market=extractMarket(state)}catch{throw Error('REFERENCE_WAITING_FOR_MARKET')}
+  assert(Date.now()-market.receivedAt<=maxAge*1000,'REFERENCE_TARGET_MARKET_STALE');
+  let refs=references;
+  if(!refs.length){
+   if(!referenceDiscovery||referenceDiscovery.mint!==market.mintX||Date.now()-referenceDiscovery.at>=300000){
+    const pools=await getSamePairReferences(market);referenceDiscovery={mint:market.mintX,at:Date.now(),pools};
+   }
+   refs=referenceDiscovery.pools;
+  }
+  assert(refs.length>=2,'METEORA_TWO_REFERENCE_POOLS_REQUIRED');
+  const probes=referenceProbeSizes(market,cfg);
+  const r=await run('research/live/capture-references.mjs',['--pool',pool,'--provider',provider,...refs.flatMap(a=>['--reference',a]),'--probe-sol-raw',probes.buyRaw,...probes.sellRaw.flatMap(a=>['--sell-raw',a])]);
   const p=await capturePath(r.report.directory),m=await readManifest(p);
-  assert(m.pool===pool&&m.status==='REFERENCE_EVIDENCE_UNVERIFIED','reference evidence partial');
-  return {capture:relative(ROOT,p),report:m};
+  assert(m.pool===pool&&m.mint===market.mintX&&m.decimals===market.decimalsX,'METEORA_REFERENCE_IDENTITY');
+  const bytes=await readFile(join(p,'manifest.json'));assert(m.status==='REFERENCE_EVIDENCE_UNVERIFIED','METEORA_REFERENCE_QUOTES_PARTIAL');
+  return {capture:relative(ROOT,p),report:m,manifestHash:sha(bytes)};
  }
  const writeState=serializedWriter(async data=>{const tmp=stateFile+'.tmp';await writeFile(tmp,data,{mode:0o600});await rename(tmp,stateFile)});
  async function persist(){const data=JSON.stringify(state)+'\n';assert(Buffer.byteLength(data)<=64*1024*1024,'state exceeds size cap');await writeState(data);}
@@ -218,7 +234,7 @@ try{
   for(const a of Object.keys(state.history))if(![pool,...positions].includes(a))delete state.history[a];
   const lanes=[{name:'market',intervalMs:interval*1000,run:marketTick},{name:'history',intervalMs:historySeconds*1000,run:historyTick}];
   if(positions.length)lanes.push({name:'positions',intervalMs:positionSeconds*1000,run:positionTick});
-  if(references.length>=2)lanes.push({name:'references',intervalMs:referenceSeconds*1000,run:()=>refreshLane('references',reference)});
+  if(references.length>=2||cfg.autoReferenceDiscovery!==false)lanes.push({name:'references',intervalMs:referenceSeconds*1000,run:()=>refreshLane('references',reference)});
   else state.streams.references={status:'BLOCKED',reason:'REFERENCES_NOT_CONFIGURED'};
   await persist();await runCollectorLanes(lanes,controller,{onFatal:stop});
  }

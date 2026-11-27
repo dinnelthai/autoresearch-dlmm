@@ -4,7 +4,7 @@ const assert=(v,m)=>{if(!v)throw Error(m)};
 const addr=v=>typeof v==='string'&&/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
 const metric=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null;
 export async function fetchIndexedJson(path,{fetcher=fetch,limit=256*1024}={}){
- assert(/^\/pools\/[1-9A-HJ-NP-Za-km-z]{32,44}(\/ohlcv\?[a-z0-9_=&]+)?$/.test(path),'INDEX_PATH_INVALID');
+ assert(/^\/pools\/[1-9A-HJ-NP-Za-km-z]{32,44}(\/ohlcv\?[a-z0-9_=&]+)?$/.test(path)||/^\/pools\?page=1&page_size=100&query=[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(path),'INDEX_PATH_INVALID');
  const res=await fetcher(BASE+path,{signal:AbortSignal.timeout(8000),redirect:'error'});
  if(!res.ok)throw Error(res.status===429?'INDEX_RATE_LIMITED':res.status===404?'INDEX_NOT_FOUND':'INDEX_HTTP_ERROR');
  const reader=res.body?.getReader();assert(reader,'INDEX_EMPTY_BODY');
@@ -32,3 +32,15 @@ export function cachedLoader(loader,ttl=30000,clock=Date.now){
   const job={key};job.promise=Promise.resolve().then(()=>loader(arg)).then(value=>{if(pending===job)entry={key,at:clock(),value};return value}).finally(()=>{if(pending===job)pending=null});pending=job;return job.promise;
  };
 }
+
+ // Only discover auxiliary quotes for the operator's exact pair. Never choose a target.
+export function samePairReferences(payload,m){
+ assert(Array.isArray(payload?.data)&&payload.data.length<=100,'INDEX_REFERENCE_LIST_INVALID');
+ const seen=new Set(),rows=[];
+ for(const p of payload.data){
+  if(!addr(p?.address)||p.address===m.pool||seen.has(p.address)||p.token_x?.address!==m.mintX||p.token_y?.address!==m.mintY||p.token_x.decimals!==m.decimalsX||p.token_y.decimals!==m.decimalsY||p.is_blacklisted===true||!(metric(p.tvl)>0))continue;
+  seen.add(p.address);rows.push({pool:p.address,tvl:p.tvl});
+ }
+ return rows.sort((a,b)=>b.tvl-a.tvl||a.pool.localeCompare(b.pool)).slice(0,2).map(r=>r.pool);
+}
+export async function getSamePairReferences(m,options){assert(addr(m.mintX)&&addr(m.mintY)&&addr(m.pool),'INDEX_REFERENCE_IDENTITY');return samePairReferences(await fetchIndexedJson('/pools?page=1&page_size=100&query='+m.mintX,{limit:4*1024*1024,...options}),m)}
