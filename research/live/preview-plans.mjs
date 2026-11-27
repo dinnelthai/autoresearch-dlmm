@@ -43,7 +43,7 @@ export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
   }
   row.feasible=true;row.allocation={bidSol:sum(bins,'y'),askMeme:sum(bins,'x'),lowerBinId:bins.length?Math.min(...bins.map(b=>b.id)):null,upperBinId:bins.length?Math.max(...bins.map(b=>b.id)):null,bins:bins.map(b=>({binId:b.id,priceSolPerMeme:Engine.price(cfg,b.id),meme:b.x,sol:b.y}))};
   try{
-   if(checkAllocation&&action.type==='OPEN'){const {modelStart,...summary}=checkAllocation(row);row.integerMapping=summary;v=Engine.evaluate(model,cfg,action,scenarios,{mappedStart});}
+   if(checkAllocation&&action.type==='OPEN'){const {modelStart,...summary}=checkAllocation(row);row.integerMapping=summary;v=Engine.evaluate(model,cfg,action,scenarios,{mappedStart:modelStart});}
    if(!v?.feasible)throw Error(v?.reason??'MODEL_INFEASIBLE');
    if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
    row.score=v.utility;row.scoreBasis=v.scoreBasis??'LOGICAL_ACTION_SCENARIOS';row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};row.risk=v.risk;
