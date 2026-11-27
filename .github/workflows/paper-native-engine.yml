@@ -75,7 +75,17 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          node --test --test-reporter=tap research/live/terminal-paper-service.test.mjs research/live/local-http-probe.test.mjs | tee native-paper-service.tap
+          node --test --test-reporter=tap \
+            research/live/terminal-paper-service.test.mjs \
+            research/live/local-http-probe.test.mjs \
+            research/live/paper-snapshot.test.mjs \
+            research/live/paper-auto-core.test.mjs \
+            research/live/paper-router-http.test.mjs \
+            research/live/terminal-router.test.mjs \
+            research/live/terminal-ui.test.mjs \
+            research/live/research-snapshot.test.mjs \
+            research/live/research-replay.test.mjs \
+            research/live/research-catalog.test.mjs | tee native-paper-service.tap
       - name: Retain service output
         if: always()
         uses: actions/upload-artifact@v4

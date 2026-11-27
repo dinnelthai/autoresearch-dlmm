@@ -25,3 +25,16 @@ Scope: existing standalone HTML source and T09 JSON contract; no rendered browse
  
 ## Next
 UX review with actual browser screenshots, then T12 formal implementation. Avoid adding pool discovery, auto-execution, new DEX or other scope.
+
+## Historical prototype archive
+
+The active terminal is `research/live/terminal.html`. V2 and V4.5 remain in the current tree; the other superseded prototypes are preserved in Git history, not duplicated in the active checkout.
+
+- [terminal-v0.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v0.html)
+- [terminal-v1.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v1.html)
+- [terminal-v3.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v3.html)
+- [terminal-v4.1.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v4.1.html)
+- [terminal-v4.2.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v4.2.html)
+- [terminal-v4.3.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v4.3.html)
+- [terminal-v4.4.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v4.4.html)
+- [terminal-v4.html](https://github.com/dinnelthai/autoresearch-dlmm/blob/eb878d8a1c1dcc99aba3d073c70ab7aa4c7768c6/docs/prototypes/terminal-v4.html)
