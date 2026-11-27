@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createPaperSnapshotReader,readSnapshotCheckpoint,snapshotCheckpoint,advancePaperCapture} from './paper-snapshot.mjs';
 import {openSnapshotExperiment,updateAdaptiveSnapshot,PAPER_SNAPSHOT_LIMIT} from './paper-snapshot-run-core.mjs';
-import {nextPaperCapture,paperPublic} from './paper-auto-core.mjs';
+import {nextPaperCapture,paperPublic,paperStatus} from './paper-auto-core.mjs';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {strategyTuning} from '../engine/numeric.mjs';
 import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
@@ -26,7 +26,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
  async function save(state,previous=null){const dst=join(dir,state.id);await mkdir(dst,{recursive:true,mode:0o700});await io.safeDataPath(dst);state=await history.append(dst,state,previous);await atomic(join(dst,'checkpoint.json'),snapshotCheckpoint(state));return state}
  async function reader(){if(!snapshotReader)snapshotReader=createPaperSnapshotReader({ROOT,io,idl:idlPath});return snapshotReader}
  async function exclusive(fn){assert(!closed&&!isStopping()&&!flight,'PAPER_AUTO_BUSY');const task=(async()=>{await init();return withWriterLock(dir,fn)})();flight=task;try{return await task}finally{if(flight===task)flight=null}}
- async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const a=await active();if(!a)return {schemaVersion:1,scope:'PAPER_AUTO_RESEARCH_ONLY',pool,status:'NO_EXPERIMENT',running:false,checkpointFresh:false,rows:[],executionReady:false,decisionReady:false,pnlReady:false,protocolExact:false};const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,{...current,features},{now:Date.now(),maxAgeMs})}
+ async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const a=await active();if(!a)return paperStatus(pool,'NO_EXPERIMENT');const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,{...current,features},{now:Date.now(),maxAgeMs})}
  async function context(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const m=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs);let r=null;try{r=await loadReview(m,Date.now())}catch{}const valid=r?.expiresAt>Date.now();return {schemaVersion:1,scope:'PAPER_OPEN_CONTEXT_RESEARCH_ONLY',pool,marketSlot:m.slot,marketRawHash:m.rawHash,reviewHash:valid?r.reviewHash:null,expiresAt:Math.min(valid?r.expiresAt:Infinity,m.receivedAt+maxAgeMs),executionReady:false,decisionReady:false,pnlReady:false}}
  async function start(body){return exclusive(async()=>{
   const a=await active();assert(!a?.running,'PAPER_AUTO_ALREADY_RUNNING');

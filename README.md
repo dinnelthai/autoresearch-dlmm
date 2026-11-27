@@ -6,7 +6,13 @@ This repo is adapted from [miolini/autoresearch-macos](https://github.com/miolin
 
 Give an AI agent a DLMM backtesting setup and let it experiment autonomously. It modifies the LP strategy, backtests against historical candle data, checks if the objective improved, keeps or discards the change, and repeats. In `v2`, those experiments also build a lightweight memory so the agent can learn from prior runs instead of searching blind every time. In `v3`, the objective is no longer just one lucky continuous path: strategies are scored across many fixed-horizon start times.
 
-## How It Works
+## Current primary business path
+
+The current JS terminal runs read-only real-market Paper experiments using virtual SOL/MEME capital. The Python OHLCV optimizer below is a separate exploratory research tool; its simulated returns are not interchangeable with the JS snapshot model.
+
+Start, inspect and troubleshoot the current terminal using [the current integration runbook](docs/integration-handoff.md). The normalized-event mathematical engine and optimizer are documented in [research/README.md](research/README.md). No on-chain trading or proven live returns are implied.
+
+## Legacy Python research: How It Works
 
 | File | Modified By | Purpose |
 |------|-------------|---------|

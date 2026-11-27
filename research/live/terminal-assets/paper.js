@@ -22,11 +22,11 @@ function renderAutoPaper(r){
  paperAutoData=r;const body=$('paperAutoRows');body.replaceChildren();
  $('paperAutoPause').disabled=paperAutoBusy||!r?.running;$('paperAutoStart').disabled=paperAutoBusy||!!r?.running;
  if(!r)return;
- const summary=[r.status,r.reason,r.slot!=null?'Slot '+r.slot+' · '+r.snapshotCount+' 个快照':null,r.window? r.window.days+'天 · '+r.window.status:null,r.adaptiveInputBasis,r.comparison?'配对 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 缺口 '+r.comparison.gapCount:null,r.comparison?.completedEvaluation?.rows?.length?'最高观察分 '+r.comparison.completedEvaluation.rows[0].mode+' '+fmt(r.comparison.completedEvaluation.rows[0].scoreBps)+' bps':null];
+ const summary=[r.status,r.reason,r.checkpointFresh?'最近观察':'非当前观察',r.slot!=null?'Slot '+r.slot+' · '+r.snapshotCount+' 个快照':null,r.window? r.window.days+'天 · '+r.window.status:null,r.adaptiveInputBasis,r.comparison?'配对 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 缺口 '+r.comparison.gapCount:null,r.comparison?.completedEvaluation?.rows?.length?'最高观察分 '+r.comparison.completedEvaluation.rows[0].mode+' '+fmt(r.comparison.completedEvaluation.rows[0].scoreBps)+' bps':null];
  put('paperAutoStatus',summary.filter(Boolean).join(' · '));
  for(const x of r.rows){const tr=document.createElement('tr');cell(tr,x.mode==='NO_LP'?'No LP / HODL':names[x.mode]??x.mode);cell(tr,x.status+(x.reason?' · '+x.reason:'')+(x.adaptiveReason?' · '+x.adaptiveReason:'')+(x.mode==='adaptive'?' · 开仓 '+(x.entries??'—')+' · 调仓/再入场 '+x.rebalances:''));cell(tr,paperSignedSol(x.initialNavYRaw));for(const k of ['navYRaw','pnlYRaw','excessVsHoldYRaw','costYRaw'])cell(tr,paperSignedSol(x.latest?.[k]));cell(tr,Number.isFinite(x.latest?.maxDrawdownBps)?fmt(x.latest.maxDrawdownBps/100)+'%':'—');body.append(tr)}
 }
-function validateAutoPaper(r,scope){if(r?.scope!=='PAPER_AUTO_RESEARCH_ONLY'||r.pool!==scope||r.pnlReady!==false||r.executionReady!==false||r.protocolExact!==false||typeof r.running!=='boolean'||!Array.isArray(r.rows)||r.rows.length>8)throw Error('模拟服务响应不符');return r}
+function validateAutoPaper(r,scope){if(r?.scope!=='PAPER_AUTO_RESEARCH_ONLY'||r.pool!==scope||typeof r.running!=='boolean'||!Array.isArray(r.rows)||r.rows.length>8)throw Error('模拟服务响应不符');return r}
 async function refreshPaperAuto(){
  if(paperAutoData&&paperAutoData.pool!==target){paperAutoGeneration++;renderAutoPaper(null);put('paperAutoStatus','Pool 已切换，等待重新读取。')}
  if(paperAutoReading||paperAutoBusy||page!=='performance'||$('paperPerformance').hidden||!target)return;
@@ -65,7 +65,7 @@ async function refreshPaperPools(){
  paperPoolsReading=true;const body=$('paperPoolsRows');
  try{
   const res=await terminalGet('/api/terminal/paper-pools',null),r=await res.json();
-  if(!res.ok||r.scope!=='PAPER_MULTI_POOL_RESEARCH_ONLY'||r.executionReady!==false||r.pnlReady!==false||!Array.isArray(r.pools)||r.pools.length>9||new Set(r.pools.map(x=>x.pool)).size!==r.pools.length||r.pools.some(x=>!addr(x.pool)||x.pnlReady!==false||x.executionReady!==false||!Array.isArray(x.rows)))throw Error('多池状态无效');
+  if(!res.ok||r.scope!=='PAPER_MULTI_POOL_RESEARCH_ONLY'||!Array.isArray(r.pools)||r.pools.length>9||new Set(r.pools.map(x=>x.pool)).size!==r.pools.length||r.pools.some(x=>!addr(x.pool)||!Array.isArray(x.rows)))throw Error('多池状态无效');
   body.replaceChildren();for(const x of r.pools){const tr=document.createElement('tr');cell(tr,x.pool);cell(tr,x.status+(x.reason?' · '+x.reason:''));cell(tr,x.snapshotCount??'—');cell(tr,paperSignedSol(x.rows.find(v=>v.mode==='adaptive')?.latest?.excessVsHoldYRaw));cell(tr,x.checkpointFresh?'最近观察 · 未验证':'历史或不可用');body.append(tr)}
   put('paperPoolsStatus',r.pools.length+' 个配置池 · '+r.pools.filter(x=>x.running===true).length+' 个活动实验 · 独立观察');
  }catch(e){body.replaceChildren();put('paperPoolsStatus','读取失败：'+e.message)}

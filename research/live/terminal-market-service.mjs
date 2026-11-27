@@ -58,8 +58,8 @@ async function captureMarketTime(m){
 }
 
  async function refreshPaperFeatures(m){
-  const names=['external','holder','chainTime'];
-  const results=await Promise.allSettled([externalObservation({pool:m.pool},m),holderObservation({pool:m.pool},m),captureMarketTime(m)]);
+  const names=['external','holder'];
+  const results=await Promise.allSettled([externalObservation({pool:m.pool},m),holderObservation({pool:m.pool},m)]);
   const out={slot:m.slot,observedAt:Date.now(),sources:Object.fromEntries(results.map((r,i)=>[names[i],r.status==='fulfilled'?{status:'OBSERVED',capture:r.value.capture,evidenceHash:r.value.evidenceHash}:{status:'UNAVAILABLE',reason:typeof r.reason?.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(r.reason.message)?r.reason.message:'FEATURE_COLLECTION_FAILED'}]))};
   try{
    const state=await loadState(m.pool);
