@@ -18,11 +18,13 @@ export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
  const actions=Engine.candidatePlans(model,cfg,'adaptive').filter(a=>a.type===BASE||(a.type==='OPEN'&&!a.acquireSol));
  const rows=[];
  for(const action of actions){
-  const v=Engine.evaluate(model,cfg,action,scenarios);
-  const row={family:action.type===BASE?BASE:action.label,action,feasible:false,reason:v.reason??null,score:null,allocation:null};
-  if(!v.feasible){rows.push(row);continue;}
-  if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite)){row.reason='NONFINITE_MODEL_OUTPUT';rows.push(row);continue;}
-  const bins=v.allocation??[];
+  const row={family:action.type===BASE?BASE:action.label,action,feasible:false,reason:null,score:null,allocation:null};
+  let v,bins;
+  if(checkAllocation&&action.type==='OPEN'){
+   try{const trial=structuredClone(model);Engine.applyAction(trial,cfg,action,trial.lastTime);bins=trial.bins}catch(e){row.reason=String(e.message).slice(0,180);rows.push(row);continue}
+  }else{
+   v=Engine.evaluate(model,cfg,action,scenarios);if(!v.feasible){row.reason=v.reason;rows.push(row);continue}bins=v.allocation??[];
+  }
   if(action.type==='OPEN'){
    if(!bins.length){row.reason='EMPTY_ALLOCATION';rows.push(row);continue;}
    // A known active-side placement and observed external liquidity are prerequisites.
@@ -38,9 +40,13 @@ export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
    const x=sum(bins,'x'),y=sum(bins,'y');
    if(x>model.wallet.x+1e-9||y+cfg.minSolReserve+cfg.operationCostSol>model.wallet.y+1e-9){row.reason='DECLARED_BUDGET_EXCEEDED';rows.push(row);continue;}
   }
-  row.feasible=true;row.score=v.utility;row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};row.risk=v.risk;
-  row.allocation={bidSol:sum(bins,'y'),askMeme:sum(bins,'x'),lowerBinId:bins.length?Math.min(...bins.map(b=>b.id)):null,upperBinId:bins.length?Math.max(...bins.map(b=>b.id)):null,bins:bins.map(b=>({binId:b.id,priceSolPerMeme:Engine.price(cfg,b.id),meme:b.x,sol:b.y}))};
-  if(checkAllocation&&action.type==='OPEN'){try{row.integerMapping=checkAllocation(row)}catch(e){row.feasible=false;row.reason=String(e.message).slice(0,180)}}
+  row.feasible=true;row.allocation={bidSol:sum(bins,'y'),askMeme:sum(bins,'x'),lowerBinId:bins.length?Math.min(...bins.map(b=>b.id)):null,upperBinId:bins.length?Math.max(...bins.map(b=>b.id)):null,bins:bins.map(b=>({binId:b.id,priceSolPerMeme:Engine.price(cfg,b.id),meme:b.x,sol:b.y}))};
+  try{
+   if(checkAllocation&&action.type==='OPEN'){const {modelStart,...summary}=checkAllocation(row);row.integerMapping=summary;v=Engine.evaluate(model,cfg,action,scenarios,{mappedStart});}
+   if(!v?.feasible)throw Error(v?.reason??'MODEL_INFEASIBLE');
+   if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
+   row.score=v.utility;row.scoreBasis=v.scoreBasis??null;row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};row.risk=v.risk;
+  }catch(e){row.feasible=false;row.reason=String(e.message).slice(0,180)}
   rows.push(row);
  }
  const base=rows.find(r=>r.family===BASE);

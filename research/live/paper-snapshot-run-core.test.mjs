@@ -141,3 +141,18 @@ test('integer preflight rejects unmappable shape before selection and preserves 
  assert.throws(()=>validatedAdaptiveRemap({...args,selected:{...selected,allocation:{bins:[{binId:2,meme:.5,sol:.1}]}}}),/WRONG_ACTIVE_BIN_SIDE|PAPER_SHARE_NONPROPORTIONAL_DEPOSIT/);
  assert.throws(()=>validatedAdaptiveRemap({...args,selected:{...selected,allocation:{bins:[{binId:2,meme:.0000001,sol:0}]}}}),/ALLOCATION_ROUNDS_TO_ZERO|PAPER_SHARE_DUST_OR_RANGE/);
 });
+
+test('canonical forecast uses mapped integer principal, fixed capital, cost and fees without redeploying theoretical bins',async()=>{
+ const {validatedAdaptiveRemap,mappedScenarioStart}=await import('./paper-adaptive-core.mjs'),{Engine:E}=await import('../engine.mjs'),{snapshotRows}=await import('./paper-fee-core.mjs');
+ const {a,state}=fixture(),b=snapshot(2),s2=advance(state,a,a,b),row={...s2.rows[7],rebalances:0};
+ const cfg=E.config({anchorPrice:.001,binStepBps:100,minSolReserve:0,maxLossSol:10,maxInventoryTokens:1000000,maxInventoryRatio:1,maxBinShare:.1,maxTurnoverSol:30,operationCostSol:0,executionDelaySeconds:10});
+ const {identity:i,map}=snapshotRows(b),m=E.newState({pool:'DEMO_POOL',entry:'position',meme:1,sol:1,positionBins:[{id:1,x:1,y:0}],initialPrice:.001},cfg);
+ E.event(m,cfg,{type:'MARKET',id:'m',t:0,pool:'DEMO_POOL',references:[{pool:'a',price:.001,depth:10,availableAt:0},{pool:'b',price:.001,depth:10,availableAt:0}],exitDepth:10,tokenSafe:true,holderShare:.1,holderOutflow:0,buyImbalance:0,flowSol:10,flowWindowSeconds:60});
+ const selected={action:{type:'REDUCE',fraction:.5},estimatedOperationCostSol:0},mapped=validatedAdaptiveRemap({row,state:s2,snapshot:b,cfg,selected}),start=mappedScenarioStart(m,cfg,map,i,row,mapped,'REDUCE');
+ assert.equal(start.bins[0].x,.5);assert.equal(start.wallet.x,1.5);assert.equal(start.initialNav,m.initialNav);assert.equal(E.nav(start,.001),E.nav(m,.001));assert.equal(start.cost,m.cost);
+ const next={...m.market,id:'future',t:60,references:m.market.references.map(r=>({...r,availableAt:60}))};
+ const scenarios=[{name:'fixed',events:[next,{type:'SWAP',id:'swap',t:60,bin:1,side:'LP_SELL',baseQty:100,externalLiquiditySol:1,mmFeeX:0,mmFeeY:.01}]}];
+ const v=E.evaluate(m,cfg,selected.action,scenarios,{mappedStart:start});
+ assert.equal(v.feasible,true,v.reason);assert.equal(v.scoreBasis,'MAPPED_IMMEDIATE_ACTION_SCENARIOS');assert.equal(v.allocation[0].x,.5);assert.ok(v.expectedFee>0);assert.equal(v.expectedOperationCost,0);
+ assert.equal(E.evaluate(m,cfg,selected.action,scenarios,{mappedStart:{...start,initialNav:9}}).feasible,false);
+});

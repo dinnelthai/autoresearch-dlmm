@@ -5,14 +5,17 @@ import {fresh,classify} from './market.mjs';
 import {risk} from './risk.mjs';
 import {applyAction} from './liquidity.mjs';
 import {event,executePending,submit} from './events.mjs';
-function evaluate(s,c,action,scenarios){
+function evaluate(s,c,action,scenarios,{mappedStart=null}={}){
   let start;
   try{
     assert(fresh(s,c),'REFERENCE_UNAVAILABLE_OR_STALE');
     assert(Array.isArray(scenarios)&&scenarios.length>0&&scenarios.every(v=>Array.isArray(v.events)&&v.events.length>0),'SCENARIO_SAMPLE_EMPTY');
     const p=s.market.ref.price,base=nav(s,p),out=[];
     assert(Number.isFinite(base)&&base>0,'SCENARIO_BASE_INVALID');
-    start=clone(s);start.pending=null;const a=applyAction(start,c,action,s.lastTime);const g=classify(start,c),rr=risk(start,c,p);
+    start=clone(mappedStart??s);start.pending=null;
+    if(mappedStart){assert(start.pool===s.pool&&start.lastTime===s.lastTime&&start.initialNav===s.initialNav&&start.baseline.x===s.baseline.x&&start.baseline.y===s.baseline.y&&nav(start,p)<=base+EPS&&start.cost>=s.cost,'MAPPED_SCENARIO_STATE_INVALID');}
+    else applyAction(start,c,action,s.lastTime);
+    const g=classify(start,c),rr=risk(start,c,p);
     if(["OPEN","ADD","REPOSITION"].includes(action.type)){
       if(!start.bins.length)throw Error("EMPTY_DEPLOYMENT");
       if(scenarios.some(v=>v.volumeDiagnostic&&(!v.volumeDiagnostic.flowWindowSeconds||v.volumeDiagnostic.modeledVolumeSol<=0)))throw Error("FORECAST_VOLUME_EVIDENCE_UNAVAILABLE");
@@ -24,8 +27,8 @@ function evaluate(s,c,action,scenarios){
     }
     if(rr.violations.length)throw Error(rr.violations.join(","));
     for(const scenario of scenarios){
-      const sim=clone(s);sim.pending=null;sim.seen=[];sim.lastTime=s.lastTime;sim.quality=[];
-      if(!["HOLD","NO_LP"].includes(action.type))submit(sim,c,action,s.lastTime);
+      const sim=clone(mappedStart?start:s);sim.pending=null;sim.seen=[];sim.lastTime=s.lastTime;sim.quality=[];
+      if(!mappedStart&&!["HOLD","NO_LP"].includes(action.type))submit(sim,c,action,s.lastTime);
       // Observe pre/post-action path, not just the terminal mark. Existing passive
       // exposure remains a comparator even when a hypothetical shock violates limits.
       let minNav=base,peakNav=base,maxDrawdownSol=0,maxInventoryRatio=0,maxInventoryTokens=0,minWalletSol=Infinity,maxStressLossSol=0,minExitHeadroomSol=Infinity,observations=0,unobserved=0;
@@ -52,7 +55,7 @@ function evaluate(s,c,action,scenarios){
     }
     const mean=fn=>sum(out.map(fn))/out.length,tail=cvar(out.map(a=>a.loss),c.beta),terminalCvar=cvar(out.map(a=>a.terminalLoss),c.beta),utility=mean(a=>a.incrementalAlpha)-c.lambda*tail-c.kappaSol*mean(a=>(a.ratio-c.targetRatio)**2);
     assert(Number.isFinite(utility)&&Number.isFinite(tail),'SCENARIO_NONFINITE_SCORE');
-    return {action,feasible:true,utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),expectedOperationCost:mean(a=>a.cost),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},volumeDiagnostics:scenarios.map(v=>v.volumeDiagnostic??null),fillDiagnostics:out.map(v=>({name:v.name,...v.fillDiagnostics})),scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
+    return {action,feasible:true,scoreBasis:mappedStart?'MAPPED_IMMEDIATE_ACTION_SCENARIOS':'LOGICAL_ACTION_SCENARIOS',utility,expectedPnl:mean(a=>a.pnl),expectedAlpha:mean(a=>a.incrementalAlpha),expectedFee:mean(a=>a.fee),expectedOperationCost:mean(a=>a.cost),cvar:tail,terminalCvar,pathRisk:{lossBasis:'MAX_LOSS_FROM_INITIAL_NAV_ALONG_SAMPLED_PATH',breachScenarioCount:out.filter(a=>a.pathRisk.violations.length).length,scenarioCount:out.length,maxDrawdownSol:Math.max(...out.map(a=>a.pathRisk.maxDrawdownSol)),maxInventoryRatio:Math.max(...out.map(a=>a.pathRisk.maxInventoryRatio)),maxInventoryTokens:Math.max(...out.map(a=>a.pathRisk.maxInventoryTokens)),minWalletSol:Math.min(...out.map(a=>a.pathRisk.minWalletSol)),maxStressLossSol:Math.max(...out.map(a=>a.pathRisk.maxStressLossSol)),minExitHeadroomSol:Math.min(...out.map(a=>a.pathRisk.minExitHeadroomSol)),violations:[...new Set(out.flatMap(a=>a.pathRisk.violations))]},volumeDiagnostics:scenarios.map(v=>v.volumeDiagnostic??null),fillDiagnostics:out.map(v=>({name:v.name,...v.fillDiagnostics})),scenarios:out,allocation:clone(start.bins),allocationLabel:"IMMEDIATE_PLAN_PREVIEW_NOT_EXECUTION",risk:rr};
   }catch(err){return {action,feasible:false,reason:err.message}}
 }
 // Matched scenario difference; costs already included in net NAV, never deduct twice.

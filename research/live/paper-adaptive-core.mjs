@@ -25,12 +25,14 @@ export function virtualManagement({state,row,snapshot,reviewed}){
  model.initialNav=rawHuman(row.initialNavYRaw,9);model.cost=rawHuman(p.costYRaw,9);
  model.claimed={x:rawHuman(row.claimedFeeXRaw??'0',i.sides[0].decimals),y:rawHuman(row.claimedFeeYRaw??'0',9)};
  model.feesEarned={x:model.claimed.x+model.pendingFees.x,y:model.claimed.y+model.pendingFees.y};
+ model.lastActionTime=row.lastActionTime??Math.floor(state.frozenAt/1000);model.rebalances=row.rebalances??0;model.rebalanceTurnover=rawHuman(row.turnoverYRaw??'0',9);
  model.history=observations.slice(0,-1);E.event(model,cfg,{...latest,id:'virtual-market:'+latest.id});
  const bins=[...map.values()],external=bins.flatMap(b=>{const x=rawHuman(b.amountXRaw,i.sides[0].decimals),y=rawHuman(b.amountYRaw,9);return x+y>0?[{id:b.binId,externalLiquiditySol:x*E.price(cfg,b.binId)+y}]:[]});
  if(external.length)E.event(model,cfg,{type:'POOL_STATE',id:'virtual-pool:'+i.rawHash,t:latest.t,bins:external});
  const checkAllocation=selected=>{
   const mapped=validatedAdaptiveRemap({row:{...row,rebalances:row.rebalances??0},selected,snapshot,state,cfg});
-  return {basis:'OBSERVED_SHARE_PROXY',binCount:mapped.mapping?.rows.length??0,principalXRaw:String(mapped.principalX),principalYRaw:String(mapped.principalY),walletXRaw:String(mapped.walletX),walletYRaw:String(mapped.walletY),costYRaw:String(mapped.cost),navYRaw:String(mapped.nav),turnoverYRaw:String(mapped.turnover)};
+  const modelStart=mappedScenarioStart(model,cfg,map,i,row,mapped,selected.action.type);
+  return {modelStart,basis:'OBSERVED_SHARE_PROXY',binCount:mapped.mapping?.rows.length??0,principalXRaw:String(mapped.principalX),principalYRaw:String(mapped.principalY),walletXRaw:String(mapped.walletX),walletYRaw:String(mapped.walletY),costYRaw:String(mapped.cost),navYRaw:String(mapped.nav),turnoverYRaw:String(mapped.turnover)};
  };
  if(row.status==='HOLD_ONLY'){
   if(row.lastActionTime!=null&&latest.t-row.lastActionTime<cfg.cooldownSeconds)return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'};
@@ -92,4 +94,18 @@ export function validatedAdaptiveRemap(args){
   assert(initial-nav<raw(state.policy.maxLossSolRaw)&&dd<BigInt(state.policy.maxDrawdownBps),'PAPER_ADAPTIVE_POST_ACTION_RISK_LIMIT');
  }
  return {...r,nav};
+}
+
+ // Convert the already validated integer accounting state to the canonical forecast state.
+ // No forecast-specific allocation or fee engine; immediate mapped action is a labeled
+ // conditional scenario, while actual Paper intent delay/revalidation remains unchanged.
+export function mappedScenarioStart(model,cfg,map,i,row,mapped,action){
+ const state=structuredClone(model),xdec=i.sides[0].decimals;
+ const human=(v,d)=>rawHuman(String(v),d);
+ state.wallet={x:human(mapped.walletX,xdec),y:human(mapped.walletY,9)};
+ state.bins=(mapped.mapping?.rows??[]).map(r=>{const b=map.get(r.binId),share=raw(r.shareRaw),supply=raw(b.liquiditySupplyRaw),x=human(share*raw(b.amountXRaw)/supply,xdec),y=human(share*raw(b.amountYRaw)/supply,9);return {id:r.binId,x,y,liquidity:x*E.price(cfg,r.binId)+y}});
+ state.pendingFees=mapped.retainedFees?{x:human(mapped.retainedFees.x,xdec),y:human(mapped.retainedFees.y,9)}:{x:0,y:0};
+ if(!mapped.retainedFees)state.claimed={x:state.claimed.x+model.pendingFees.x,y:state.claimed.y+model.pendingFees.y};
+ state.cost=model.cost+human(mapped.cost,9);state.rebalanceTurnover=human(mapped.turnover,9);state.rebalances=(row.rebalances??0)+(action==='REPOSITION'||action==='OPEN'&&(row.entries??0)>0?1:0);state.lastActionTime=state.lastTime;state.status=mapped.status==='OPEN_PROXY'?'OPEN':'FLAT';state.pending=null;
+ return state;
 }

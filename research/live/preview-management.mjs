@@ -52,12 +52,13 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
      if((b.id<market.activeId&&b.x>0)||(b.id>market.activeId&&b.y>0))throw Error('WRONG_ACTIVE_BIN_SIDE');
     }
    }
-   const v=Engine.evaluate(s,cfg,action,scenarios);
+   let modelStart=null;
+   if(checkAllocation&&action.type!=='HOLD'){row.feasible=true;const {modelStart:mapped,...summary}=checkAllocation(row);modelStart=mapped;row.integerMapping=summary;}
+   const v=Engine.evaluate(s,cfg,action,scenarios,{mappedStart:modelStart});
    if(!v.feasible)throw Error(v.reason??'MODEL_INFEASIBLE');
    if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
    evaluated.set(row,v);
-   row.feasible=true;row.score=v.utility;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};
-   if(checkAllocation&&action.type!=='HOLD')row.integerMapping=checkAllocation(row);
+   row.feasible=true;row.score=v.utility;row.scoreBasis=v.scoreBasis??null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};
   }catch(e){row.feasible=false;row.reason=String(e.message).slice(0,180);}
   result.candidates.push(row);
  }
@@ -76,7 +77,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
   // retained inventory still violates risk limits. Never relabel a failed scenario as feasible.
   if(virtualProtection){
    const remove=result.candidates.find(r=>r.action.type==='REMOVE_AND_HOLD'&&r.protectiveDiagnostic&&r.allocation?.bins.length===0&&finite(r.estimatedOperationCostSol)&&r.postRisk?.bid===0);
-   if(remove){try{const selected={...remove,protectiveExecution:true};if(checkAllocation)selected.integerMapping=checkAllocation(selected);result.selected=selected;result.reason='VIRTUAL_MARKET_OR_RISK_GATE_REMOVE';}catch(e){result.reason=String(e.message).slice(0,180);result.alerts.push('VIRTUAL_PROTECTION_MAPPING_BLOCKED')}}
+   if(remove){try{const selected={...remove,protectiveExecution:true};if(checkAllocation){const {modelStart,...summary}=checkAllocation(selected);selected.integerMapping=summary;}result.selected=selected;result.reason='VIRTUAL_MARKET_OR_RISK_GATE_REMOVE';}catch(e){result.reason=String(e.message).slice(0,180);result.alerts.push('VIRTUAL_PROTECTION_MAPPING_BLOCKED')}}
   }
  }else if(hold?.feasible){
   const best=result.candidates.filter(r=>r.feasible&&r.action.type!=='HOLD').sort((a,b)=>b.score-a.score)[0];
