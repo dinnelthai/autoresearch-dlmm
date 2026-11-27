@@ -47,7 +47,11 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
    }catch(e){r.planPreview.adaptiveReason=errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}
   }
   const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,report:r,budget,policy:body.policy,backendHash,frozenAt:Date.now()});
-  if(body.policy.adaptive){const controls=adaptivePolicy(body.policy.adaptive);if(reviewHash)state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls}}}
+  if(body.policy.adaptive){
+   const controls=adaptivePolicy(body.policy.adaptive);state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls}};
+   const row=state.rows.find(r=>r.mode==='adaptive'),base=state.rows[0];
+   if(row?.status==='BLOCKED'&&base.status==='HOLD_ONLY')state.rows=state.rows.map(v=>v===row?{...structuredClone(base),mode:'adaptive',mapping:null,adaptiveReason:row.reason}:v);
+  }
   state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:reviewHash?'REVIEWED_MODEL':'FIXED_OBSERVED_BIN_CONTROL'};
   assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
   await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};return get();
@@ -72,7 +76,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     if(windowCapture==='MISSED_ENDPOINT'){await finish(a,'MISSED_ENDPOINT');return}
     let next=await advancePaperCapture(state,{load,snapshot,backendHash,now:Date.now(),exit:windowCapture==='ENDPOINT'});
     const row=next.rows.find(r=>r.mode==='adaptive');
-    if(windowCapture!=='ENDPOINT'&&next.adaptiveRequest&&row?.status==='OPEN_PROXY'){
+    if(windowCapture!=='ENDPOINT'&&next.adaptiveRequest&&['HOLD_ONLY','OPEN_PROXY'].includes(row?.status)){
      try{
       const review=await loadReview(m,Date.now());
       const evidence=async(path,digest)=>{assert(hash(digest),'PAPER_ADAPTIVE_EVIDENCE_HASH');const bytes=await read(path,8*1024*1024);assert(sha(bytes)===digest,'PAPER_ADAPTIVE_EVIDENCE_CHANGED');return bytes};

@@ -79,3 +79,16 @@ test('fee regression, missing bin, supply collapse and order state block rather 
 test('capture after service gap preserves blocked paths and HODL',()=>{const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);b.proof.requestedAt=new Date(300000).toISOString();b.proof.receivedAt=new Date(301000).toISOString();c.proof.requestedAt=new Date(310000).toISOString();c.proof.receivedAt=new Date(311000).toISOString();const s2=advance(state,a,a,b),s3=advance(s2,a,b,c);assert.equal(s3.gapCount,1);assert.equal(s3.rows[1].status,'BLOCKED');assert.equal(s3.rows[0].points.length,3)});
 
 test('fractional growth survives multiple samples without interval fee rounding loss',()=>{const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);b.bins.arrays[0].bins[1].feeXPerTokenRaw=String(Q/16n);c.bins.arrays[0].bins[1].feeXPerTokenRaw=String(Q/8n);const s2=advance(state,a,a,b),s3=advance(s2,a,b,c);assert.equal(s2.rows[1].points.at(-1).feeXRaw,'0');assert.equal(s3.rows[1].points.at(-1).feeXRaw,'1')});
+
+test('adaptive can start flat and later open from a newer feasible model plan without resetting HODL baseline',()=>{
+ const {a,state}=fixture(),b=snapshot(2),c=snapshot(3),d=snapshot(4,1n);
+ state.adaptiveRequest={goal:'balanced'};
+ state.rows[7]={...structuredClone(state.rows[0]),mode:'adaptive',mapping:null};
+ const cfg={executionDelaySeconds:1,operationCostSol:0,maxRebalances:8,maxTurnoverSol:30,minSolReserve:0,maxBinShare:.1};
+ const preview={status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:{feasible:true,action:{type:'OPEN'},allocation:{bins:[{binId:1,meme:1,sol:0}]}}};
+ let s2=advance(state,a,a,b);s2=updateAdaptiveSnapshot(s2,{snapshot:b,reviewed:{cfg,latest:{t:21}},preview,reviewHash:'e'.repeat(64),now:22000});
+ assert.equal(s2.rows[7].status,'HOLD_ONLY');assert.equal(s2.rows[7].pendingAdaptive.action,'OPEN');
+ let s3=advance(s2,a,b,c);s3=updateAdaptiveSnapshot(s3,{snapshot:c,reviewed:{cfg,latest:{t:31}},preview,reviewHash:'d'.repeat(64),now:32000});
+ assert.equal(s3.rows[7].status,'OPEN_PROXY');assert.equal(s3.rows[7].rebalances,0);assert.equal(s3.rows[7].initialNavYRaw,state.rows[0].initialNavYRaw);assert.equal(s3.rows[7].points.length,3);
+ const s4=advance(s3,a,c,d);assert.equal(s4.rows[7].points.at(-1).feeXRaw,'9');assert.equal(s4.rows[7].points.at(-1).excessVsHoldYRaw,'9');
+});

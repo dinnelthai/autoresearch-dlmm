@@ -113,4 +113,9 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const next=await resumed.get();assert.equal(next.snapshotCount,2);
  assert.ok(BigInt(next.rows.find(r=>r.mode==='spot').latest.totalFeeXRaw)>0n);
  assert.equal(next.rows.find(r=>r.mode==='NO_LP').latest.pnlYRaw,'0');
+ await resumed.pause({pool:A,id:fixed.id});
+ const waiting=await resumed.start({draft:{...draft,memeHuman:'10'},policy:{...body.policy,adaptive:{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30}}});
+ assert.equal(waiting.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');
+ now+=10000;await capture(5,110n,now-1000,now);await resumed.tick();
+ const observed=await resumed.get();assert.equal(observed.snapshotCount,2);assert.equal(observed.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');assert.equal(observed.rows.find(r=>r.mode==='adaptive').adaptiveReason,'UNEXPECTED_REVIEW');
 });
