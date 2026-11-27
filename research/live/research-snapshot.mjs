@@ -10,11 +10,8 @@ export function snapshotFileList(m){
  assert((m.reviewStatus==='MATCHED_HASHES_UNVERIFIED')===seen.has('review.json'),'SNAPSHOT_REVIEW_BINDING_INVALID');return m.files;
 }
 export function snapshotManifest({pool,market,createdAt,files,reviewStatus,diagnostic}){
- assert(market?.pool===pool&&Number.isSafeInteger(market.slot)&&market.slot>=0&&hash(market.rawHash)&&Number.isSafeInteger(createdAt)&&Array.isArray(files)&&files.length>=2&&files.length<=8,'SNAPSHOT_IDENTITY_INVALID');
- const seen=new Set();for(const f of files){assert(['state.json','diagnostic.json','review.json','external.json','holder.json','capture-manifest.json'].includes(f.name)&&!seen.has(f.name)&&hash(f.sha256)&&Number.isSafeInteger(f.bytes)&&f.bytes>0,'SNAPSHOT_FILE_INVALID');seen.add(f.name)}
- assert(seen.has('state.json')&&seen.has('capture-manifest.json')&&seen.has('diagnostic.json'),'SNAPSHOT_FILES_REQUIRED');
+ assert(market?.pool===pool&&Number.isSafeInteger(market.slot)&&market.slot>=0&&hash(market.rawHash)&&Number.isSafeInteger(createdAt),'SNAPSHOT_IDENTITY_INVALID');
  assert(diagnostic?.pool===pool&&diagnostic.marketSlot===market.slot&&diagnostic.marketRawHash===market.rawHash&&diagnostic.modelInputReady===false,'SNAPSHOT_DIAGNOSTIC_MISMATCH');
- assert(reviewStatus==='MATCHED_HASHES_UNVERIFIED'?seen.has('review.json'):!seen.has('review.json'),'SNAPSHOT_REVIEW_BINDING_INVALID');
  snapshotFileList({files,reviewStatus});
  const manifest={schemaVersion:1,scope:'IMMUTABLE_RESEARCH_DIAGNOSTIC',pool,mintX:market.mintX,mintY:market.mintY,marketSlot:market.slot,marketRawHash:market.rawHash,marketCapture:market.capture,createdAt,reviewStatus,files:files.slice().sort((a,b)=>a.name.localeCompare(b.name)),modelInputReady:false,decisionReady:false,executionReady:false};
  return {...manifest,snapshotId:sha(JSON.stringify(manifest))};

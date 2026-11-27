@@ -1,7 +1,6 @@
-import {engineSourcePaths} from '../engine-source-paths.mjs';
 import {analyzeState} from './analyze-state.mjs';
 // Immutable snapshot, historical replay and candidate assembly. No current report binding.
-import {readFile,mkdir,mkdtemp,writeFile,rename,rm} from 'node:fs/promises';
+import {mkdir,mkdtemp,writeFile,rename,rm} from 'node:fs/promises';
 import {join,relative} from 'node:path';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {inputStatus} from './research-input-status.mjs';
@@ -10,7 +9,19 @@ import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-s
 import {replayRequest,replayResult} from './research-replay.mjs';
 import {assert,errorCode,hash} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
-export function createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,marketObservations}){
+export function createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,marketObservations,sourceHashes}){
+const read=(path,limit)=>safeDataPath(path).then(p=>boundedRead(p,limit));
+async function saveArchive(base,id,manifest,files=[]){
+ await mkdir(base,{recursive:true,mode:0o700});
+ const tmp=await mkdtemp(join(base,'.pending-')),dir=join(base,id);
+ try{for(const [name,b] of files)await writeFile(join(tmp,name),b,{mode:0o600,flag:'wx'});await writeFile(join(tmp,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(tmp,dir);return dir}
+ catch(e){await rm(tmp,{recursive:true,force:true});throw e}
+}
+async function reviewedBytes(refs,reason){
+ let budget=64*1024*1024;const files=new Map();
+ for(const r of refs){const b=await read(r.path,Math.min(budget,8*1024*1024));assert(sha(b)===r.sha256,reason);budget-=b.length;files.set(r.path,b)}
+ return files;
+}
 async function researchInputs(scope){
  const now=Date.now();let state=null,m=null,review=null,reason=null;
  try{state=await loadState(scope);m=currentMarket(state,scope,now,maxAgeMs)}catch{reason='MARKET_CAPTURE_UNAVAILABLE'}
@@ -28,8 +39,8 @@ async function saveResearchSnapshot(body,pinned=null){
  let reviewed=null,reviewStatus='NOT_AVAILABLE';
  const reviewPath=snapshotReviewPath(scope);
  if(reviewPath){try{
-  const candidate=await loadReview(m,now,reviewPath);reviewStructureRequired(candidate.review,m,now);let budget=64*1024*1024;
-  for(const ref of reviewEvidenceRefs(candidate.review)){const b=await boundedRead(await safeDataPath(ref.path),Math.min(budget,8*1024*1024));assert(sha(b)===ref.sha256,'SNAPSHOT_REVIEW_HASH_MISMATCH');budget-=b.length}
+  const candidate=await loadReview(m,now,reviewPath);reviewStructureRequired(candidate.review,m,now);
+  await reviewedBytes(reviewEvidenceRefs(candidate.review),'SNAPSHOT_REVIEW_HASH_MISMATCH');
   reviewed=candidate;reviewStatus='MATCHED_HASHES_UNVERIFIED';
  }catch{reviewStatus='REVIEW_MISSING_STALE_OR_UNVERIFIED'}}
  const externalLast=marketObservations.external();
@@ -42,8 +53,7 @@ async function saveResearchSnapshot(body,pinned=null){
  if(external)files.set('external.json',Buffer.from(JSON.stringify(external)));
  if(diagnostic.holderFeatures&&holder)files.set('holder.json',Buffer.from(JSON.stringify(holder)));
  const out=snapshotManifest({pool:scope,market:m,createdAt:now,files:[...files].map(([name,b])=>({name,sha256:sha(b),bytes:b.length})),reviewStatus,diagnostic});
- const base=join(DATA,'research-snapshots');await mkdir(base,{recursive:true,mode:0o700});const tmp=await mkdtemp(join(base,'.pending-')),dir=join(base,out.snapshotId);
- try{for(const [name,b] of files)await writeFile(join(tmp,name),b,{mode:0o600,flag:'wx'});await writeFile(join(tmp,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(tmp,dir)}catch(e){await rm(tmp,{recursive:true,force:true});throw e}
+ const dir=await saveArchive(join(DATA,'research-snapshots'),out.snapshotId,out,files);
  await archives.add({kind:'snapshot',pool:scope,id:out.snapshotId,snapshotId:out.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:now,status:out.reviewStatus});
  return {...out,capture:relative(ROOT,dir)};
 }
@@ -58,29 +68,21 @@ async function replayResearchSnapshot(body){
  const mode=body.mode??'plans';assert(['plans','management'].includes(mode),'REPLAY_MODE_INVALID');let policyBytes=null,policy=null,position=null;
  if(mode==='management'){position=validateScope(body.position);const entry=cfg.managementPolicies&&Object.hasOwn(cfg.managementPolicies,position)?cfg.managementPolicies[position]:null;assert(entry&&typeof entry.policy==='string','MANAGEMENT_POLICY_NOT_CONFIGURED');policyBytes=await boundedRead(await safeDataPath(entry.policy),32768);policy=JSON.parse(policyBytes)}
  const x=replayRequest(manifest,files,{pool:scope,snapshotId:id,draft:body.draft,mode,position,policy});
- const source=await safeDataPath(x.market.capture);
- assert(sha(await boundedRead(await safeDataPath(join(source,'manifest.json')),16*1024*1024))===sha(files.get('capture-manifest.json')),'REPLAY_CAPTURE_MANIFEST_CHANGED');
- assert(sha(await boundedRead(await safeDataPath(join(source,'accounts.json')),32*1024*1024))===x.market.rawHash,'REPLAY_CAPTURE_HASH_MISMATCH');
- let budget=64*1024*1024;for(const r of x.evidence){const b=await boundedRead(await safeDataPath(r.path),Math.min(budget,8*1024*1024));assert(sha(b)===r.sha256,'REPLAY_EVIDENCE_CHANGED');budget-=b.length}
- const sourcePaths=['research/live/review-observations.mjs',...engineSourcePaths,'research/integer.mjs','research/live/analyze-state.mjs','research/live/engine-input.mjs','research/live/preview-plans.mjs','research/live/research-replay.mjs','research/live/research-snapshot.mjs','research/live/terminal-core.mjs','research/live/quote-evidence.mjs','research/live/external-market.mjs','research/live/reference-math.mjs','research/live/research-input-status.mjs','research/live/market-features.mjs','research/live/evidence-builder.mjs','research/live/preview-management.mjs','research/live/research-catalog.mjs','research/live/terminal-research-service.mjs','research/live/terminal-market-service.mjs','research/live/terminal-runtime.mjs','research/live/research-contract.mjs','research/live/evidence-digest.mjs'];
- const code=()=>Promise.all(sourcePaths.map(async path=>({path,sha256:sha(await readFile(join(ROOT,path)))})));
- const sourceHashes=await code(),base=join(DATA,'research-runs',scope);await mkdir(base,{recursive:true,mode:0o700});
- const tmp=await mkdtemp(join(base,'.pending-'));
- try{
-  // Use verified bytes, not mutable service state or the current review config.
-  await writeFile(join(tmp,'state.json'),files.get('state.json'),{mode:0o600,flag:'wx'});
-  await writeFile(join(tmp,'review.json'),files.get('review.json'),{mode:0o600,flag:'wx'});
-  await writeFile(join(tmp,'request.json'),JSON.stringify(x.request),{mode:0o600,flag:'wx'});
-  if(policyBytes)await writeFile(join(tmp,'policy.json'),policyBytes,{mode:0o600,flag:'wx'});
-  const report=await analyzeState({state:JSON.parse(files.get('state.json')),req:x.request,review:x.review,plans:mode==='plans',management:mode==='management',readData:async path=>boundedRead(await safeDataPath(path),32*1024*1024)});
-  assert(JSON.stringify(await code())===JSON.stringify(sourceHashes),'REPLAY_CODE_CHANGED');
-  const out=replayResult({manifest,request:x.request,report,sourceHashes,generatedAt:Date.now(),policyHash:policyBytes?sha(policyBytes):null,owner:x.owner});
-  await writeFile(join(tmp,'report.json'),JSON.stringify(report),{mode:0o600,flag:'wx'});
-  await writeFile(join(tmp,'manifest.json'),JSON.stringify(out,null,2)+'\n',{mode:0o600,flag:'wx'});
-  const resultDir=join(base,out.runId);await rename(tmp,resultDir);
-  await archives.add({kind:'run',pool:scope,id:out.runId,snapshotId:id,marketSlot:out.marketSlot,marketRawHash:out.marketRawHash,createdAt:out.generatedAt,status:out.status,mode,position:out.position??null});
-  return {...out,report,capture:relative(ROOT,resultDir)};
- }catch(e){await rm(tmp,{recursive:true,force:true});throw e}
+ // Freeze verified evidence once. The calculation consumes exactly these bytes.
+ const manifestPath=join(x.market.capture,'manifest.json'),accountsPath=join(x.market.capture,'accounts.json');
+ const mb=await read(manifestPath,16*1024*1024),ab=await read(accountsPath,32*1024*1024);
+ assert(sha(mb)===sha(files.get('capture-manifest.json')),'REPLAY_CAPTURE_MANIFEST_CHANGED');
+ assert(sha(ab)===x.market.rawHash,'REPLAY_CAPTURE_HASH_MISMATCH');
+ const evidence=await reviewedBytes(x.evidence,'REPLAY_EVIDENCE_CHANGED');
+ evidence.set(manifestPath,mb);evidence.set(accountsPath,ab);
+ const report=await analyzeState({state:JSON.parse(files.get('state.json')),req:x.request,review:x.review,plans:mode==='plans',management:mode==='management',readData:async path=>{assert(evidence.has(path),'REPLAY_EVIDENCE_UNAVAILABLE');return evidence.get(path)}});
+ const out=replayResult({manifest,request:x.request,report,sourceHashes,generatedAt:Date.now(),policyHash:policyBytes?sha(policyBytes):null,owner:x.owner});
+ // State and review already live in the linked immutable snapshot; do not duplicate them in each run.
+ const artifacts=[['request.json',JSON.stringify(x.request)],['report.json',JSON.stringify(report)]];
+ if(policyBytes)artifacts.push(['policy.json',policyBytes]);
+ const resultDir=await saveArchive(join(DATA,'research-runs',scope),out.runId,out,artifacts);
+ await archives.add({kind:'run',pool:scope,id:out.runId,snapshotId:id,marketSlot:out.marketSlot,marketRawHash:out.marketRawHash,createdAt:out.generatedAt,status:out.status,mode,position:out.position??null});
+ return {...out,report,capture:relative(ROOT,resultDir)};
 }
 async function buildResearchCandidate(body){
  const scope=validateScope(body?.pool),state=await loadState(scope),m=currentMarket(state,scope,Date.now(),maxAgeMs);
@@ -98,8 +100,7 @@ async function buildResearchCandidate(body){
  const snapshot=await saveResearchSnapshot({pool:scope,marketSlot:m.slot,marketRawHash:m.rawHash},{state,at});
  const diagnostic=JSON.parse(await boundedRead(await safeDataPath(join(snapshot.capture,'diagnostic.json')),8*1024*1024));
  const candidate=assembleCandidate({market:m,snapshot,diagnostic,clock,sourceErrors,createdAt:at});
- const base=join(DATA,'research-candidates',scope);await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'.pending-')),dest=join(base,candidate.candidateId);
- try{await writeFile(join(dir,'manifest.json'),JSON.stringify(candidate,null,2)+'\n',{mode:0o600,flag:'wx'});await rename(dir,dest)}catch(e){await rm(dir,{recursive:true,force:true});throw e}
+ const dest=await saveArchive(join(DATA,'research-candidates',scope),candidate.candidateId,candidate);
  await archives.add({kind:'candidate',pool:scope,id:candidate.candidateId,snapshotId:snapshot.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:at,status:'RESEARCH_CANDIDATE_ONLY'});
  let replay=null,replayReason=null;
  if(body.draft&&candidate.replayEligible){try{replay=await replayResearchSnapshot({pool:scope,snapshotId:snapshot.snapshotId,draft:body.draft})}catch(e){replayReason=errorCode(e,'REPLAY_VALIDATION_FAILED')}}
