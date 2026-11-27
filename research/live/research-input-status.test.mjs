@@ -17,3 +17,17 @@ test('collected paper inputs reject missing sources and incomplete warmup',async
  assert.throws(()=>collectedPaperObservation({m,now:100000}),/PAPER_HOLDER_FEATURES_UNAVAILABLE/);
  assert.throws(()=>collectedPaperInputs({m,req:{goal:'balanced',horizonSeconds:600,riskConfig:{}},samples:[],asOf:100}),/PAPER_COLLECTED_MODEL_WARMUP/);
 });
+
+test('collected paper bridge derives bounded features and three causal reference observations',async()=>{
+ const {collectedPaperObservation,collectedPaperInputs}=await import('./review-observations.mjs');
+ const m={...market,binStep:100,decimalsX:6,decimalsY:9};
+ const refs=['raydium','orca'].map((venue,i)=>({venue,pool:String.fromCharCode(68+i).repeat(32),midSolPerMeme:.001,bestTestedExit:{minOutRaw:'3000000000'}}));
+ const e={...m,marketSlot:m.slot,marketRawHash:m.rawHash,expiresAt:now+1000,fetchedAt:now-1000,evidenceHash:'b'.repeat(64),rawEvidenceCheck:{scope:'RAW_QUOTE_RECHECK_ONLY',venues:refs},evidence:['ask.json','bid-0.json','orca-ask.json','orca-bid-0.json'].map(file=>({file,receivedAt:now-2000,sha256:'c'.repeat(64)})),raydium:{pool:refs[0].pool},orca:{pool:refs[1].pool}};
+ const h={pool,mint:mintX,genesis:'5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',slot:1,requestMarketSlot:1,receivedAt:now-1000,evidenceHash:'d'.repeat(64),scope:'HOLDER_DIAGNOSTIC_ONLY',distribution:{supplyConserved:true,topShare:.25},cohort:{netDecreaseShare:.01},safety:{flags:[],mintAuthorityRevoked:true,freezeAuthorityRevoked:true}};
+ const sample=collectedPaperObservation({m,external:e,holder:h,history,now});
+ assert.equal(sample.event.flowSol,19/1e9);assert.equal(sample.event.holderOutflow,.01);assert.equal(sample.event.references.length,2);
+ const samples=[0,1,2].map(i=>({...sample,event:{...sample.event,id:'obs'+i,t:t-2+i,references:sample.event.references.map(r=>({...r,availableAt:t-2+i,observedAt:t-3+i}))}}));
+ const x=collectedPaperInputs({m,req:{goal:'balanced',horizonSeconds:600,riskConfig:{}},samples,asOf:t});
+ assert.equal(x.observations.length,3);assert.equal(x.latest.ref.valid,true);assert.throws(()=>collectedPaperInputs({m,req:{goal:'balanced',horizonSeconds:600,riskConfig:{}},samples,asOf:t+200}),/PAPER_COLLECTED_MODEL_WARMUP/);
+ assert.throws(()=>collectedPaperObservation({m,external:{...e,rawEvidenceCheck:{...e.rawEvidenceCheck,venues:[refs[0]]}},holder:h,history,now}),/PAPER_TWO_REFERENCE_QUOTES_REQUIRED/);
+});

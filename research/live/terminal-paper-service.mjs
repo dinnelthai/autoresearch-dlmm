@@ -32,13 +32,18 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   const a=await active();assert(!a?.running,'PAPER_AUTO_ALREADY_RUNNING');
   assert(body?.draft?.pool===pool&&body.policy&&body.draft?.riskConfig?.maxBinShare<=.1,'PAPER_AUTO_POOL_OR_SHARE_LIMIT');
   const m=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs);
-  const request=requestFromDraft(body.draft,m);
+  const request=requestFromDraft(body.draft,m),optimization=body.policy.optimization??null;
   const capture=await (await reader())(await io.safeDataPath(m.capture));
   assert(capture.identity.slot===m.slot&&capture.identity.rawHash===m.rawHash,'PAPER_AUTO_OPENING_CHANGED');
+  if(optimization){
+   assert(body.policy.adaptive&&body.policy.tuning==null&&optimization.status==='PROPOSED_FOR_NEW_PAPER_WINDOW'&&optimization.source==='UNVERIFIED_NORMALIZED_EVENT_OPTIMIZATION'&&hash(optimization.datasetSha256)&&Array.isArray(optimization.validationPools)&&optimization.validationPools.includes(pool)&&Number.isSafeInteger(optimization.nextWindowAfter)&&optimization.nextWindowAfter>=0,'PAPER_OPTIMIZATION_PROPOSAL_INVALID');
+   assert(Date.parse(capture.proof.requestedAt)>optimization.nextWindowAfter*1000,'PAPER_OPTIMIZATION_REQUIRES_LATER_WINDOW');
+   if(a){const previous=await checkpoint(a);assert(m.slot>previous.last.slot&&Date.parse(capture.proof.requestedAt)>Date.parse(previous.last.proof.receivedAt),'PAPER_OPTIMIZATION_REQUIRES_NEW_CAPTURE')}
+  }
   const {solRaw,memeRaw,riskConfig}=request;
   const budget={solRaw,memeRaw,allowDispose:false,minSolReserve:riskConfig.minSolReserve,operationCostSol:riskConfig.operationCostSol,maxBinShare:riskConfig.maxBinShare};
   let r=fixedPaperReport({snapshot:capture,budget}),reviewHash=null;
-  if(body.reviewHash!=null){
+  if(body.reviewHash!=null&&!optimization){
    // Optional reviewed research can replace fixed controls; failures never suppress the controls.
    try{
     const reviewed=await preview(body,'plans'),b=reviewed.terminalBinding;
@@ -49,11 +54,11 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   }
   const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,report:r,budget,policy:body.policy,backendHash,frozenAt:Date.now()});
   if(body.policy.adaptive){
-   const controls=adaptivePolicy(body.policy.adaptive),tuning=strategyTuning(body.policy.tuning??{});state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls,...tuning}};
+   const controls=adaptivePolicy(body.policy.adaptive),tuning=strategyTuning(optimization?.tuning??body.policy.tuning??{});state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls,...tuning}};
    const row=state.rows.find(r=>r.mode==='adaptive'),base=state.rows[0];
    if(row?.status==='BLOCKED'&&base.status==='HOLD_ONLY')state.rows=state.rows.map(v=>v===row?{...structuredClone(base),mode:'adaptive',mapping:null,entries:0,adaptiveReason:row.reason}:v);
   }
-  state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:reviewHash?'REVIEWED_MODEL':'FIXED_OBSERVED_BIN_CONTROL'};
+  state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:reviewHash?'REVIEWED_MODEL':'FIXED_OBSERVED_BIN_CONTROL',...(optimization?{optimization:{datasetSha256:optimization.datasetSha256,nextWindowAfter:optimization.nextWindowAfter,tuning:strategyTuning(optimization.tuning),proposalHash:sha(JSON.stringify(optimization))}}:{})};
   assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
   await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};features=null;lastFeatureAttempt=-Infinity;return get();
  })}

@@ -121,4 +121,10 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const observed=await resumed.get();assert.equal(observed.snapshotCount,2);assert.equal(observed.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');assert.equal(observed.rows.find(r=>r.mode==='adaptive').adaptiveReason,'UNEXPECTED_REVIEW');
  assert.deepEqual(featureCalls,[5]);assert.equal(observed.featureCollection.slot,5);
  now+=10000;await capture(6,120n,now-1000,now);await resumed.tick();assert.deepEqual(featureCalls,[5]);assert.equal((await resumed.get()).snapshotCount,3);
+ await resumed.pause({pool:A,id:waiting.id});
+ const proposal={status:'PROPOSED_FOR_NEW_PAPER_WINDOW',source:'UNVERIFIED_NORMALIZED_EVENT_OPTIMIZATION',datasetSha256:'e'.repeat(64),validationPools:[A],nextWindowAfter:Math.floor(now/1000),tuning:{lambda:1.5}};
+ const optBody={draft:{...draft,memeHuman:'10'},policy:{...body.policy,adaptive:{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30},optimization:proposal}};
+ await assert.rejects(resumed.start(optBody),/PAPER_OPTIMIZATION_REQUIRES_LATER_WINDOW/);
+ now+=10000;await capture(7,130n,now-1000,now);
+ const promoted=await resumed.start(optBody);assert.equal(promoted.optimization.datasetSha256,proposal.datasetSha256);assert.equal(promoted.optimization.tuning.lambda,1.5);assert.equal(promoted.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');
 });

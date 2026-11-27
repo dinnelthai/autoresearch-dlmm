@@ -83,6 +83,7 @@ jobs:
             research/live/paper-router-http.test.mjs \
             research/live/terminal-router.test.mjs \
             research/live/terminal-ui.test.mjs \
+            research/live/research-input-status.test.mjs \
             research/live/research-snapshot.test.mjs \
             research/live/research-replay.test.mjs \
             research/live/research-catalog.test.mjs | tee native-paper-service.tap
