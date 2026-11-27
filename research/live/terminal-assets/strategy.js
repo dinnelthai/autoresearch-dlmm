@@ -44,7 +44,7 @@ function validateArchive(r,target){
  for(const f of p.families){if(!families.includes(f.family)||!Number.isSafeInteger(f.total)||!Number.isSafeInteger(f.feasible)||f.total<0||f.feasible<0||f.feasible>f.total||Boolean(f.best)!==(f.feasible>0))throw Error('策略族统计不符');if(f.best)checkRow(f.best,f.family)}
  if(p.selected){checkRow(p.selected,p.selected.family);const match=p.families.find(f=>f.family===p.selected.family);if(!match?.best||JSON.stringify(match.best)!==JSON.stringify(p.selected))throw Error('选中方案与策略族最佳方案不一致')}
 }
-$('file').addEventListener('change',async()=>{const generation=++importGeneration;clearReport();try{const f=$('file').files[0];if(!f)return;if(!target)throw Error('先设置目标池');if(f.size>8*1024*1024)throw Error('报告超过 8 MB');const r=JSON.parse(await f.text());if(generation!==importGeneration)return;if(r.pool!==target||r.decisionReady!==false||r.executionReady!==false||r.schemaVersion!==1)throw Error('报告池地址或只读契约不匹配');if(!['BLOCKED','RESEARCH_DIAGNOSTIC_UNVERIFIED'].includes(r.status))throw Error('未知报告状态');validateArchive(r,target);
+$('file').addEventListener('change',async()=>{const generation=++importGeneration;clearReport();try{const f=$('file').files[0];if(!f)return;if(!target)throw Error('先设置目标池');if(f.size>8*1024*1024)throw Error('报告超过 8 MB');const r=JSON.parse(await f.text());if(generation!==importGeneration)return;if(!r||typeof r!=='object')throw Error('报告格式无效');
  const {terminalBinding:ignored,reviewId:ignoredId,...archive}=r;renderReport(archive,'archive');}catch(err){if(generation!==importGeneration)return;clearReport();put('importStatus','导入失败：'+err.message)}});
 
 

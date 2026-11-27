@@ -18,7 +18,7 @@ export function pairedObservation(state){
   else if(eligible&&['HOLD_ONLY','OPEN_PROXY','EXITED_PROXY'].includes(r.status)&&p?.slot===b.slot&&p.receivedAt===b.receivedAt&&p.priceQ64Raw===b.priceQ64Raw&&r.initialNavYRaw===base.initialNavYRaw&&count(r)===n&&signed(p.navYRaw)&&signed(p.excessVsHoldYRaw)&&BigInt(p.navYRaw)-BigInt(b.navYRaw)===BigInt(p.excessVsHoldYRaw)){status='PAIRED_OBSERVED_PREFIX_ONLY';alpha=p.excessVsHoldYRaw}
   return {mode:r.mode,status,excessVsHoldYRaw:alpha,observedPoints:count(r),lastObservedSlot:p?.slot??null};
  });
- return {scope:'SAME_EXPERIMENT_OBSERVED_PREFIX_ONLY',openingSlot:state.opening?.slot??null,endSlot:state.last.slot,gapCount:state.gapCount??null,totalStrategies:rows.length,pairedStrategies:rows.filter(r=>r.status==='PAIRED_OBSERVED_PREFIX_ONLY').length,blockedStrategies:rows.filter(r=>r.status==='BLOCKED_PATH').length,unpairedStrategies:rows.filter(r=>r.status==='UNPAIRED_OBSERVATION').length,completeEvaluationWindow:false,rankingReady:false,rows};
+ return {scope:'SAME_EXPERIMENT_OBSERVED_PREFIX_ONLY',openingSlot:state.opening?.slot??null,endSlot:state.last.slot,gapCount:state.gapCount??null,totalStrategies:rows.length,pairedStrategies:rows.filter(r=>r.status==='PAIRED_OBSERVED_PREFIX_ONLY').length,blockedStrategies:rows.filter(r=>r.status==='BLOCKED_PATH').length,unpairedStrategies:rows.filter(r=>r.status==='UNPAIRED_OBSERVATION').length,completeEvaluationWindow:eligible&&state.window?.status==='ENDPOINT_OBSERVED',rankingReady:false,rows};
 }
 export function paperPublic(state,job,{now,maxAgeMs}){
  const received=Date.parse(state.last.proof.receivedAt),fresh=Number.isFinite(received)&&received<=now&&now-received<=Math.min(maxAgeMs,state.policy.maxGapSeconds*1000);

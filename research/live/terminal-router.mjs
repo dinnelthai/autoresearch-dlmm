@@ -6,7 +6,7 @@ import {blockedResponse,errorCode} from './research-contract.mjs';
 export function createTerminalHandler({pool,port,origin,html,assets=new Map(),startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview,paperService}){
  const blocked=reason=>blockedResponse(pool,reason);
  const postRoutes=new Map([
-  ['/api/terminal/paper-start',{lock:'analysis',reason:'ANALYSIS_BUSY',handle:body=>paperService.start(body)}],
+  ['/api/terminal/paper-start',{lock:null,reason:null,handle:body=>paperService.start(body)}],
   ['/api/terminal/paper-pause',{lock:null,reason:null,handle:body=>paperService.pause(body)}],
   ['/api/terminal/position-accounting',{lock:"positionAccounting",reason:"POSITION_ACCOUNTING_BUSY",handle:positionAccounting}],
   ['/api/terminal/wallet-positions',{lock:"positionRead",reason:"POSITION_CAPTURE_BUSY",handle:readPositionIndex}],

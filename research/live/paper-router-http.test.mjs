@@ -22,8 +22,7 @@ test('loopback HTTP routes isolate virtual paper pool scope and reject unavailab
   assert.equal((await get('paper-status?pool='+c)).status,400);
   assert.equal((await post('paper-start',{draft:{pool:b}},null)).status,403);
   assert.equal((await post('paper-start',{draft:{pool:b}},'https://example.invalid')).status,403);
-  const release=locks.acquire('analysis');try{assert.equal((await post('paper-start',{draft:{pool:b}})).status,409)}finally{release()}
-  const started=await post('paper-start',{draft:{pool:b}});assert.equal(started.status,200);assert.equal((await started.json()).pool,b);
+  const release=locks.acquire('analysis');try{const started=await post('paper-start',{draft:{pool:b}});assert.equal(started.status,200);assert.equal((await started.json()).pool,b)}finally{release()}
   const paused=await post('paper-pause',{pool:b,id:'fixture'});assert.equal(paused.status,200);assert.equal((await paused.json()).pnlReady,false);
   assert.equal((await post('execute',{})).status,404);
   assert.deepEqual(calls,[['start',b],['pause',b]]);
