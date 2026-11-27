@@ -93,6 +93,8 @@ jobs:
             research/live/state-core.test.mjs \
             research/live/source-inventory.test.mjs \
             research/live/paper-history-store.test.mjs \
+            research/live/paper-report-core.test.mjs \
+            research/live/paper-history-core.test.mjs \
             research/live/paper-history-fs.test.mjs \
             research/live/research-snapshot.test.mjs \
             research/live/research-replay.test.mjs \
