@@ -2,7 +2,7 @@
 function canAnalyze(now=Date.now()){return !!serviceMarket&&serviceMarket.expiresAt>now&&serviceReview?.status==='PREFLIGHT_MATCHED_UNVERIFIED'&&serviceReview.expiresAt>now&&target===servicePool}
 function updatePlanButton(){const b=$('generatePlan');b.disabled=planBusy||managementBusy||!canAnalyze();b.setAttribute('aria-busy',String(planBusy));b.textContent=planBusy?'正在分析…':'✦ 生成研究方案';put('generateGate',planBusy?'正在检查请求、快照和研究证据。':canAnalyze()?'证据预检查通过。生成结果仅供研究。':!target?'请先选择目标 Pool。':target!==servicePool?'当前 Pool 尚未匹配本地服务。':!serviceMarket?'等待有效市场快照。':serviceReview?.reason==='POOL_RESEARCH_NOT_CONFIGURED'?'当前池仅支持实时数据观察，尚未配置独立研究证据':reasonText(serviceReview?.reason??'REVIEW_STALE_OR_INVALID'));}
 function renderActualMarket(m){
- const d=m?.display,body=$('actualBinRows');body.replaceChildren();
+ const d=m?.display,body=$('actualBinRows'),chart=$('actualLiquidityChart');body.replaceChildren();chart.textContent='等待池子快照';
  put('observedPrice','—');put('actualBinTotals','—');put('actualBinStatus','等待链上快照');
  if(!m||d?.kind!=='POOL_OBSERVATION_ONLY'||!Array.isArray(d.rows)||d.rows.length>1500||m.expiresAt<=Date.now())return;
  const p=d.activeBinPriceSolPerMeme;
@@ -10,6 +10,15 @@ function renderActualMarket(m){
  put('actualBinStatus','Slot '+m.slot+' · '+d.rows.length+'/'+d.totalBins+' Bins · 未验收');
  const total=(v,dec)=>{if(typeof v!=='string'||!/^\d{1,40}$/.test(v)||!Number.isInteger(dec)||dec<0||dec>18)return '—';let a=v.padStart(dec+1,'0');return dec?a.slice(0,-dec)+'.'+a.slice(-dec):a};
  put('actualBinTotals','MM 本金合计：'+total(d.totalYRaw,9)+' SOL / '+total(d.totalXRaw,m.decimalsX)+' MEME（不含订单流动性及费用）');
+ const nearby=d.rows.filter(b=>Math.abs(b.binId-m.activeId)<=40);
+ if(nearby.length&&Number.isFinite(p)&&p>0){
+  const vals=nearby.map(b=>({id:b.binId,y:Number(b.amountYRaw)/1e9,x:Number(b.amountXRaw)/10**m.decimalsX*p})),max=Math.max(...vals.map(b=>b.x+b.y));
+  if(Number.isFinite(max)&&max>0){const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 720 148');svg.setAttribute('role','img');svg.setAttribute('aria-label','Active Bin 附近真实池本金，按当前池价折算 SOL');const add=(tag,attrs,txt)=>{const e=document.createElementNS(ns,tag);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,String(v));if(txt)e.textContent=txt;svg.append(e);return e};
+   const w=670/81;for(const y of [18,50,82,114])add('line',{x1:25,x2:695,y1:y,y2:y,stroke:'#293140'});
+   for(const b of vals){let top=114;for(const [value,color] of [[b.y,'#52c6a5'],[b.x,'#a491ee']]){if(!(value>0))continue;const height=96*value/max;top-=height;const e=add('rect',{x:25+(b.id-m.activeId+40)*w,y:top,width:w*.85,height,fill:color});const t=document.createElementNS(ns,'title');t.textContent='Bin '+b.id+' · '+(b.y+b.x).toFixed(4)+' SOL 估值';e.append(t)}}
+   const x=25+40.5*w;add('line',{x1:x,x2:x,y1:8,y2:116,stroke:'#e8edf4','stroke-dasharray':'3 3'});add('text',{x:25,y:137,fill:'#99a6b8','font-size':10},String(m.activeId-40));add('text',{x,y:137,fill:'#e8edf4','font-size':10,'text-anchor':'middle'},'Active '+m.activeId);add('text',{x:695,y:137,fill:'#99a6b8','font-size':10,'text-anchor':'end'},String(m.activeId+40));chart.replaceChildren(svg);
+  }else chart.textContent='附近没有可绘制本金';
+ }
  for(const b of d.rows){const tr=document.createElement('tr');cell(tr,String(b.binId)+(b.binId===m.activeId?' · Active':''));cell(tr,Number.isFinite(b.priceSolPerMeme)&&b.priceSolPerMeme>0?b.priceSolPerMeme.toPrecision(8):'—');cell(tr,exactAmount(b.amountYRaw,9));cell(tr,exactAmount(b.amountXRaw,m.decimalsX));body.append(tr)}
 }
 function archiveExpiredReport(m,gate){
