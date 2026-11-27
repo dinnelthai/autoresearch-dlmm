@@ -14,12 +14,34 @@ node research/live/verify-offline.mjs
 # Separate terminals; use your configured RPC and existing local configuration files:
 node research/live/state-service.mjs --config data/live-config-basket.json --port 8788
 node research/live/terminal-server.mjs --config data/terminal-config-basket.json --port 8790
-node research/live/check-local.mjs
+node research/live/check-local.mjs --terminal-config data/terminal-config-basket.json --live-config data/live-config-basket.json
 ```
 
 Open http://127.0.0.1:8790. Select the configured Pool, set virtual capital/risk preferences, and start a Paper experiment on the performance page. Adaptive is optional. Fixed controls can run without reviewed reference inputs. Adaptive uses available reviewed or explicitly labeled collected proxy observations; it must not fabricate absent data. Current model still requires fresh dual-reference quotes and sufficient observations. Do not mix actual position reports with Paper results.
 
 Observe increasing snapshots, eight strategy rows, fees, NAV, alpha vs HODL, drawdown, open/reposition/exit, and completed-window scoring. Test restart and archive integrity. A completed observation window is not independently validated profitability. No full live Adaptive acceptance has been established by this documentation.
+
+## Final local integration backlog (business first)
+
+Reviewed code revision: [0ab3d2f](https://github.com/dinnelthai/autoresearch-dlmm/commit/0ab3d2faa61a076776026025f6e1c369d286de2c). Keep the existing local SDK tarball, RPC configuration, captures, experiments and uncommitted work. Sync without force-resetting the local checkout. Run full offline verification on that exact revision; the two dependency-light CI jobs are not substitutes for the SDK-enabled test suite. The historical C02 direct-ESM issue need not prevent a working CJS read-only path.
+
+| Task | Acceptance evidence |
+|---|---|
+| L01 Runtime | Actual collector and terminal running, SDK combined decoder matches the existing separate CLI identity and bin reports on the same raw capture. Record revision, Node version and test result. |
+| L02 Real capture | At least three advancing captures from the configured pool with matching slot/raw hash, complete supported bins and observed fee growth. Distinguish zero real growth from missing data. |
+| L03 Fixed Paper | Explicit virtual budget, seven fixed/HODL rows plus Adaptive; observe multiple intervals without Review. At least one eligible LP path must show correct principal/fee/cost/NAV and paired alpha; report individually blocked paths. |
+| L04 Adaptive | Start with Adaptive enabled, inspect collected source status, freshness, two independent reference quotes, holder cohort and recent swap sample. Accumulate at least three usable causal observations. Demonstrate model decisions and, when the market supports them, virtual open/reposition/remove and re-entry. If the opportunity does not occur, report it as unobserved, not passed. |
+| L05 Persistence | Restart services on the same model revision and verify continued snapshots, fee continuity, no duplicate action or history record, and audit the paused/completed history. Older model checkpoints remain historical; start a new run rather than force a schema migration. |
+| L06 Forward experiment | Observe genuine 7-day or 30-day evaluation window; compare common-capital matched alpha, fees, costs, drawdown and blocked-path counts. No fabricated endpoint, time compression or claimed return from a short smoke run. |
+| L07 Parameter loop | Use genuine normalized-event train and later validation groups for the existing optimizer and handoff. Report proposed tuning and later new Paper window only if accepted. The automated live archive-to-optimizer sampling and unattended repeated optimization loop are still unimplemented; do not mark them complete. |
+
+For a stable paused or completed experiment:
+
+```sh
+node research/live/paper-history-audit.mjs --pool POOL_ADDRESS --id auto-UUID
+```
+
+Preserve local evidence and report exact observed statuses and metrics. A missing feature or unavailable SDK diagnostic is a specific integration finding, not a reason to abandon the other executable business checks. Never substitute synthetic data for the real-market acceptance. Do not add a second simulator or a new diagnostic framework to complete these tasks.
 
 ## Research and diagnostics
 
