@@ -1,5 +1,6 @@
 // Research-only proportional share mapping. Not the program's mint-share algorithm.
 import {IntegerKernel as K} from '../integer.mjs';
+import {weights} from '../engine/liquidity.mjs';
 import {allocationDiagnostic,scaledFloat} from './allocation-diagnostic.mjs';
 import {snapshotRows,estimateFeeGrowth} from './paper-fee-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
@@ -25,6 +26,33 @@ export function assertProjectedShareLimit(rows,maxBinShare){
  const cap=scaledFloat(maxBinShare,9);
  assert(cap>0n&&rows.every(r=>raw(r.shareRaw)*1000000000n<=cap*raw(r.projectedSupplyRaw)),'PAPER_SHARE_CONFIGURED_LIMIT');
 }
+// Fixed comparison controls: observed one-sided bins only, no reference/flow forecast.
+export function fixedPaperReport({snapshot,budget}){
+ const {identity:i,map}=snapshotRows(snapshot),decimalsX=i.sides[0].decimals;
+ const base={family:'NO_LP',action:{type:'NO_LP'},feasible:true},families=[{family:'NO_LP',best:base}];
+ const availableY=Math.max(0,Number(budget.solRaw)/1e9-budget.minSolReserve-budget.operationCostSol);
+ const availableX=Number(budget.memeRaw)/10**decimalsX;
+ const cap=budget.maxBinShare;assertProjectedShareLimit([],cap);
+ for(const family of modes.slice(1)){
+  const shape=['asymmetric','hybrid_grid'].includes(family)?'hybrid':family;
+  const alpha=family==='hybrid_grid'?.75:.5;
+  const bins=[];
+  for(const [side,amount,decimals] of [['X',availableX,decimalsX],['Y',availableY,9]]){
+   if(amount<=0)continue;
+   const own=side==='X'?'amountXRaw':'amountYRaw',other=side==='X'?'amountYRaw':'amountXRaw';
+   const eligible=[...map.values()].filter(b=>Math.abs(b.binId-i.activeId)<=4&&(side==='X'?b.binId>=i.activeId:b.binId<=i.activeId)&&raw(b[own],64)>0n&&raw(b[other],64)===0n&&raw(b.liquiditySupplyRaw)>0n&&orders.every(k=>b.version===2?b[k]===null:raw(b[k],64)===0n)).sort((a,b)=>Math.abs(a.binId-i.activeId)-Math.abs(b.binId-i.activeId)).slice(0,4);
+   if(!eligible.length)continue;
+   const w=weights(eligible.length,shape,alpha,family==='asymmetric'?(side==='X'?1:-1):0);
+   for(const [index,b] of eligible.entries()){
+    const v=Math.min(amount*.05*w[index],Number(b[own])/10**decimals*cap);
+    if(scaledFloat(v,decimals)>0n)bins.push({binId:b.binId,meme:side==='X'?v:0,sol:side==='Y'?v:0});
+   }
+  }
+  const best=bins.length?{family,feasible:true,action:{type:'OPEN'},allocation:{lowerBinId:Math.min(...bins.map(b=>b.binId)),upperBinId:Math.max(...bins.map(b=>b.binId)),bins}}:null;
+  families.push({family,best});
+ }
+ return {schemaVersion:1,pool:i.pool,status:'RESEARCH_DIAGNOSTIC_UNVERIFIED',executionReady:false,decisionReady:false,protocolExact:false,calibrated:false,market:{...i,decimalsX,decimalsY:9},planPreview:{status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',scope:'NEW_POSITION_ONLY',executionReady:false,decisionReady:false,families,selected:null,adaptiveReason:'ADAPTIVE_RESEARCH_INPUT_REQUIRED',basis:'FIXED_OBSERVED_BIN_CONTROL',allocationFraction:.05,width:4}};
+}
 export function mapPaperPlans({snapshot,report,budget}){
  const result={schemaVersion:1,scope:'PAPER_SHARE_MAPPING_DIAGNOSTIC_ONLY',status:'BLOCKED',reason:null,pool:snapshot?.identity?.pool??null,modelEligible:false,protocolExact:false,pnlReady:false,executionReady:false,rows:[]};
  try{
@@ -48,7 +76,7 @@ export function mapPaperPlans({snapshot,report,budget}){
     return {mode,status:'SHARE_PROXY_MAPPED_UNVERIFIED',reason:null,integerAllocation:d,rows,allocation:{schemaVersion:1,pool:i.pool,mintX:i.mintX,mintY:i.mintY,openingSlot:i.slot,openingRawHash:i.rawHash,shares:rows.map(r=>({binId:r.binId,shareRaw:r.shareRaw}))}};
    }catch(e){return blocked(errorCode(e,'PAPER_SHARE_MAPPING_FAILED'))}
   }
-  result.rows=modes.map(mode=>mapping(mode,p.families.find(r=>r.family===mode).best));result.rows.push(mapping('adaptive',p.selected));
+  result.rows=modes.map(mode=>mapping(mode,p.families.find(r=>r.family===mode).best));result.rows.push(p.selected?mapping('adaptive',p.selected):{...mapping('adaptive',null),reason:p.adaptiveReason??'NO_FEASIBLE_PLAN'});
   result.status='PAPER_SHARE_DIAGNOSTIC_UNVERIFIED';result.openingSlot=i.slot;result.openingRawHash=i.rawHash;result.mintX=i.mintX;result.mintY=i.mintY;result.sdkCommit=K.SDK_COMMIT;
  }catch(e){result.reason=errorCode(e,'PAPER_SHARE_INPUT_FAILED');result.rows=[]}
  return {...result,limitations:['Proportional share proxy only; exact on-chain mint rules, active-bin composition fees and SDK inverse allocation not verified.','Only nonempty bins with exact proportional deposit accepted; unsupported candidates remain blocked.','No causal freeze or proof of real wallet balances; no signing, real positions or realized PnL.']};

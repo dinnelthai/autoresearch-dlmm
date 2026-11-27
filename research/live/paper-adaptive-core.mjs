@@ -21,14 +21,14 @@ export function virtualManagement({state,row,snapshot,reviewed}){
  const position={position:'VIRTUAL:'+state.id},operations={position:position.position,asOf,lastActionTime:row.lastActionTime??Math.floor(state.frozenAt/1000),rebalances:row.rebalances??0,rebalanceTurnoverSol:rawHuman(row.turnoverYRaw??'0',9),spotTurnoverSol:0};
  return previewManagement(model,cfg,{activeId:i.activeId,bins},{asOf,position,operations});
 }
-// Require a later, matching re-evaluation. Only full reposition/removal supported; reduce remains diagnostic.
+// Require a later observation and elapsed intent delay; always apply the current feasible plan.
 export function adaptiveIntent({row,preview,slot,requestedAt,now,reviewHash,delaySeconds=10}){
  const selected=preview?.status==='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED'?preview.selected:null,action=selected?.feasible&&['REPOSITION','REMOVE_AND_HOLD'].includes(selected.action?.type)&&!selected.action.acquireSol?selected.action.type:null;
  if(!action)return {pending:null,apply:null,reason:preview?.reason??'PAPER_ADAPTIVE_NO_SELECTION'};
  const pending=row.pendingAdaptive;
- if(pending&&pending.action===action&&pending.reviewHash!==reviewHash&&slot>pending.slot&&requestedAt>pending.createdAt&&now>=pending.createdAt+delaySeconds*1000&&now-pending.createdAt<=600000){
-  // Revalidate action type and exact plan specification; no price or allocation from prior snapshot reused.
-  if(JSON.stringify(pending.spec??null)===JSON.stringify(selected.action.spec??null))return {pending:null,apply:selected,reason:'PAPER_ADAPTIVE_REVALIDATED'};
+ if(pending&&pending.action===action&&now-pending.createdAt<=600000){
+  if(slot>pending.slot&&requestedAt>pending.createdAt&&now>=pending.createdAt+delaySeconds*1000)return {pending:null,apply:selected,reason:'PAPER_ADAPTIVE_REVALIDATED'};
+  return {pending,apply:null,reason:'PAPER_ADAPTIVE_INTENT_PENDING'};
  }
  return {pending:{action,spec:selected.action.spec??null,slot,createdAt:now,reviewHash},apply:null,reason:'PAPER_ADAPTIVE_INTENT_PENDING'};
 }

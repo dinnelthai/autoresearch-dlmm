@@ -92,7 +92,7 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const first=await capture(1,0n,now-2000,now-1000),row={family:'spot',feasible:true,action:{type:'OPEN'},allocation:{lowerBinId:1,upperBinId:1,bins:[{binId:1,meme:1,sol:0}]}};
  const report={schemaVersion:1,pool:A,status:'RESEARCH_DIAGNOSTIC_UNVERIFIED',executionReady:false,decisionReady:false,protocolExact:false,calibrated:false,market:{...first,decimalsX:6,decimalsY:9},planPreview:{status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',scope:'NEW_POSITION_ONLY',executionReady:false,decisionReady:false,families:['NO_LP','spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid'].map(family=>({family,best:family==='spot'?row:family==='NO_LP'?{family,feasible:true,action:{type:'NO_LP'}}:null})),selected:row},terminalBinding:{scope:'RESEARCH_ONLY',expiresAt:now+60000,marketSlot:first.slot,marketRawHash:first.rawHash,requestHash:'a'.repeat(64),reviewHash:'b'.repeat(64),researchBudget:{memeRaw:'2000000',solRaw:'1000000000',allowDispose:false,minSolReserve:0,operationCostSol:0,maxBinShare:.1}}};
  const make=()=>{const service=createTerminalPaperService({ROOT,DATA,pool:A,maxAgeMs:60000,backendHash,idlPath:idl,io:{...io,run:async(args,script)=>{assert.equal(args[2],'--idl');assert.equal(args[3],idl);const fixture=captures.get(args[1]);assert.ok(fixture);assert.ok(['inspect-pool.mjs','inspect-bins.mjs'].includes(script));return structuredClone(script==='inspect-pool.mjs'?fixture.identity:fixture.bins)}},loadState:async()=>structuredClone(current),preview:async()=>structuredClone(report),loadReview:async()=>{throw Error('UNEXPECTED_REVIEW')},isStopping:()=>false});services.push(service);return service};
- const service=make(),body={draft:{pool:A,riskConfig:{maxBinShare:.1}},policy:{evaluationDays:7,maxDrawdownBps:1000,maxLossSolRaw:'100000000',maxGapSeconds:180,exitCostSolRaw:'1'}};
+ const service=make(),draft={schemaVersion:1,kind:'UX_DRAFT_NOT_ENGINE_REQUEST',pool:A,entry:'holding',goal:'balanced',horizonSeconds:3600,capitalScope:'USER_DECLARED_ALLOCATION',allowDispose:false,solHuman:'1',memeHuman:'2',riskConfig:{maxInventoryRatio:.65,maxInventoryTokens:200000,minSolReserve:0,maxLossSol:.1,stressDrop:.6,maxBinShare:.1,operationCostSol:0,feeBps:30,protocolShare:.05,slippageBps:50}},body={draft,reviewHash:'b'.repeat(64),marketSlot:first.slot,marketRawHash:first.rawHash,policy:{evaluationDays:7,maxDrawdownBps:1000,maxLossSolRaw:'100000000',maxGapSeconds:180,exitCostSolRaw:'1'}};
  const started=await service.start(body);assert.equal(started.snapshotCount,1);assert.equal(started.rows.length,8);assert.equal(started.running,true);
  await service.tick();assert.equal((await service.get()).snapshotCount,1);
  now+=10000;await capture(2,1n,now-1000,now);await service.tick();
@@ -104,4 +104,13 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const history=createPaperHistoryStore({read:(p,n)=>io.safeDataPath(p).then(path=>io.boundedRead(path,n)),atomic:async()=>{throw Error('UNEXPECTED_WRITE')}});
  assert.equal((await history.verify(dir,state)).records,3);
  assert.equal((await resumed.pause({pool:A,id:started.id})).running,false);
+ const ctx=await resumed.context();assert.equal(ctx.reviewHash,null);
+ const fixed=await resumed.start({draft,policy:body.policy});
+ assert.equal(fixed.planBasis,'FIXED_OBSERVED_BIN_CONTROL');
+ assert.equal(fixed.rows.find(r=>r.mode==='spot').status,'OPEN_PROXY');
+ assert.equal(fixed.rows.find(r=>r.mode==='adaptive').reason,'ADAPTIVE_RESEARCH_INPUT_REQUIRED');
+ now+=10000;await capture(4,100n,now-1000,now);await resumed.tick();
+ const next=await resumed.get();assert.equal(next.snapshotCount,2);
+ assert.ok(BigInt(next.rows.find(r=>r.mode==='spot').latest.totalFeeXRaw)>0n);
+ assert.equal(next.rows.find(r=>r.mode==='NO_LP').latest.pnlYRaw,'0');
 });

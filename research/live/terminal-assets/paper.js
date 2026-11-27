@@ -22,7 +22,7 @@ function renderAutoPaper(r){
  paperAutoData=r;const body=$('paperAutoRows');body.replaceChildren();
  $('paperAutoPause').disabled=paperAutoBusy||!r?.running;$('paperAutoStart').disabled=paperAutoBusy||!!r?.running;
  if(!r)return;
- put('paperAutoStatus',r.status+(r.reason?' · '+r.reason:'')+(r.slot!=null?' · Slot '+r.slot+' · '+r.snapshotCount+' 个快照':'')+(r.checkpointFresh?' · 最近观察（未验证）':' · 非当前有效结果')+(r.window?' · '+r.window.days+'天 · '+r.window.status+' · 计划截止 '+new Date(r.window.endAt).toLocaleString():'')+(r.historyHead?' · 归档 '+r.historyHead.sequence:'')+(r.comparison?' · 可配对 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 阻塞 '+r.comparison.blockedStrategies+' · 缺口 '+(r.comparison.gapCount??'未知')+' · 非完整实验窗口':''));
+ put('paperAutoStatus',(r.planBasis==='FIXED_OBSERVED_BIN_CONTROL'?'固定 LP 对照 · ':r.planBasis==='REVIEWED_MODEL'?'模型研究 · ':'')+r.status+(r.reason?' · '+r.reason:'')+(r.slot!=null?' · Slot '+r.slot+' · '+r.snapshotCount+' 个快照':'')+(r.checkpointFresh?' · 最近观察（未验证）':' · 非当前有效结果')+(r.window?' · '+r.window.days+'天 · '+r.window.status+' · 计划截止 '+new Date(r.window.endAt).toLocaleString():'')+(r.historyHead?' · 归档 '+r.historyHead.sequence:'')+(r.comparison?' · 可配对 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 阻塞 '+r.comparison.blockedStrategies+' · 缺口 '+(r.comparison.gapCount??'未知')+' · 非完整实验窗口':''));
  for(const x of r.rows){const tr=document.createElement('tr');cell(tr,x.mode==='NO_LP'?'No LP / HODL':names[x.mode]??x.mode);cell(tr,x.status+(x.reason?' · '+x.reason:'')+(x.adaptiveReason?' · '+x.adaptiveReason:'')+(x.mode==='adaptive'?' · 调仓 '+x.rebalances:''));cell(tr,paperSignedSol(x.initialNavYRaw));for(const k of ['navYRaw','pnlYRaw','excessVsHoldYRaw','costYRaw'])cell(tr,paperSignedSol(x.latest?.[k]));cell(tr,Number.isFinite(x.latest?.maxDrawdownBps)?fmt(x.latest.maxDrawdownBps/100)+'%':'—');body.append(tr)}
 }
 function validateAutoPaper(r,scope){if(r?.scope!=='PAPER_AUTO_RESEARCH_ONLY'||r.pool!==scope||r.pnlReady!==false||r.executionReady!==false||r.protocolExact!==false||typeof r.running!=='boolean'||!Array.isArray(r.rows)||r.rows.length>8)throw Error('模拟服务响应不符');return r}
@@ -43,10 +43,14 @@ $('paperAutoStart').addEventListener('click',async()=>{
   const policy={evaluationDays:Number($('paperEvaluationDays').value),maxDrawdownBps:Math.round(dd),maxGapSeconds:gap,maxLossSolRaw:paperSolRaw($('paperAutoLoss').value.trim()),exitCostSolRaw:paperSolRaw($('paperAutoExitCost').value.trim())};
   if($('paperAdaptiveEnabled').checked)policy.adaptive={cooldownSeconds:number('paperAdaptiveCooldown'),maxRebalances:number('paperAdaptiveCount'),maxTurnoverSol:number('paperAdaptiveTurnover')};
   paperAutoBusy=true;paperAutoGeneration++;$('paperAutoStart').disabled=true;put('paperAutoStatus','正在生成并冻结虚拟方案…');
-  const cr=await terminalGet('/api/terminal/paper-context',p),ctx=await cr.json();
+  let binding={};
+  if(policy.adaptive){
+   try{const cr=await terminalGet('/api/terminal/paper-context',p),ctx=await cr.json();
+    if(cr.ok&&ctx.pool===p&&hash(ctx.marketRawHash)&&hash(ctx.reviewHash)&&Number.isSafeInteger(ctx.marketSlot)&&ctx.expiresAt>Date.now())binding={marketSlot:ctx.marketSlot,marketRawHash:ctx.marketRawHash,reviewHash:ctx.reviewHash};
+   }catch{}
+  }
   if(p!==target||draft!==d)throw Error('Pool 或草稿已变化');
-  if(!cr.ok||ctx.scope!=='PAPER_OPEN_CONTEXT_RESEARCH_ONLY'||ctx.pool!==p||ctx.executionReady!==false||ctx.pnlReady!==false||!hash(ctx.marketRawHash)||!hash(ctx.reviewHash)||!Number.isSafeInteger(ctx.marketSlot)||!(ctx.expiresAt>Date.now()))throw Error(ctx.gaps?.[0]??'当前 Pool 缺少匹配审阅');
-  const res=await terminalPost('/api/terminal/paper-start',{draft:d,marketSlot:ctx.marketSlot,marketRawHash:ctx.marketRawHash,reviewHash:ctx.reviewHash,policy},45000),r=await res.json();
+  const res=await terminalPost('/api/terminal/paper-start',{draft:d,policy,...binding},45000),r=await res.json();
   if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'启动失败');renderAutoPaper(validateAutoPaper(r,p))
  }catch(e){if(p===target)put('paperAutoStatus','启动失败：'+e.message)}
  finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}
