@@ -114,8 +114,9 @@ test('real service starts, advances twice, archives and resumes from disk with i
  assert.ok(BigInt(next.rows.find(r=>r.mode==='spot').latest.totalFeeXRaw)>0n);
  assert.equal(next.rows.find(r=>r.mode==='NO_LP').latest.pnlYRaw,'0');
  await resumed.pause({pool:A,id:fixed.id});
- const waiting=await resumed.start({draft:{...draft,memeHuman:'10'},policy:{...body.policy,adaptive:{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30}}});
+ const waiting=await resumed.start({draft:{...draft,memeHuman:'10'},policy:{...body.policy,adaptive:{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30},tuning:{lambda:1.25}}});
  assert.equal(waiting.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');
+ const tuned=JSON.parse(await readFile(join(DATA,'paper-auto',A,waiting.id,'checkpoint.json'),'utf8'));assert.equal(tuned.adaptiveRequest.riskConfig.lambda,1.25);
  now+=10000;await capture(5,110n,now-1000,now);await resumed.tick();
  const observed=await resumed.get();assert.equal(observed.snapshotCount,2);assert.equal(observed.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');assert.equal(observed.rows.find(r=>r.mode==='adaptive').adaptiveReason,'UNEXPECTED_REVIEW');
  assert.deepEqual(featureCalls,[5]);assert.equal(observed.featureCollection.slot,5);

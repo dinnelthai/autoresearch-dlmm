@@ -86,7 +86,7 @@ export function optimizeSamples(samples,overrides={},options={}){
   const a=evaluate({},windows.validation),b=evaluate(best.tuning,windows.validation);
   const accepted=a.eligible&&b.eligible&&b.riskBreaches<=a.riskBreaches&&b.score>a.score+objective.minGain;
   validation={incumbent:a,challenger:b,accepted};
-  if(accepted)proposal={tuning:strategyTuning({...Object.fromEntries(Object.keys(best.tuning).map(k=>[k,base[k]])),...best.tuning}),nextWindowAfter:Math.max(...windows.validation.map(s=>s.events.at(-1).t)),status:'PROPOSED_FOR_NEW_PAPER_WINDOW'};
+  if(accepted)proposal={tuning:strategyTuning({...Object.fromEntries(Object.entries(overrides).filter(([k])=>['lambda','kappaSol','targetRatio','minImprovementSol','uncertaintySol','cooldownSeconds'].includes(k))),...best.tuning}),nextWindowAfter:Math.max(...windows.validation.map(s=>s.events.at(-1).t)),status:'PROPOSED_FOR_NEW_PAPER_WINDOW'};
  }
  return {source:'UNVERIFIED_NORMALIZED_EVENT_OPTIMIZATION',objective,train,validation,proposal,parameterSelection:!!proposal,testEvaluated:false,trainEnd,validationStart,liveValidated:false,calibrated:false,protocolExact:false};
 }
