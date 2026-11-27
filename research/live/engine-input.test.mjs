@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {analyzeState} from './analyze-state.mjs';
+import {sha} from './evidence-digest.mjs';
 import {rawHuman,checkTime,extractMarket} from './engine-input.mjs';
 assert.equal(rawHuman('1250000000',9),1.25);
 assert.throws(()=>rawHuman('9007199254740992',9));
@@ -17,3 +19,16 @@ const state={pool:'p',streams:{market:{status:'CAPTURED_UNVERIFIED',evidence:{sl
 assert.equal(extractMarket(state).bins.length,70);
 assert.throws(()=>extractMarket({...state,streams:{market:{...state.streams.market,evidence:{...state.streams.market.evidence,bins:{...bins,arrays:[{version:2,bins:rows.map(r=>({...r,openOrderAmountRaw:'0'}))}]}}}}}));
 console.log('Input boundary fixture assertions passed; no live acceptance.');
+
+// Direct service analysis uses the same capture checks without spawning a CLI.
+const raw=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:1,result:{context:{slot:1}}}));
+const rawHash=sha(raw),capture='data/raw/fixture';
+const manifest=Buffer.from(JSON.stringify({pool:'p',contextSlot:1,commitment:'finalized',raw:{sha256:rawHash,file:'accounts.json'}}));
+const captured={...state,streams:{market:{...state.streams.market,evidence:{slot:1,capture,identity:{...identity,rawHash},bins:{...bins,rawHash}}}}};
+const readData=async path=>{if(path===capture+'/manifest.json')return manifest;if(path===capture+'/accounts.json')return raw;throw Error('unexpected path')};
+const diagnostic=await analyzeState({state:captured,readData});
+assert.equal(diagnostic.market.slot,1);
+assert.equal(diagnostic.status,'BLOCKED');
+assert.deepEqual(diagnostic.gaps,['REVIEWED_MARKET_EVIDENCE_AND_EXPLICIT_CAPITAL_REQUEST_REQUIRED']);
+const changed=await analyzeState({state:captured,readData:async path=>path.endsWith('accounts.json')?Buffer.from('{}'):readData(path)});
+assert.equal(changed.status,'BLOCKED');assert.equal(changed.market,undefined);

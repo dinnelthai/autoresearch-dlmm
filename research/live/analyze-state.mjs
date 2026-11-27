@@ -15,28 +15,24 @@ import {assert,blockAnalysis,errorCode} from './research-contract.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const finite=(v,min,max=Infinity)=>typeof v==='number'&&Number.isFinite(v)&&v>=min&&v<=max;
 function dataPath(path){assert(typeof path==='string','missing evidence path');const p=resolve(ROOT,path),rel=relative(DATA,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'evidence must be under data/');return p;}
-async function evidence(path,hash){assert(/^[0-9a-f]{64}$/.test(hash),'evidence hash required');const b=await readFile(dataPath(path));assert(sha(b)===hash,'evidence hash mismatch');return b;}
-async function verifyCapture(m){
- const dir=dataPath(m.capture),manifest=JSON.parse(await readFile(join(dir,'manifest.json'),'utf8'));
+const localRead=path=>readFile(dataPath(path));
+async function verifyCapture(m,readData){
+ const dir=m.capture,manifest=JSON.parse(await readData(join(dir,'manifest.json')));
  assert(manifest.pool===m.pool&&manifest.contextSlot===m.slot&&manifest.commitment==='finalized'&&manifest.raw?.sha256===m.rawHash&&manifest.raw.file==='accounts.json','capture manifest mismatch');
- const b=await readFile(join(dir,'accounts.json'));assert(sha(b)===m.rawHash,'capture raw hash mismatch');
+ const b=await readData(join(dir,'accounts.json'));assert(sha(b)===m.rawHash,'capture raw hash mismatch');
  const rpc=JSON.parse(b);assert(rpc.jsonrpc==='2.0'&&rpc.id===1&&!rpc.error&&rpc.result?.context?.slot===m.slot,'capture context mismatch');
  // This checks archive integrity, not independently decoded fields or chain authenticity.
 }
-async function main(){
- const {values}=parseArgs({options:{state:{type:'string'},request:{type:'string'},review:{type:'string'},plans:{type:'boolean'},management:{type:'boolean'},help:{type:'boolean'}}});
- if(values.help){console.log('node research/live/analyze-state.mjs --state data/live/POOL/state.json [--request data/analysis-request.json --review data/research-evidence.json --plans | --management]');return;}
- assert(values.state,'state path required');assert(!(values.plans&&values.management),'select one preview mode');
- const state=JSON.parse(await readFile(dataPath(values.state),'utf8'));
+// Shared service and CLI analysis; inputs remain pinned to their captured market.
+export async function analyzeState({state,req,review,plans=false,management=false,readData=localRead}){
+ const evidence=async(path,hash)=>{assert(/^[0-9a-f]{64}$/.test(hash),'evidence hash required');const b=await readData(path);assert(sha(b)===hash,'evidence hash mismatch');return b};
  const report={schemaVersion:1,pool:state.pool??null,sequence:state.sequence??null,status:'BLOCKED',decisionReady:false,executionReady:false,calibrated:false,protocolExact:false,limitations:['Read-only research diagnostic; not live recommendation, execution, or actual PnL.','Archive hashes and declared review metadata do not prove real-world correctness.','No synthetic observations or aggregate-Swap-to-bin conversion.'],gaps:[]};
- const output=()=>{console.log(JSON.stringify(report,null,2));if(report.status!=='RESEARCH_DIAGNOSTIC_UNVERIFIED'||(values.plans&&report.planPreview?.status!=='RESEARCH_PLAN_PREVIEW_UNVERIFIED')||(values.management&&report.managementPreview?.status!=='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED'))process.exitCode=1;};
  try{
-  const m=extractMarket(state);await verifyCapture(m);
+  const m=extractMarket(state);await verifyCapture(m,readData);
   report.market={slot:m.slot,rawHash:m.rawHash,activeId:m.activeId,binStep:m.binStep,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,decimalsY:m.decimalsY,binCount:m.bins.length,status:'ARCHIVE_INTEGRITY_CHECKED_UNVERIFIED'};
   const active=m.bins.find(b=>b.binId===m.activeId);
   report.market.activeBinPriceQ64Raw=active?.priceQ64Raw??null;
-  if(!values.request||!values.review){report.gaps.push('REVIEWED_MARKET_EVIDENCE_AND_EXPLICIT_CAPITAL_REQUEST_REQUIRED');output();return;}
-  const req=JSON.parse(await readFile(dataPath(values.request),'utf8')),review=JSON.parse(await readFile(dataPath(values.review),'utf8'));
+  if(!req||!review){report.gaps.push('REVIEWED_MARKET_EVIDENCE_AND_EXPLICIT_CAPITAL_REQUEST_REQUIRED');return report;}
   assert(req.pool===m.pool&&review.pool===m.pool&&review.marketSlot===m.slot&&review.marketRawHash===m.rawHash&&review.mintX===m.mintX&&review.mintY===m.mintY,'review/request identity mismatch');
   const {asOf,cfg,observations,latest}=await reviewedObservations({m,req,review,evidence});
   const request={pool:m.pool,entry:req.entry,meme:rawHuman(req.memeRaw,m.decimalsX),sol:rawHuman(req.solRaw,m.decimalsY),initialPrice:latest.ref.price,goal:req.goal,horizonSeconds:req.horizonSeconds,allowDispose:false};
@@ -69,13 +65,13 @@ async function main(){
   report.status='RESEARCH_DIAGNOSTIC_UNVERIFIED';report.asOf=asOf;report.observedAt=latest.t;report.capitalScope=req.capitalScope;
   report.referencePriceSolPerMeme=latest.ref.price;report.model={regime,risk,inventory:Engine.balances(model),navEstimateSol:Engine.nav(model,latest.ref.price),externalBins:external.length};
   report.limitations.push('User-declared capital is not verified wallet balance. Prior reference observations are feature warmup, not historical PnL.','Model risk and NAV are floating-point estimates; forecast/fees/risk parameters are not calibrated. No transaction produced.');
-  if(values.plans){
+  if(plans){
    const required=['maxInventoryRatio','maxInventoryTokens','minSolReserve','maxLossSol','stressDrop','maxBinShare','operationCostSol','feeBps','protocolShare','slippageBps'];
    const missing=required.filter(k=>!Object.hasOwn(req.riskConfig??{},k));
    if(missing.length)report.planPreview={status:'BLOCKED',reason:'EXPLICIT_RISK_AND_COST_PARAMETERS_REQUIRED',missing,decisionReady:false,executionReady:false};
    else report.planPreview=previewPlans(model,cfg,m,{asOf});
   }
-  if(values.management){
+  if(management){
    const required=['maxInventoryRatio','maxInventoryTokens','minSolReserve','maxLossSol','stressDrop','maxBinShare','operationCostSol','feeBps','protocolShare','slippageBps','cooldownSeconds','maxRebalances','maxTurnoverSol'];
    const missing=required.filter(k=>!Object.hasOwn(req.riskConfig??{},k));
    if(req.entry!=='position'||!positionReport)report.managementPreview={status:'BLOCKED',reason:'EXISTING_POSITION_REQUIRED',decisionReady:false,executionReady:false};
@@ -87,6 +83,17 @@ async function main(){
    }
   }
  }catch(e){blockAnalysis(report,errorCode(e,'RESEARCH_INPUT_OR_CALCULATION_FAILED'));}
- output();
+ return report;
 }
-main().catch(()=>{console.error('T08 blocked: check local state and configuration');process.exitCode=1;});
+async function main(){
+ const {values}=parseArgs({options:{state:{type:'string'},request:{type:'string'},review:{type:'string'},plans:{type:'boolean'},management:{type:'boolean'},help:{type:'boolean'}}});
+ if(values.help){console.log('node research/live/analyze-state.mjs --state data/live/POOL/state.json [--request data/analysis-request.json --review data/research-evidence.json --plans | --management]');return;}
+ assert(values.state,'state path required');assert(!(values.plans&&values.management),'select one preview mode');
+ const state=JSON.parse(await readFile(dataPath(values.state),'utf8'));
+ const req=values.request&&values.review?JSON.parse(await localRead(values.request)):null;
+ const review=req?JSON.parse(await localRead(values.review)):null;
+ const report=await analyzeState({state,req,review,plans:values.plans,management:values.management});
+ console.log(JSON.stringify(report,null,2));
+ if(report.status!=='RESEARCH_DIAGNOSTIC_UNVERIFIED'||(values.plans&&report.planPreview?.status!=='RESEARCH_PLAN_PREVIEW_UNVERIFIED')||(values.management&&report.managementPreview?.status!=='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED'))process.exitCode=1;
+}
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(()=>{console.error('T08 blocked: check local state and configuration');process.exitCode=1;});

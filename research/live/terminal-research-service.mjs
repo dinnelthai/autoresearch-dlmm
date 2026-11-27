@@ -1,4 +1,5 @@
 import {engineSourcePaths} from '../engine-source-paths.mjs';
+import {analyzeState} from './analyze-state.mjs';
 // Immutable snapshot, historical replay and candidate assembly. No current report binding.
 import {readFile,mkdir,mkdtemp,writeFile,rename,rm} from 'node:fs/promises';
 import {join,relative} from 'node:path';
@@ -9,7 +10,7 @@ import {snapshotManifest,reviewEvidenceRefs,snapshotFileList} from './research-s
 import {replayRequest,replayResult} from './research-replay.mjs';
 import {assert,errorCode,hash} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
-export function createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,run,marketObservations}){
+export function createResearchArchiveService({ROOT,DATA,cfg,pool,maxAgeMs,validateScope,loadState,loadReview,safeDataPath,boundedRead,archives,marketObservations}){
 async function researchInputs(scope){
  const now=Date.now();let state=null,m=null,review=null,reason=null;
  try{state=await loadState(scope);m=currentMarket(state,scope,now,maxAgeMs)}catch{reason='MARKET_CAPTURE_UNAVAILABLE'}
@@ -71,7 +72,7 @@ async function replayResearchSnapshot(body){
   await writeFile(join(tmp,'review.json'),files.get('review.json'),{mode:0o600,flag:'wx'});
   await writeFile(join(tmp,'request.json'),JSON.stringify(x.request),{mode:0o600,flag:'wx'});
   if(policyBytes)await writeFile(join(tmp,'policy.json'),policyBytes,{mode:0o600,flag:'wx'});
-  const report=await run(['--state',join(tmp,'state.json'),'--request',join(tmp,'request.json'),'--review',join(tmp,'review.json'),mode==='management'?'--management':'--plans']);
+  const report=await analyzeState({state:JSON.parse(files.get('state.json')),req:x.request,review:x.review,plans:mode==='plans',management:mode==='management',readData:async path=>boundedRead(await safeDataPath(path),32*1024*1024)});
   assert(JSON.stringify(await code())===JSON.stringify(sourceHashes),'REPLAY_CODE_CHANGED');
   const out=replayResult({manifest,request:x.request,report,sourceHashes,generatedAt:Date.now(),policyHash:policyBytes?sha(policyBytes):null,owner:x.owner});
   await writeFile(join(tmp,'report.json'),JSON.stringify(report),{mode:0o600,flag:'wx'});

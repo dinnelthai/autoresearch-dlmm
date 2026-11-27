@@ -1,5 +1,5 @@
 // Current research binding, preflight and read-only wallet review.
-import {mkdir,mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {analyzeState} from './analyze-state.mjs';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest} from './terminal-core.mjs';
@@ -9,7 +9,7 @@ import {sdkWeightDiagnostic} from './sdk-weight-diagnostic.mjs';
 import {validateWalletEvidence,walletReview} from './wallet-evidence-core.mjs';
 import {assert,errorCode,sameSnapshot} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
-export function createReviewService({DATA,cfg,pool,maxAgeMs,loadState,safeDataPath,boundedRead,run,validateScope,marketSummary}){
+export function createReviewService({cfg,pool,maxAgeMs,loadState,safeDataPath,boundedRead,run,validateScope,marketSummary}){
 // Review availability is a preflight, not verification of its underlying evidence.
 async function loadReview(m,now,path=cfg.review){
  assert(path,'REVIEW_NOT_CONFIGURED');
@@ -56,26 +56,25 @@ async function overview(){
 async function preview(body,mode='plans'){
  const now=Date.now(),s=await loadState(),m=currentMarket(s,pool,now,maxAgeMs);
  assert(body?.marketSlot===m.slot&&body.marketRawHash===m.rawHash,'MARKET_CHANGED_REFRESH_REQUIRED');
- let ctx=null,request,review,reviewBytes,reviewHash,expiresAt;
+ let ctx=null,request,review,reviewHash,expiresAt;
  if(mode==='management'){
   ctx=await managementContext(s,m,body.position,now);
   assert(body.positionSlot===ctx.p.report.slot&&body.positionRawHash===ctx.p.report.rawHash,'POSITION_CHANGED_REFRESH_REQUIRED');
   assert(body.policyHash===ctx.policyHash,'MANAGEMENT_POLICY_CHANGED_REFRESH_REQUIRED');
-  ({request,review,reviewBytes,reviewHash,expiresAt}=ctx);
- }else{request=requestFromDraft(body.draft,m);({review,reviewBytes,reviewHash,expiresAt}=await loadReview(m,now))}
+  ({request,review,reviewHash,expiresAt}=ctx);
+ }else{request=requestFromDraft(body.draft,m);({review,reviewHash,expiresAt}=await loadReview(m,now))}
  assert(body.reviewHash===reviewHash,'REVIEW_CHANGED_REFRESH_REQUIRED');
- const base=join(DATA,'terminal');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'analysis-'));
- try{
-  const requestJson=JSON.stringify(request),requestHash=sha(requestJson);
-  for(const [name,data] of [['state',JSON.stringify(s)],['request',requestJson],['review',reviewBytes]])await writeFile(join(dir,name+'.json'),data,{mode:0o600});
-  const r=await run(['--state',join(dir,'state.json'),'--request',join(dir,'request.json'),'--review',join(dir,'review.json'),mode==='management'?'--management':'--plans']);
+ const requestHash=sha(JSON.stringify(request));
+ const readData=async path=>boundedRead(await safeDataPath(path),32*1024*1024);
+ const r=await analyzeState({state:s,req:request,review,plans:mode==='plans',management:mode==='management',readData});
   assert(r.pool===pool&&r.decisionReady===false&&r.executionReady===false,'ANALYSIS_CONTRACT_MISMATCH');
   if(r.market)assert(sameSnapshot(r.market,m),'ANALYSIS_SNAPSHOT_MISMATCH');
-  const latestState=await loadState(),latest=currentMarket(latestState,pool,Date.now(),maxAgeMs);assert(sameSnapshot(latest,m),'MARKET_CHANGED_DURING_ANALYSIS');const after=mode==='management'?await managementContext(latestState,latest,body.position,Date.now()):await loadReview(latest,Date.now());assert(after.reviewHash===reviewHash,'REVIEW_CHANGED_DURING_ANALYSIS');
+  let latest=m,after={reviewHash,expiresAt};
+  if(ctx){const latestState=await loadState();latest=currentMarket(latestState,pool,Date.now(),maxAgeMs);assert(sameSnapshot(latest,m),'MARKET_CHANGED_DURING_ANALYSIS');after=await managementContext(latestState,latest,body.position,Date.now());assert(after.reviewHash===reviewHash,'REVIEW_CHANGED_DURING_ANALYSIS')}
   if(ctx){assert(after.policyHash===ctx.policyHash&&after.p.report.rawHash===ctx.p.report.rawHash&&after.p.report.slot===ctx.p.report.slot&&after.p.report.owner===ctx.p.report.owner,'POSITION_OR_POLICY_CHANGED_DURING_ANALYSIS');if(r.managementPreview?.status==='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED')assert(r.managementPreview.position?.address===body.position&&r.managementPreview.position?.owner===ctx.p.report.owner,'MANAGEMENT_REPORT_IDENTITY_MISMATCH')}
   const finalNow=Date.now(),boundExpiry=Math.min(expiresAt,after.expiresAt,m.receivedAt+maxAgeMs,latest.receivedAt+maxAgeMs);assert(boundExpiry>finalNow,'RESEARCH_BINDING_EXPIRED_OR_CHANGED');
   return {...r,terminalBinding:{requestHash,reviewHash,...(mode==='plans'?{researchBudget:{solRaw:request.solRaw,memeRaw:request.memeRaw,allowDispose:false,minSolReserve:request.riskConfig.minSolReserve,operationCostSol:request.riskConfig.operationCostSol,maxBinShare:request.riskConfig.maxBinShare}}:{}),...(ctx?{position:body.position,policyHash:ctx.policyHash,positionSlot:ctx.p.report.slot,positionRawHash:ctx.p.report.rawHash}:{}),expiresAt:boundExpiry,marketSlot:m.slot,marketRawHash:m.rawHash,sequence:s.sequence,generatedAt:Date.now(),scope:'RESEARCH_ONLY'}};
- }finally{await rm(dir,{recursive:true,force:true})}
+
 }
 // Short-lived server-owned research reports; no signing material, no persistence.
 const reviewReports=new Map();
