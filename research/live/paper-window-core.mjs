@@ -1,8 +1,9 @@
 // Frozen forward observation window; never claim independent coverage or realized returns.
 import {assert} from './research-contract.mjs';
 export function freezePaperWindow(frozenAt,days,maxGapSeconds){
- assert(Number.isSafeInteger(frozenAt)&&[7,30].includes(days)&&Number.isSafeInteger(maxGapSeconds)&&maxGapSeconds>=10&&maxGapSeconds<=3600,'PAPER_WINDOW_POLICY');
- return {days,startAt:frozenAt,endAt:frozenAt+days*86400000,graceMs:maxGapSeconds*1000,status:'OBSERVING'};
+ const durationMs=Math.round(days*86400000);
+ assert(Number.isSafeInteger(frozenAt)&&typeof days==='number'&&Number.isFinite(days)&&durationMs>=300000&&durationMs<=30*86400000&&Number.isSafeInteger(frozenAt+durationMs)&&Number.isSafeInteger(maxGapSeconds)&&maxGapSeconds>=10&&maxGapSeconds<=3600,'PAPER_WINDOW_POLICY');
+ return {days,startAt:frozenAt,endAt:frozenAt+durationMs,graceMs:maxGapSeconds*1000,status:'OBSERVING'};
 }
 export function paperWindowCapture(window,proof){
  assert(window?.status==='OBSERVING','PAPER_WINDOW_NOT_ACTIVE');
