@@ -4,9 +4,10 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import {createTerminalRuntime,atomicJson,withWriterLock} from './terminal-runtime.mjs';
-import {createPaperSnapshotReader,readSnapshotCheckpoint,snapshotCheckpoint,advancePaperCapture} from './paper-snapshot.mjs';
+import {createPaperSnapshotReader,advancePaperCapture} from './paper-snapshot.mjs';
 import {openSnapshotExperiment} from './paper-snapshot-run-core.mjs';
 import {sourceInventory} from './source-inventory.mjs';
+import {createSnapshotStore} from './paper-history-store.mjs';
 import {assert,errorCode} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
 const ROOT=fileURLToPath(new URL('../../',import.meta.url)),DATA=join(ROOT,'data'),io=createTerminalRuntime({ROOT,DATA});
@@ -17,9 +18,9 @@ async function main(){
  assert(typeof values.id==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(values.id)&&values.snapshot,'PAPER_SNAPSHOT_ARGUMENTS');
  const idl=await io.safeDataPath(values.idl),reader=createPaperSnapshotReader({ROOT,io,idl}),{paperModelHash:backendHash}=await sourceInventory(ROOT),dir=join(DATA,'paper-snapshot-runs',values.id);
  await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir);
- const target=join(dir,'checkpoint.json');
+ const target=join(dir,'checkpoint.json'),store=createSnapshotStore({read,atomic:atomicJson});
  await withWriterLock(dir,async()=>{
-  let prior=null;try{prior=JSON.parse(await read(target,32*1024*1024))}catch(e){if(e.code!=='ENOENT')throw e}
+  const prior=await store.load(dir,values.id,null,{optional:true});
   const snapshot=await reader(await io.safeDataPath(values.snapshot));let state;
   if(!prior){
    assert(values.report&&values.policy&&!values.exit,'PAPER_SNAPSHOT_OPEN_REQUIRES_REPORT_POLICY');
@@ -27,10 +28,9 @@ async function main(){
    state=openSnapshotExperiment({id:values.id,snapshot,report,budget,policy,backendHash,frozenAt:Date.now()});state.reportHash=sha(reportBytes);
   }else{
    assert(!values.report&&!values.policy&&!values.budget,'PAPER_SNAPSHOT_CANNOT_CHANGE_FROZEN_CONFIG');
-   const body=readSnapshotCheckpoint(prior,values.id);
-   state=await advancePaperCapture(body,{load:reader,snapshot,backendHash,now:Date.now(),exit:values.exit===true});
+   state=await advancePaperCapture(prior,{load:reader,snapshot,backendHash,now:Date.now(),exit:values.exit===true});
   }
-  await atomicJson(target,snapshotCheckpoint(state));
+  await store.save(dir,state,prior);
   console.log(JSON.stringify({status:state.status,slot:state.last.slot,snapshotCount:state.snapshotCount,checkpoint:target,rows:state.rows.map(r=>({mode:r.mode,status:r.status,reason:r.reason,latest:r.status==='BLOCKED'?null:r.points.at(-1)})),executionReady:false,pnlReady:false},null,2));
  });
 }

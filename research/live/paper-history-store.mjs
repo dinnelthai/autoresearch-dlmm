@@ -1,6 +1,7 @@
 // Atomic bounded shard replacement before checkpoint. Crash tails must match exactly; never truncate.
 import {join} from 'node:path';
 import {assert} from './research-contract.mjs';
+import {readSnapshotCheckpoint,snapshotCheckpoint} from './paper-snapshot.mjs';
 import {historyRecord,validateHistoryRecord,appendHistoryShard,HISTORY_SHARD_SIZE,HISTORY_SHARD_BYTES} from './paper-history-core.mjs';
 export function createPaperHistoryStore({read,atomic}){
  const path=(dir,n)=>join(dir,'history-'+String(Math.floor((n-1)/HISTORY_SHARD_SIZE)).padStart(6,'0')+'.json');
@@ -32,4 +33,19 @@ export function createPaperHistoryStore({read,atomic}){
   return {status:'LOCAL_HISTORY_CHAIN_VERIFIED',records:head.sequence,headHash:previousHash,coverageVerified:false,pnlReady:false};
  }
  return {append,verify};
+}
+
+// Shared checkpoint persistence for manually stepped and scheduled snapshot experiments.
+// Manual legacy runs retain their original checkpoint-only storage layout.
+export function createSnapshotStore({read,atomic,withHistory=false}){
+ const history=withHistory?createPaperHistoryStore({read,atomic}):null;
+ async function load(dir,id,pool=null,{optional=false}={}){
+  try{return readSnapshotCheckpoint(JSON.parse(await read(join(dir,'checkpoint.json'),32*1024*1024)),id,pool)}
+  catch(e){if(optional&&e.code==='ENOENT')return null;throw e}
+ }
+ async function save(dir,state,previous=null){
+  if(history)state=await history.append(dir,state,previous);
+  await atomic(join(dir,'checkpoint.json'),snapshotCheckpoint(state));return state;
+ }
+ return {load,save};
 }

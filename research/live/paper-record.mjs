@@ -1,9 +1,9 @@
 // Read-only companion to state-service. Records verified raw capture pointers and re-decodes history.
-import {mkdir,open,writeFile,rename,unlink} from 'node:fs/promises';
+import {mkdir,writeFile} from 'node:fs/promises';
 import {join,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
-import {createTerminalRuntime} from './terminal-runtime.mjs';
+import {createTerminalRuntime,atomicJson,watchLocked} from './terminal-runtime.mjs';
 import {extractMarket} from './engine-input.mjs';
 import {captureObservation,nextJournal,PAPER_JOURNAL_MAX_BYTES} from './paper-event-core.mjs';
 import {assert,poolAddress,errorCode} from './research-contract.mjs';
@@ -16,11 +16,8 @@ async function main(){
  assert(poolAddress(values.pool),'PAPER_POOL_REQUIRED');const pool=values.pool,interval=Number(values.interval);assert(Number.isInteger(interval)&&interval>=10&&interval<=600,'PAPER_INTERVAL_INVALID');
  const dir=join(DATA,'paper-captures',pool);await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir);
  const idl=await io.safeDataPath(values.idl);
- const lock=join(dir,'writer.lock'),h=await open(lock,'wx',0o600),target=join(dir,'index.json');let stop=false;const cancel=()=>{stop=true};process.once('SIGINT',cancel);process.once('SIGTERM',cancel);
- try{
-  await h.writeFile(String(process.pid));
-  do{
-   try{
+ const target=join(dir,'index.json');
+ await watchLocked(dir,{watch:values.watch,interval,step:async()=>{
     const bytes=await read(join(DATA,'live',pool,'state.json'),64*1024*1024),state=JSON.parse(bytes);assert(state.pool===pool,'PAPER_STATE_SCOPE');
     let previous=null;try{previous=JSON.parse(await read(target,PAPER_JOURNAL_MAX_BYTES))}catch(e){if(e.code!=='ENOENT')throw e}
     const stateHash=sha(bytes);
@@ -40,12 +37,9 @@ async function main(){
      assert(Buffer.byteLength(payload)<=72*1024*1024,'PAPER_CAPTURE_BUNDLE_SIZE');
      try{await writeFile(file,payload,{flag:'wx',mode:0o600})}catch(e){if(e.code!=='EEXIST')throw e;assert(sha(await read(file,72*1024*1024))===id,'PAPER_CAPTURE_CONFLICT')}
      const next={...nextJournal(previous,obs,{path:relative(ROOT,file),sha256:id}),lastStateHash:stateHash};
-     const indexBytes=JSON.stringify(next);assert(Buffer.byteLength(indexBytes)<=PAPER_JOURNAL_MAX_BYTES,'PAPER_JOURNAL_SIZE');await writeFile(join(dir,'index.tmp'),indexBytes,{mode:0o600});await rename(join(dir,'index.tmp'),target);
+     const indexBytes=JSON.stringify(next);assert(Buffer.byteLength(indexBytes)<=PAPER_JOURNAL_MAX_BYTES,'PAPER_JOURNAL_SIZE');await atomicJson(target,next);
      console.log(JSON.stringify({status:'PAPER_CAPTURE_RECORDED_UNVERIFIED',pool,marketSlot:obs.market?.slot??null,swapCandidates:obs.candidates.length,singleBinCandidates:obs.candidates.filter(x=>x.status==='SINGLE_BIN_FEE_CANDIDATE_ONLY').length,gaps:obs.gaps,gapObserved:next.gapObserved,modelEligible:false,pnlReady:false}));
     }
-   }catch(e){console.error(JSON.stringify({status:'PAPER_CAPTURE_BLOCKED',reason:errorCode(e,'PAPER_CAPTURE_FAILED'),modelEligible:false}));if(!values.watch){process.exitCode=1;break}}
-   if(values.watch&&!stop)await new Promise(r=>{const t=setInterval(()=>{if(stop){clearInterval(t);clearTimeout(d);r()}},250),d=setTimeout(()=>{clearInterval(t);r()},interval*1000)});
-  }while(values.watch&&!stop);
- }finally{process.removeListener('SIGINT',cancel);process.removeListener('SIGTERM',cancel);try{await h.close()}finally{await unlink(lock)}}
+ },onError:e=>console.error(JSON.stringify({status:'PAPER_CAPTURE_BLOCKED',reason:errorCode(e,'PAPER_CAPTURE_FAILED'),modelEligible:false}))});
 }
 main().catch(e=>{console.error(JSON.stringify({status:'PAPER_CAPTURE_BLOCKED',reason:errorCode(e,'PAPER_CAPTURE_STARTUP_FAILED')}));process.exitCode=1});

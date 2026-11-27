@@ -82,6 +82,8 @@ jobs:
             research/live/paper-auto-core.test.mjs \
             research/live/paper-router-http.test.mjs \
             research/live/terminal-router.test.mjs \
+            research/live/terminal-service-boundaries.test.mjs \
+            research/live/paper-pool-manager.test.mjs \
             research/live/terminal-ui.test.mjs \
             research/live/research-input-status.test.mjs \
             research/live/state-core.test.mjs \

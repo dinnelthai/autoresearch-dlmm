@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createTerminalRuntime} from './terminal-runtime.mjs';
+import {createTerminalRuntime,watchLocked} from './terminal-runtime.mjs';
 import {createMarketObservationService} from './terminal-market-service.mjs';
 import {createResearchArchiveService} from './terminal-research-service.mjs';
 import {createPositionService} from './terminal-position-service.mjs';
@@ -11,3 +11,5 @@ test('runtime confines file reads to data and enforces byte budget',async()=>{co
 test('market service instance caches start isolated and do not start RPC',()=>{const ctx={DATA:'/not-used',ROOT:'/not-used',cfg:{}};const a=createMarketObservationService(ctx),b=createMarketObservationService(ctx);assert.equal(a.external(),null);assert.equal(a.holder('pool','mint'),null);assert.equal(b.external(),null);assert.notEqual(a.holderObservation,b.holderObservation)});
 test('archive diagnostic remains blocked without market; no network needed',async()=>{const service=createResearchArchiveService({pool:'A'.repeat(32),cfg:{},maxAgeMs:180000,loadState:async()=>{throw Error('missing')},marketObservations:{external:()=>null,holder:()=>null}});const r=await service.researchInputs('A'.repeat(32));assert.equal(r.marketSlot,null);assert.equal(r.modelInputReady,false);assert.equal(r.executionReady,false)});
 test('position service rejects absent server-observed position before I/O',async()=>{const service=createPositionService({DATA:'/not-used',ROOT:'/not-used',cfg:{},previewCfg:{},validateScope:x=>x});await assert.rejects(service.positionAccounting({pool:'p',wallet:'w',position:'a'}),/POSITION_OBSERVATION_REFRESH_REQUIRED/);await assert.rejects(service.readPositionDetail({pool:'p',wallet:'w',position:'a'}),/POSITION_INDEX_REFRESH_REQUIRED/)});
+
+test('offline command shares writer lifecycle and releases lock after a step',async()=>{const dir=await mkdtemp(join(tmpdir(),'paper-watch-'));try{let calls=0;await watchLocked(dir,{step:async()=>{calls++},onError:e=>{throw e}});await watchLocked(dir,{step:async()=>{calls++},onError:e=>{throw e}});assert.equal(calls,2);await assert.rejects(()=>watchLocked(dir,{step:async()=>{throw Error('STEP')},onError:e=>{throw e}}),/STEP/);await watchLocked(dir,{step:async()=>{calls++},onError:e=>{throw e}});assert.equal(calls,3)}finally{await rm(dir,{recursive:true,force:true})}});

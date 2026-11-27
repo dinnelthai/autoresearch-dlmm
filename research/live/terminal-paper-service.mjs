@@ -3,7 +3,7 @@ import {mkdir} from 'node:fs/promises';
 import {atomicJson as atomic,withWriterLock} from './terminal-runtime.mjs';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {createPaperSnapshotReader,readSnapshotCheckpoint,snapshotCheckpoint,advancePaperCapture} from './paper-snapshot.mjs';
+import {createPaperSnapshotReader,advancePaperCapture} from './paper-snapshot.mjs';
 import {openSnapshotExperiment,updateAdaptiveSnapshot,PAPER_SNAPSHOT_LIMIT} from './paper-snapshot-run-core.mjs';
 import {nextPaperCapture,paperPublic,paperStatus} from './paper-auto-core.mjs';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
@@ -14,16 +14,16 @@ import {fixedPaperReport} from './paper-share-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
 import {freezePaperWindow,paperWindowCapture,paperWindowExpired,finishPaperWindow} from './paper-window-core.mjs';
-import {createPaperHistoryStore} from './paper-history-store.mjs';
-export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,refreshFeatures,isStopping,idlPath='data/raw/dlmm-idl.json',intervalMs=15000}){
+import {createSnapshotStore} from './paper-history-store.mjs';
+export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,refreshFeatures,isStopping,idlPath='data/raw/dlmm-idl.json'}){
  const dir=join(DATA,'paper-auto',pool),pointer=join(dir,'active.json');
  const read=async(p,n)=>io.boundedRead(await io.safeDataPath(p),n);
- let job=null,timer=null,flight=null,closed=false,snapshotReader=null,lastFeatureAttempt=-Infinity,featureFlight=null,features=null;
- const history=createPaperHistoryStore({read,atomic});
+ let job=null,flight=null,closed=false,snapshotReader=null,lastFeatureAttempt=-Infinity,featureFlight=null,features=null;
+ const store=createSnapshotStore({read,atomic,withHistory:true});
  async function init(){await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir)}
  async function active(){try{const x=JSON.parse(await read(pointer,16384));assert(x?.pool===pool&&typeof x.id==='string'&&/^[a-zA-Z0-9_-]{1,64}$/.test(x.id)&&typeof x.running==='boolean','PAPER_AUTO_POINTER');return x}catch(e){if(e.code==='ENOENT')return null;throw e}}
- async function checkpoint(a){try{return readSnapshotCheckpoint(JSON.parse(await read(join(dir,a.id,'checkpoint.json'),32*1024*1024)),a.id,pool)}catch(e){if(e.message==='PAPER_SNAPSHOT_CHECKPOINT_HASH')throw Error('PAPER_AUTO_CHECKPOINT_HASH');throw e}}
- async function save(state,previous=null){const dst=join(dir,state.id);await mkdir(dst,{recursive:true,mode:0o700});await io.safeDataPath(dst);state=await history.append(dst,state,previous);await atomic(join(dst,'checkpoint.json'),snapshotCheckpoint(state));return state}
+ async function checkpoint(a){try{return await store.load(join(dir,a.id),a.id,pool)}catch(e){if(e.message==='PAPER_SNAPSHOT_CHECKPOINT_HASH')throw Error('PAPER_AUTO_CHECKPOINT_HASH');throw e}}
+ async function save(state,previous=null){const dst=join(dir,state.id);await mkdir(dst,{recursive:true,mode:0o700});await io.safeDataPath(dst);return store.save(dst,state,previous)}
  async function reader(){if(!snapshotReader)snapshotReader=createPaperSnapshotReader({ROOT,io,idl:idlPath});return snapshotReader}
  async function exclusive(fn){assert(!closed&&!isStopping()&&!flight,'PAPER_AUTO_BUSY');const task=(async()=>{await init();return withWriterLock(dir,fn)})();flight=task;try{return await task}finally{if(flight===task)flight=null}}
  async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const a=await active();if(!a)return paperStatus(pool,'NO_EXPERIMENT');const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,{...current,features},{now:Date.now(),maxAgeMs})}
@@ -118,7 +118,6 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
    }
   })}catch(e){job={id:job?.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_SCHEDULER_BUSY'),running:true}}
  }
- function startScheduler(){if(timer||closed)return;timer=setInterval(()=>{void tick()},intervalMs);void tick()}
- async function stop(){closed=true;if(timer)clearInterval(timer);timer=null;if(flight)await flight.catch(()=>{});if(featureFlight)await featureFlight;snapshotReader=null}
- return {get,context,start,pause,tick,startScheduler,stop};
+ async function stop(){closed=true;if(flight)await flight.catch(()=>{});if(featureFlight)await featureFlight;snapshotReader=null}
+ return {get,context,start,pause,tick,stop};
 }

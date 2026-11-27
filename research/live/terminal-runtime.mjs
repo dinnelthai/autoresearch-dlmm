@@ -3,6 +3,7 @@ import {realpath,open,writeFile,rename,unlink} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve,join,relative,isAbsolute} from 'node:path';
 import {spawn} from 'node:child_process';
+import {setTimeout as sleep} from 'node:timers/promises';
 import {assert} from './research-contract.mjs';
 export {assert} from './research-contract.mjs';
 export {sha} from './evidence-digest.mjs';
@@ -16,6 +17,17 @@ export async function withWriterLock(dir,fn){
  const path=join(dir,'writer.lock'),h=await open(path,'wx',0o600);
  try{await h.writeFile(String(process.pid));return await fn()}
  finally{try{await h.close()}finally{await unlink(path)}}
+}
+// Shared offline CLI lifecycle; the live scheduler is owned by PaperPoolManager.
+export async function watchLocked(dir,{watch=false,interval=30,step,onError}){
+ const stop=new AbortController(),cancel=()=>stop.abort();
+ process.once('SIGINT',cancel);process.once('SIGTERM',cancel);
+ try{await withWriterLock(dir,async()=>{
+  do{
+   try{await step()}catch(e){await onError(e);if(!watch){process.exitCode=1;break}}
+   if(watch&&!stop.signal.aborted)await sleep(interval*1000,undefined,{signal:stop.signal}).catch(e=>{if(e.name!=='AbortError')throw e});
+  }while(watch&&!stop.signal.aborted);
+ })}finally{process.removeListener('SIGINT',cancel);process.removeListener('SIGTERM',cancel)}
 }
 export function createTerminalRuntime({ROOT,DATA}){
 async function safeDataPath(path){const root=await realpath(DATA),p=await realpath(resolve(ROOT,path)),rel=relative(root,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'INVALID_DATA_PATH');return p}
