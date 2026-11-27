@@ -131,3 +131,13 @@ test('REDUCE retains half the virtual shares and all pending fees, then later re
  const s5=update(advance(s4,a,d,e),e,remove);assert.equal(s5.rows[7].status,'HOLD_ONLY');assert.equal(s5.rows[7].claimedFeeXRaw,'27');assert.equal(s5.rows[7].points.at(-1).feeXRaw,'0');
  const s6=advance(s5,a,e,f);assert.equal(s6.rows[7].claimedFeeXRaw,'27');assert.equal(s6.rows[7].points.at(-1).excessVsHoldYRaw,'27');
 });
+
+test('integer preflight rejects unmappable shape before selection and preserves original position on valid map',async()=>{
+ const {validatedAdaptiveRemap}=await import('./paper-adaptive-core.mjs'),{a,state}=fixture(),b=snapshot(2),s2=advance(state,a,a,b),row={...s2.rows[7],rebalances:0};
+ const cfg={operationCostSol:0,maxRebalances:8,maxTurnoverSol:30,minSolReserve:0,maxBinShare:.1};
+ const selected={action:{type:'REPOSITION'},estimatedOperationCostSol:0,allocation:{bins:[{binId:2,meme:.5,sol:0}]}};
+ const args={row,state:s2,snapshot:b,cfg},before=JSON.stringify(s2),valid=validatedAdaptiveRemap({...args,selected});
+ assert.equal(valid.mapping.rows[0].binId,2);assert.equal(valid.principalX,500000n);assert.equal(valid.nav,BigInt(row.points.at(-1).navYRaw));assert.equal(JSON.stringify(s2),before);
+ assert.throws(()=>validatedAdaptiveRemap({...args,selected:{...selected,allocation:{bins:[{binId:2,meme:.5,sol:.1}]}}}),/WRONG_ACTIVE_BIN_SIDE|PAPER_SHARE_NONPROPORTIONAL_DEPOSIT/);
+ assert.throws(()=>validatedAdaptiveRemap({...args,selected:{...selected,allocation:{bins:[{binId:2,meme:.0000001,sol:0}]}}}),/ALLOCATION_ROUNDS_TO_ZERO|PAPER_SHARE_DUST_OR_RANGE/);
+});

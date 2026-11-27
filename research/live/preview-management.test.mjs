@@ -51,3 +51,6 @@ assert.equal(protection.currentExitDiagnostic.netLiquidationValue,null);
 
 const virtualProtection=P(stressed,c,market,{...opts,virtualProtection:true});
 assert.equal(virtualProtection.selected.action.type,'REMOVE_AND_HOLD');assert.equal(virtualProtection.selected.feasible,false);assert.equal(virtualProtection.selected.protectiveExecution,true);assert.ok(virtualProtection.selected.postRisk.violations.includes('EXIT_CAPACITY'));assert.equal(virtualProtection.executionReady,false);
+
+const mappingBlocked=P(stressed,c,market,{...opts,virtualProtection:true,checkAllocation:()=>{throw Error('PAPER_ADAPTIVE_COST_UNFUNDED')}});
+assert.equal(mappingBlocked.selected,null);assert.equal(mappingBlocked.reason,'PAPER_ADAPTIVE_COST_UNFUNDED');assert.ok(mappingBlocked.alerts.includes('VIRTUAL_PROTECTION_MAPPING_BLOCKED'));

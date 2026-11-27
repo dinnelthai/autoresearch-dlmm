@@ -28,13 +28,17 @@ export function virtualManagement({state,row,snapshot,reviewed}){
  model.history=observations.slice(0,-1);E.event(model,cfg,{...latest,id:'virtual-market:'+latest.id});
  const bins=[...map.values()],external=bins.flatMap(b=>{const x=rawHuman(b.amountXRaw,i.sides[0].decimals),y=rawHuman(b.amountYRaw,9);return x+y>0?[{id:b.binId,externalLiquiditySol:x*E.price(cfg,b.binId)+y}]:[]});
  if(external.length)E.event(model,cfg,{type:'POOL_STATE',id:'virtual-pool:'+i.rawHash,t:latest.t,bins:external});
+ const checkAllocation=selected=>{
+  const mapped=validatedAdaptiveRemap({row:{...row,rebalances:row.rebalances??0},selected,snapshot,state,cfg});
+  return {basis:'OBSERVED_SHARE_PROXY',binCount:mapped.mapping?.rows.length??0,principalXRaw:String(mapped.principalX),principalYRaw:String(mapped.principalY),walletXRaw:String(mapped.walletX),walletYRaw:String(mapped.walletY),costYRaw:String(mapped.cost),navYRaw:String(mapped.nav),turnoverYRaw:String(mapped.turnover)};
+ };
  if(row.status==='HOLD_ONLY'){
   if(row.lastActionTime!=null&&latest.t-row.lastActionTime<cfg.cooldownSeconds)return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'};
   if((row.entries??0)>0&&((row.rebalances??0)>=cfg.maxRebalances||raw(row.turnoverYRaw??'0')>=scaledFloat(cfg.maxTurnoverSol,9)))return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_BUDGET'};
-  return previewPlans(model,cfg,{activeId:i.activeId,bins},{asOf});
+  return previewPlans(model,cfg,{activeId:i.activeId,bins},{asOf,checkAllocation});
  }
  const position={position:'VIRTUAL:'+state.id},operations={position:position.position,asOf,lastActionTime:row.lastActionTime??Math.floor(state.frozenAt/1000),rebalances:row.rebalances??0,rebalanceTurnoverSol:rawHuman(row.turnoverYRaw??'0',9),spotTurnoverSol:0};
- return previewManagement(model,cfg,{activeId:i.activeId,bins},{asOf,position,operations,virtualProtection:true});
+ return previewManagement(model,cfg,{activeId:i.activeId,bins},{asOf,position,operations,virtualProtection:true,checkAllocation});
 }
 // Require a later observation and elapsed intent delay; always apply the current feasible plan.
 export function adaptiveIntent({row,preview,slot,requestedAt,now,reviewHash,delaySeconds=10}){
@@ -75,4 +79,17 @@ export function remapAdaptive({row,selected,snapshot,state,cfg}){
  assert(turnover<=scaledFloat(cfg.maxTurnoverSol,9)&&y-dy>=raw(state.policy.exitCostSolRaw),'PAPER_ADAPTIVE_TURNOVER_OR_RESERVE');
  const principal=principalForShares(map,mapping.rows);
  return {mapping,walletX:x-dx,walletY:y-dy,principalX:principal.x,principalY:principal.y,cost,turnover,status:'OPEN_PROXY'};
+}
+
+ // One exact preflight is shared by candidate selection and the committed action.
+ // The scenario score is still a floating-point estimate, not a re-simulation of the rounded shares.
+export function validatedAdaptiveRemap(args){
+ const {row,state}=args,r=remapAdaptive(args),pt=row.points.at(-1),fees=r.retainedFees??{x:0n,y:0n};
+ const nav=r.walletY+r.principalY+fees.y+(r.walletX+r.principalX+fees.x)*raw(pt.priceQ64Raw)/(1n<<64n);
+ assert(nav<=raw(pt.navYRaw),'PAPER_ADAPTIVE_NAV_INCREASE_ON_ACTION');
+ if(r.status==='OPEN_PROXY'){
+  const initial=raw(row.initialNavYRaw),previousPeak=raw(pt.peakYRaw),peak=nav>previousPeak?nav:previousPeak,dd=peak?(peak-nav)*10000n/peak:0n;
+  assert(initial-nav<raw(state.policy.maxLossSolRaw)&&dd<BigInt(state.policy.maxDrawdownBps),'PAPER_ADAPTIVE_POST_ACTION_RISK_LIMIT');
+ }
+ return {...r,nav};
 }

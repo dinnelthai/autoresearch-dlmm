@@ -10,12 +10,12 @@ export function marketLog(m,reviewed=null,environment=null,reason=null){
 function candidateSummary(r){
  if(!r)return null;
  const a=r.allocation,v=r.scenarioEstimates;
- return {family:r.family??r.action?.label??null,action:r.action?.type??null,spec:r.action?.spec??null,...(r.action?.fraction!=null?{fraction:r.action.fraction}:{}),...(r.protectiveExecution?{protectiveExecution:true,scenarioFeasible:r.feasible===true,remainingViolations:r.postRisk?.violations??[]}:{}),feasible:r.feasible===true,reason:r.reason??null,score:r.score??null,pnlSol:v?.pnlSol??null,alphaSol:v?.alphaSol??null,feeSol:v?.feeSol??null,cvarLossSol:v?.cvarLossSol??null,operationCostSol:r.estimatedOperationCostSol??v?.operationCostSol??null,allocation:a?{bidSol:a.bidSol,askMeme:a.askMeme,lowerBinId:a.lowerBinId??null,upperBinId:a.upperBinId??null,binCount:a.bins?.length??0}:null};
+ return {family:r.family??r.action?.label??null,action:r.action?.type??null,spec:r.action?.spec??null,...(r.action?.fraction!=null?{fraction:r.action.fraction}:{}),...(r.protectiveExecution?{protectiveExecution:true,scenarioFeasible:r.feasible===true,remainingViolations:r.postRisk?.violations??[]}:{}),feasible:r.feasible===true,reason:r.reason??null,score:r.score??null,...(r.integerMapping?{integerMapping:r.integerMapping}:{}),pnlSol:v?.pnlSol??null,alphaSol:v?.alphaSol??null,feeSol:v?.feeSol??null,cvarLossSol:v?.cvarLossSol??null,operationCostSol:r.estimatedOperationCostSol??v?.operationCostSol??null,allocation:a?{bidSol:a.bidSol,askMeme:a.askMeme,lowerBinId:a.lowerBinId??null,upperBinId:a.upperBinId??null,binCount:a.bins?.length??0}:null};
 }
 export function decisionLog(preview,{inputHash,reason,outcome,slot,observedAt,kind,decidedAt,input}){
  const groups=new Map();
  for(const r of preview?.candidates??[]){
-  const key=r.family??r.action?.type??'UNKNOWN',g=groups.get(key)??{family:key,total:0,feasible:0,best:null,rejections:{}};
+  const key=r.family??r.action?.label??r.action?.type??'UNKNOWN',g=groups.get(key)??{family:key,total:0,feasible:0,best:null,rejections:{}};
   g.total++;if(r.feasible){g.feasible++;if(!g.best||r.score>g.best.score)g.best=candidateSummary(r)}else{const k=String(r.reason??'UNKNOWN').slice(0,180);g.rejections[k]=(g.rejections[k]??0)+1}groups.set(key,g);
  }
  if(!preview?.candidates?.length&&Array.isArray(preview?.families))for(const f of preview.families)groups.set(f.family,{family:f.family,total:f.total??1,feasible:f.feasible??(f.best?1:0),best:candidateSummary(f.best),rejections:f.best?{}:{NO_FEASIBLE_PLAN:1}});

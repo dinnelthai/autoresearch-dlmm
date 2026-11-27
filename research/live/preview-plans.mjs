@@ -4,7 +4,7 @@ const assert=(ok,msg)=>{if(!ok)throw Error(msg);};
 const finite=(n)=>typeof n==='number'&&Number.isFinite(n);
 const sum=(a,k)=>a.reduce((s,b)=>s+b[k],0);
 const BASE='NO_LP';
-export function previewPlans(model,cfg,market,{asOf}){
+export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
  const result={status:'BLOCKED',decisionReady:false,executionReady:false,selected:null,candidates:[],reason:null,forecastLabel:'SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED',volumeBasis:'EXPLICIT_FLOW_WINDOW_FROZEN_TARGET_BIN_PROXY',allocationLabel:'FLOATING_POINT_RESEARCH_PREVIEW_NOT_PROTOCOL_AMOUNTS',scope:'NEW_POSITION_ONLY'};
  const block=reason=>({...result,reason});
  if(model.bins.length||model.status!=='FLAT')return block('EXISTING_POSITION_REQUIRES_T10');
@@ -40,6 +40,7 @@ export function previewPlans(model,cfg,market,{asOf}){
   }
   row.feasible=true;row.score=v.utility;row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};row.risk=v.risk;
   row.allocation={bidSol:sum(bins,'y'),askMeme:sum(bins,'x'),lowerBinId:bins.length?Math.min(...bins.map(b=>b.id)):null,upperBinId:bins.length?Math.max(...bins.map(b=>b.id)):null,bins:bins.map(b=>({binId:b.id,priceSolPerMeme:Engine.price(cfg,b.id),meme:b.x,sol:b.y}))};
+  if(checkAllocation&&action.type==='OPEN'){try{row.integerMapping=checkAllocation(row)}catch(e){row.feasible=false;row.reason=String(e.message).slice(0,180)}}
   rows.push(row);
  }
  const base=rows.find(r=>r.family===BASE);

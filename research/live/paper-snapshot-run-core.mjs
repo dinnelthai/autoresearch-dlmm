@@ -1,7 +1,7 @@
 // Fixed opening allocation, observed-share proxy. Independent of swap replay.
 import {IntegerKernel as K} from '../integer.mjs';
 import {mapPaperPlans,principalForShares as principal} from './paper-share-core.mjs';
-import {adaptiveIntent,remapAdaptive} from './paper-adaptive-core.mjs';
+import {adaptiveIntent,validatedAdaptiveRemap} from './paper-adaptive-core.mjs';
 import {snapshotRows,intervalFees,INTERVAL_FEE_BASIS} from './paper-fee-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits)),'PAPER_SNAPSHOT_RAW_INVALID');return BigInt(v)};
@@ -94,11 +94,10 @@ export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHa
  if(row.status==='HOLD_ONLY'&&row.lastActionTime!=null&&reviewed.latest.t-row.lastActionTime<(reviewed.cfg.cooldownSeconds??0))return {...state,rows:state.rows.map(r=>r===row?{...next,pendingAdaptive:null,adaptiveReason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'}:r)};
  if(intent.apply){
   try{
-   const r=remapAdaptive({row:{...row,rebalances:row.rebalances??0},selected:intent.apply,snapshot,state,cfg:reviewed.cfg}),last=row.points.at(-1);
+   const r=validatedAdaptiveRemap({row:{...row,rebalances:row.rebalances??0},selected:intent.apply,snapshot,state,cfg:reviewed.cfg}),last=row.points.at(-1);
    const initial=raw(row.initialNavYRaw),hold=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),c.price);
    const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet:{x:r.walletX,y:r.walletY},principal:{x:r.principalX,y:r.principalY},fees:r.retainedFees??zero(),initial,hold,peak:raw(last.peakYRaw),cost:raw(last.costYRaw)+r.cost,status:r.status});
-   assert(BigInt(point.navYRaw)<=BigInt(last.navYRaw),'PAPER_ADAPTIVE_NAV_INCREASE_ON_ACTION');
-   if(r.status==='OPEN_PROXY')assert(initial-BigInt(point.navYRaw)<raw(state.policy.maxLossSolRaw)&&point.drawdownBps<state.policy.maxDrawdownBps,'PAPER_ADAPTIVE_POST_ACTION_RISK_LIMIT');
+   assert(BigInt(point.navYRaw)===r.nav,'PAPER_ADAPTIVE_PREFLIGHT_ACCOUNTING_MISMATCH');
    const action=intent.apply.action.type,entries=row.entries??(row.status==='OPEN_PROXY'?1:0);
    next={...next,mapping:r.mapping,feeGrowth:[],feeCarry:r.retainedFees?{xRaw:s(r.retainedFees.x),yRaw:s(r.retainedFees.y)}:null,...(action==='REDUCE'?{reductions:(row.reductions??0)+1}:{}),status:r.status,reason:r.status==='HOLD_ONLY'?'VIRTUAL_T10_REMOVE':null,pendingAdaptive:null,segmentOpening:r.status==='OPEN_PROXY'?{slot:c.i.slot,proof:c.proof}:null,lastActionTime:Math.floor(c.received/1000),entries:entries+(action==='OPEN'?1:0),rebalances:(row.rebalances??0)+(action==='REPOSITION'||action==='OPEN'&&entries>0?1:0),turnoverYRaw:s(r.turnover),claimedFeeXRaw:s(raw(row.claimedFeeXRaw??'0')+ (r.retainedFees?0n:raw(last.feeXRaw))),claimedFeeYRaw:s(raw(row.claimedFeeYRaw??'0')+(r.retainedFees?0n:raw(last.feeYRaw))),points:[...row.points.slice(0,-1),point],maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps),adaptiveReason:'VIRTUAL_T10_'+intent.apply.action.type};
   }catch(e){next={...next,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REMAP_BLOCKED')}}
