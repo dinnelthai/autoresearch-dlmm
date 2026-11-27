@@ -38,23 +38,22 @@ function tokenProgram(info){
  assert(info.owner.equals(TOKEN_PROGRAM_ID)||info.owner.equals(TOKEN_2022_PROGRAM_ID),'unknown token program');
  return info.owner;
 }
-async function main(){
- const {values}=parseArgs({options:{capture:{type:'string'},idl:{type:'string'},help:{type:'boolean'}}});
- if(values.help){console.log('node research/live/inspect-pool.mjs --capture data/raw/accounts-... --idl data/raw/dlmm-idl.json');return;}
- assert(values.capture&&values.idl,'capture and pinned IDL required');
- const bytes=await readFile(values.idl);assert(blob(bytes)===IDL_BLOB,'IDL blob does not match pinned SDK commit');
+export async function loadMarketCapture(capture,idlPath){
+ const bytes=await readFile(idlPath);assert(blob(bytes)===IDL_BLOB,'pinned IDL mismatch');
  const idl=JSON.parse(bytes);assert(idl.address===PROGRAM.toBase58(),'IDL program mismatch');
- const {m,accounts}=await readCapture(values.capture);
- const poolKey=new PublicKey(m.pool),raw=accounts.get(m.pool);
+ const {m,accounts}=await readCapture(capture),coder=new anchor.BorshAccountsCoder(idl),raw=accounts.get(m.pool);
  assert(raw&&!raw.executable&&raw.owner.equals(PROGRAM),'Pool account owner mismatch or missing');
- const pair=new anchor.BorshAccountsCoder(idl).decode('LbPair',raw.data);
+ return {m,accounts,coder,pair:coder.decode('LbPair',raw.data)};
+}
+export function decodePool({m,accounts,pair}){
+ const poolKey=new PublicKey(m.pool);
  const mintX=str(pair.token_x_mint),mintY=str(pair.token_y_mint),vaultX=str(pair.reserve_x),vaultY=str(pair.reserve_y);
  assert(new Set([mintX,mintY,vaultX,vaultY,m.pool]).size===5,'invalid duplicate account identities');
  assert(Number.isInteger(pair.active_id)&&Number.isInteger(pair.bin_step)&&pair.bin_step>0,'invalid pool price grid');
  const required=[mintX,mintY,vaultX,vaultY];
  const result={sdkCommit:SDK_COMMIT,idlBlob:IDL_BLOB,slot:m.contextSlot,rawHash:m.raw.sha256,pool:m.pool,mintX,mintY,vaultX,vaultY,activeId:pair.active_id,binStep:pair.bin_step,poolStatus:pair.status,requiredAccounts:required,status:'POOL_DECODED_UNVERIFIED'};
  const missing=required.filter(a=>!accounts.get(a));
- if(missing.length){result.missing=missing;console.log(JSON.stringify(result,null,2));process.exitCode=1;return;}
+ if(missing.length){result.missing=missing;return result;}
  const sides=[[mintX,vaultX],[mintY,vaultY]].map(([mint,vault])=>{
   const mi=accounts.get(mint),vi=accounts.get(vault),program=tokenProgram(mi);
   assert(tokenProgram(vi).equals(program),'mint/vault token program mismatch');
@@ -68,7 +67,14 @@ async function main(){
  const supported=result.orientation==='MEME_X_SOL_Y'&&sides[1].decimals===9&&sides.every(s=>s.tokenProgram===TOKEN_PROGRAM_ID.toBase58()&&!s.mintExtensions.length&&!s.vaultExtensions.length&&!s.vaultFrozen);
  result.status=supported?'IDENTITY_CHECKED_UNVERIFIED':'UNSUPPORTED_ENGINE_INPUT';
  result.limitations=['Input evidence is a supplied T01 capture, not independent RPC verification.','Token-2022 and reverse token orientation are not supported by the current strategy adapter.','No BinArray, historical state, execution or income validation.'];
- console.log(JSON.stringify(result,null,2));if(!supported)process.exitCode=1;
+ return result;
+}
+async function main(){
+ const {values}=parseArgs({options:{capture:{type:'string'},idl:{type:'string'},help:{type:'boolean'}}});
+ if(values.help){console.log('node research/live/inspect-pool.mjs --capture data/raw/accounts-... --idl data/raw/dlmm-idl.json');return;}
+ assert(values.capture&&values.idl,'capture and pinned IDL required');
+ const result=decodePool(await loadMarketCapture(values.capture,values.idl));
+ console.log(JSON.stringify(result,null,2));if(result.status!=='IDENTITY_CHECKED_UNVERIFIED')process.exitCode=1;
 }
 export {readCapture,PROGRAM,SDK_COMMIT,IDL_BLOB,blob};
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(e=>{console.error('T02 blocked: '+e.message);process.exitCode=1;});

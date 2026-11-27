@@ -1,31 +1,22 @@
 // T03 read-only adapter. Never joins different capture slots or invents missing bins.
-import {readFile} from 'node:fs/promises';
+import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
 import anchor from '@coral-xyz/anchor';
 import {PublicKey} from '@solana/web3.js';
 import {deriveBinArray,deriveBinArrayBitmapExtension,getBinArrayLowerUpperBinId} from './sdk-runtime.mjs';
-import {readCapture,PROGRAM,SDK_COMMIT,IDL_BLOB,blob} from './inspect-pool.mjs';
+import {loadMarketCapture,decodePool,PROGRAM,SDK_COMMIT,IDL_BLOB} from './inspect-pool.mjs';
 import {bitmapIndexes} from './bitmap.mjs';
 import {decodeMarketBin} from './bin-version.mjs';
 const assert=(v,msg)=>{if(!v)throw Error(msg);};
 const key=v=>new PublicKey(v).toBase58();
 const int=(v)=>{const n=Number(v.toString());assert(Number.isSafeInteger(n),'invalid integer');return n;};
-async function main(){
- const {values}=parseArgs({options:{capture:{type:'string'},idl:{type:'string'},help:{type:'boolean'}}});
- if(values.help){console.log('node research/live/inspect-bins.mjs --capture data/raw/accounts-... --idl data/raw/dlmm-idl.json');return;}
- assert(values.capture&&values.idl,'capture and pinned IDL required');
- const bytes=await readFile(values.idl);assert(blob(bytes)===IDL_BLOB,'pinned IDL mismatch');
- const idl=JSON.parse(bytes);assert(idl.address===PROGRAM.toBase58(),'IDL program mismatch');
- const coder=new anchor.BorshAccountsCoder(idl);
- const {m,accounts}=await readCapture(values.capture);
+export function decodeBins({m,accounts,coder,pair}){
  const pool=new PublicKey(m.pool);
  function decode(address,name){const raw=accounts.get(address);assert(raw&&!raw.executable&&raw.owner.equals(PROGRAM),'missing account or owner mismatch: '+address);return coder.decode(name,raw.data);}
- const pair=decode(m.pool,'LbPair');
  const bitmap=deriveBinArrayBitmapExtension(pool,PROGRAM)[0].toBase58();
  const report={schemaVersion:1,sdkCommit:SDK_COMMIT,idlBlob:IDL_BLOB,slot:m.contextSlot,rawHash:m.raw.sha256,pool:m.pool,mintX:key(pair.token_x_mint),mintY:key(pair.token_y_mint),activeId:int(pair.active_id),binStep:int(pair.bin_step),bitmap,scope:'BITMAP_MARKED_ARRAYS_ONLY',status:'PARTIAL',limitations:['Supplied capture only; not independent RPC verification.','Bitmap membership is not proof of all allocated empty arrays.','No quote, position entitlement, or PnL calculation.']};
  assert(report.binStep>0,'invalid bin step');
- const print=()=>{console.log(JSON.stringify(report,null,2));if(report.status!=='BITMAP_COVERAGE_CHECKED_UNVERIFIED')process.exitCode=1;};
- if(!accounts.has(bitmap)){report.missing=[bitmap];print();return;}
+ if(!accounts.has(bitmap)){report.missing=[bitmap];return report;}
  let ext=null;
  if(accounts.get(bitmap)){ext=decode(bitmap,'BinArrayBitmapExtension');assert(key(ext.lb_pair)===m.pool,'extension pool mismatch');}
  report.extension=ext?'PRESENT':'ABSENT_AT_CAPTURE_SLOT';
@@ -55,6 +46,17 @@ async function main(){
  report.limitations.push('Totals sum only decoded MM bin principal, not vault balances, total TVL or executable depth. V2 order fields are unknown and not interpreted; reward and order semantics require separate validation.');
  if(!report.missing.length&&!report.unsupported.length)report.status='BITMAP_COVERAGE_CHECKED_UNVERIFIED';
  if(!report.singleCapturePossible)report.limitations.push('More than 98 arrays: current capture CLI cannot archive all in one request; retain partial coverage until an independently validated common-slot reconstruction is available.');
- print();
+ return report;
 }
-main().catch(e=>{console.error('T03 blocked: '+e.message);process.exitCode=1;});
+export async function decodeMarketCapture(capture,idl){
+ const context=await loadMarketCapture(capture,idl);
+ return {identity:decodePool(context),bins:decodeBins(context)};
+}
+async function main(){
+ const {values}=parseArgs({options:{capture:{type:'string'},idl:{type:'string'},help:{type:'boolean'}}});
+ if(values.help){console.log('node research/live/inspect-bins.mjs --capture data/raw/accounts-... --idl data/raw/dlmm-idl.json');return;}
+ assert(values.capture&&values.idl,'capture and pinned IDL required');
+ const report=decodeBins(await loadMarketCapture(values.capture,values.idl));
+ console.log(JSON.stringify(report,null,2));if(report.status!=='BITMAP_COVERAGE_CHECKED_UNVERIFIED')process.exitCode=1;
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(e=>{console.error('T03 blocked: '+e.message);process.exitCode=1;});

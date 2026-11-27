@@ -6,6 +6,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {parseArgs} from 'node:util';
 import {PublicKey} from '@solana/web3.js';
+import {decodeMarketCapture} from './inspect-bins.mjs';
 import {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex} from './state-core.mjs';
 import {runCollectorLanes,serializedWriter} from './collector-scheduler.mjs';
 import {repairPlan,advanceRepair,failedRepair,historyCoverage} from './history-repair.mjs';
@@ -75,8 +76,7 @@ try{
   let required=plan().accounts,fallback=null;
   for(let attempt=0;attempt<5;attempt++){
    const {p,m}=await accounts(required);
-   const identity=await inspect('inspect-pool.mjs',p);
-   const bins=await inspect('inspect-bins.mjs',p);
+   const {identity,bins}=await decodeMarketCapture(p,idl);
    assert(identity.slot===m.contextSlot&&bins.slot===m.contextSlot&&identity.rawHash===m.raw.sha256&&bins.rawHash===m.raw.sha256,'snapshot evidence mismatch');
    if(identity.status==='UNSUPPORTED_ENGINE_INPUT')throw Error('unsupported market identity');
    const base=[...new Set([...(identity.requiredAccounts??[]),bins.bitmap,...(bins.expected??[]).map(x=>x.address)].filter(Boolean))].filter(a=>a!==pool);

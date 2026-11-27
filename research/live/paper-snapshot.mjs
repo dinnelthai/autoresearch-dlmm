@@ -15,7 +15,7 @@ export function createPaperSnapshotReader({ROOT,io,idl,cacheLimit=4}){
   const key=JSON.stringify([p,manifestHash,accountsHash,idlHash]),hit=cache.get(key);
   if(hit){cache.delete(key);cache.set(key,hit);return structuredClone(hit)}
   const args=['--capture',p,'--idl',idl];
-  const identity=await io.run(args,'inspect-pool.mjs',30000),bins=await io.run(args,'inspect-bins.mjs',30000);
+  const {identity,bins}=io.decodeMarket?await io.decodeMarket(p,await io.safeDataPath(idl)):{identity:await io.run(args,'inspect-pool.mjs',30000),bins:await io.run(args,'inspect-bins.mjs',30000)};
   assert(identity.status==='IDENTITY_CHECKED_UNVERIFIED'&&bins.status==='BITMAP_COVERAGE_CHECKED_UNVERIFIED'&&identity.pool===manifest.pool&&bins.pool===manifest.pool&&identity.slot===manifest.contextSlot&&bins.slot===manifest.contextSlot&&identity.rawHash===accountsHash&&bins.rawHash===accountsHash&&sha(await read(manifestPath,16*1024*1024))===manifestHash&&sha(await read(accountsPath,32*1024*1024))===accountsHash&&sha(await read(idl,8*1024*1024))===idlHash,'PAPER_CAPTURE_CHANGED');
   const out={identity,bins,proof:{path:relative(ROOT,p),manifestHash,accountsHash,requestedAt:manifest.requestedAt??null,receivedAt:manifest.receivedAt??null}};
   if(cacheLimit){cache.set(key,structuredClone(out));while(cache.size>cacheLimit)cache.delete(cache.keys().next().value)}
