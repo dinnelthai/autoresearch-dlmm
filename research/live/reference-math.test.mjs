@@ -1,3 +1,4 @@
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import {quoteMath} from './reference-math.mjs';
 const bid={inRaw:'100',outRaw:'1000'},ask={inRaw:'1100',outRaw:'100'};

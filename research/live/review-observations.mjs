@@ -87,7 +87,10 @@ export function collectedPaperObservation({m,reference,external,holder,history,n
 }
 export function collectedPaperInputs({m,req,samples,asOf}){
  const cfg=Engine.requestConfig(req,{...req.riskConfig,binStepBps:m.binStep,anchorPrice:10**(m.decimalsX-m.decimalsY),maxReferenceAge:120,forecastHorizonSeconds:req.horizonSeconds});
- const observations=samples.filter(s=>s.basis===PAPER_OBSERVATION_BASIS&&s.event.pool===m.pool&&s.slot<=m.slot&&s.event.t<=asOf).map(s=>({...s.event,ref:Engine.reference(s.event,cfg)})).filter(e=>e.ref.valid);
+ const seen=new Set(),eligible=samples.filter(s=>s.basis===PAPER_OBSERVATION_BASIS&&s.event.pool===m.pool&&s.slot<=m.slot&&s.event.t<=asOf).filter(s=>{const e=s.evidence?.reference;if(e?.source!=='METEORA_DLMM_SDK')return true;if(seen.has(e.sha256))return false;seen.add(e.sha256);return true});
+ const evaluated=eligible.map(s=>({...s.event,ref:Engine.reference(s.event,cfg)})),last=evaluated.at(-1);
+ if(last&&!last.ref.valid)throw Error('PAPER_REFERENCE_'+last.ref.reason);
+ const observations=evaluated.filter(e=>e.ref.valid);
  const latest=observations.at(-1);
  assert(observations.length>=3&&latest&&latest.ref.expiresAt>=asOf&&asOf-latest.t<=cfg.maxReferenceAge,'PAPER_COLLECTED_MODEL_WARMUP');
  return {asOf,cfg,observations,latest,basis:PAPER_OBSERVATION_BASIS};

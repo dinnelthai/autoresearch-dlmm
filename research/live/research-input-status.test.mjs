@@ -33,3 +33,17 @@ test('collected paper bridge derives bounded features and three causal reference
 });
 
 test('shared evidence reader returns matching bytes and rejects invalid digests',async()=>{const {sha,verifiedEvidence}=await import('./evidence-digest.mjs');const b=Buffer.from('observed'),read=async()=>b;assert.equal(await verifiedEvidence(read,'data/raw/a',sha(b)),b);await assert.rejects(()=>verifiedEvidence(read,'data/raw/a','0'.repeat(64)),/EVIDENCE_HASH_MISMATCH/);await assert.rejects(()=>verifiedEvidence(read,'data/raw/a',null),/EVIDENCE_HASH_MISMATCH/)});
+
+test('Meteora reference bridge recomputes SDK quotes, rejects stale or target references and duplicate capture warmup',async()=>{
+ const {meteoraReferenceInputs,collectedPaperInputs}=await import('./review-observations.mjs'),{quoteMath}=await import('./reference-math.mjs');
+ const m={pool:'A'.repeat(32),mintX:'B'.repeat(32),mintY:'C'.repeat(32),decimalsX:6,binStep:100,slot:10};
+ const now=100000,iso=t=>new Date(t).toISOString(),bid={status:'FULL_QUOTE',inRaw:'10000000',outRaw:'10000000',minOutRaw:'9950000'},ask={status:'FULL_QUOTE',inRaw:'10010000',outRaw:'10000000',minOutRaw:'9950000'},ladder=[bid,{status:'FULL_QUOTE',inRaw:'3000000000',outRaw:'3000000000',minOutRaw:'2985000000'}],math=quoteMath(bid,ask,ladder,200);
+ const refs=['D','E'].map(k=>({pool:k.repeat(32),venue:'METEORA_DLMM',status:'QUOTES_CAPTURED_UNVERIFIED',before:{slot:1,receivedAt:iso(now-2000)},after:{slot:2,receivedAt:iso(now-1000)},bid,ask,...math}));
+ const reference={capture:'data/raw/ref',manifestHash:'a'.repeat(64),report:{pool:m.pool,mint:m.mintX,decimals:6,commitment:'finalized',status:'REFERENCE_EVIDENCE_UNVERIFIED',completedAt:iso(now-500),maxDiscountBps:200,references:refs}};
+ const rs=meteoraReferenceInputs({m,reference,now});assert.equal(rs.length,2);assert.equal(rs[0].depth,2.985);assert.throws(()=>meteoraReferenceInputs({m,reference,now:now+121000}),/METEORA_REFERENCE_UNAVAILABLE/);
+ assert.throws(()=>meteoraReferenceInputs({m,reference:{...reference,report:{...reference.report,references:[{...refs[0],pool:m.pool},refs[1]]}},now}),/METEORA_REFERENCE_STALE_OR_INVALID/);
+ const samples=[0,1,2].map(i=>({basis:'COLLECTED_MARKET_FEATURE_PROXY_V1',slot:i+1,evidence:{reference:{source:'METEORA_DLMM_SDK',sha256:'a'.repeat(64)}},event:{type:'MARKET',pool:m.pool,t:100+i,id:'ref'+i,references:rs}}));
+ const req={goal:'balanced',horizonSeconds:600,riskConfig:{}};assert.throws(()=>collectedPaperInputs({m,req,samples,asOf:102}),/PAPER_COLLECTED_MODEL_WARMUP/);
+ for(let i=0;i<3;i++)samples[i].evidence.reference.sha256=String(i).repeat(64);
+ assert.equal(collectedPaperInputs({m,req,samples,asOf:102}).observations.length,3);
+});

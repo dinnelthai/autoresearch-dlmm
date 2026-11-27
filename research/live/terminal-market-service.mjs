@@ -66,7 +66,7 @@ async function captureMarketTime(m){
   try{
    state=await loadState(m.pool);
    const stream=observedStream(state.streams?.references),e=stream?.evidence;
-   assert(stream?.status==='CAPTURED_UNVERIFIED'&&typeof e?.capture==='string','METEORA_REFERENCE_STREAM_UNAVAILABLE');
+   assert(stream?.status==='CAPTURED_UNVERIFIED'&&typeof e?.capture==='string',stream?.reason??'METEORA_REFERENCE_STREAM_UNAVAILABLE');
    const bytes=await boundedRead(await safeDataPath(join(ROOT,e.capture,'manifest.json')),16*1024*1024);
    assert(sha(bytes)===e.manifestHash,'METEORA_REFERENCE_MANIFEST_CHANGED');
    const candidate={capture:e.capture,manifestHash:e.manifestHash,report:JSON.parse(bytes)};
