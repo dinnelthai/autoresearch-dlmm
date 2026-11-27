@@ -1,5 +1,5 @@
 // T14 B1: exact public wallet observations. Not a spendability or fee quote.
-const assert=(v,m)=>{if(!v)throw Error(m)};
+import {assert,hash} from './research-contract.mjs';
 const raw=v=>typeof v==='string'&&/^\d{1,20}$/.test(v)&&BigInt(v)<=18446744073709551615n;
 export function lamportsRaw(v){
  assert(Number.isSafeInteger(v)&&v>=0,'WALLET_LAMPORTS_PRECISION_UNSUPPORTED');
@@ -19,7 +19,7 @@ export function validateWalletEvidence(e,{wallet,mintX,mintY,decimalsX,marketSlo
   assert(a.status==='FROZEN'?a.frozen:a.frozen===false,'WALLET_TOKEN_CAPTURE_INVALID');
   if(a.status==='MISSING')assert(a.amountRaw==='0'&&!a.delegated,'WALLET_TOKEN_CAPTURE_INVALID');
  }
- assert(/^[0-9a-f]{64}$/.test(e.rawHash)&&typeof e.directory==='string','WALLET_EVIDENCE_HASH_MISSING');
+ assert(hash(e.rawHash)&&typeof e.directory==='string','WALLET_EVIDENCE_HASH_MISSING');
  return e;
 }
 export function walletReview(e,review){

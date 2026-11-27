@@ -5,7 +5,6 @@ import {randomUUID} from 'node:crypto';
 import {poolAddress,currentMarket,requestFromDraft,reviewMatches,positionCapture,managementRequest} from './terminal-core.mjs';
 import {buildReview,assertSameReview} from './review-core.mjs';
 import {allocationDiagnostic} from './allocation-diagnostic.mjs';
-import {sdkWeightDiagnostic} from './sdk-weight-diagnostic.mjs';
 import {validateWalletEvidence,walletReview} from './wallet-evidence-core.mjs';
 import {assert,errorCode,sameSnapshot} from './research-contract.mjs';
 import {sha} from './evidence-digest.mjs';
@@ -99,6 +98,7 @@ async function inspectReview(body){
  const {saved,r,b,m,result}=await reviewContext(body);
  const integerAllocation=saved.mode==='plans'?allocationDiagnostic({row:r.planPreview.families[body.rowIndex].best,market:m,budget:b.researchBudget}):{status:'BLOCKED',reason:'MANAGEMENT_INTEGER_MAPPING_PENDING',executionReady:false,signingAvailable:false};
  let captureDirectory=null;if(cfg.weightDiagnostic?.inverseEnabled===true&&typeof m.capture==='string'){try{captureDirectory=await safeDataPath(m.capture)}catch{}}
+ const {sdkWeightDiagnostic}=await import('./sdk-weight-diagnostic.mjs');
  const weightDiagnostic=await sdkWeightDiagnostic(integerAllocation,m,cfg.weightDiagnostic,captureDirectory);
  const latest=await reviewContext(body);assert(latest.saved===saved,'RESEARCH_REPORT_UNAVAILABLE');
  const expiry=assertSameReview(result,latest.result,Date.now());
@@ -108,29 +108,26 @@ async function inspectWalletEvidence(body){
  assert(cfg.walletEvidence?.enabled===true,'WALLET_EVIDENCE_DISABLED');
  const genesis=cfg.walletEvidence.expectedGenesisHash;
  assert(typeof genesis==='string'&&/^[1-9A-HJ-NP-Za-km-z]{20,64}$/.test(genesis),'WALLET_EXPECTED_GENESIS_REQUIRED');
- const before=await inspectReview(body),m=currentMarket(await loadState(),pool,Date.now(),maxAgeMs);
- assert(m.slot===before.marketSlot&&m.rawHash===before.marketRawHash&&before.expiresAt>Date.now(),'RESEARCH_MARKET_CHANGED');
- const args=['--wallet',before.wallet,'--mint-x',m.mintX,'--mint-y',m.mintY,'--decimals-x',String(m.decimalsX),'--min-slot',String(m.slot),'--genesis',genesis];
- const e=await run(args,'capture-wallet.mjs');
- if(e.status==='BLOCKED')throw Error(e.reason??'WALLET_CAPTURE_FAILED');
- validateWalletEvidence(e,{wallet:before.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now:Date.now()});
- const raw=await boundedRead(await safeDataPath(join(e.directory,'rpc.json')),8*1024*1024);assert(sha(raw)===e.rawHash,'WALLET_EVIDENCE_HASH_MISMATCH');
+ const {result:before,m}=await reviewContext(body);
+ const {e,validate}=await captureWalletObservation(before.wallet,m,genesis);
  const {result:after}=await reviewContext(body),now=Date.now(),expiry=assertSameReview(before,after,now);
- validateWalletEvidence(e,{wallet:before.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now});
+ validate(now);
  return {...walletReview(e,{...after,expiresAt:expiry}),reviewId:body.reviewId,mode:after.mode,rowIndex:after.rowIndex,pool:after.pool,position:after.position,marketSlot:after.marketSlot,marketRawHash:after.marketRawHash,reviewHash:after.reviewHash,policyHash:after.policyHash,positionSlot:after.positionSlot,positionRawHash:after.positionRawHash};
+}
+async function captureWalletObservation(wallet,m,genesis){
+ const e=await run(['--wallet',wallet,'--mint-x',m.mintX,'--mint-y',m.mintY,'--decimals-x',String(m.decimalsX),'--min-slot',String(m.slot),'--genesis',genesis],'capture-wallet.mjs');
+ if(e.status==='BLOCKED')throw Error(e.reason??'WALLET_CAPTURE_FAILED');
+ const validate=(now=Date.now())=>validateWalletEvidence(e,{wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now});
+ validate();
+ const raw=await boundedRead(await safeDataPath(join(e.directory,'rpc.json')),8*1024*1024);assert(sha(raw)===e.rawHash,'WALLET_EVIDENCE_HASH_MISMATCH');
+ validate();return {e,validate};
 }
 // Public wallet observation is separate from strategy review; no authorization or spendability claim.
 async function observeWallet(body){
  assert(poolAddress(body?.pool)&&poolAddress(body.wallet),'WALLET_CAPTURE_ARGUMENTS_INVALID');
  const scope=validateScope(body.pool),m=currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs);
  const genesis='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
- const args=['--wallet',body.wallet,'--mint-x',m.mintX,'--mint-y',m.mintY,'--decimals-x',String(m.decimalsX),'--min-slot',String(m.slot),'--genesis',genesis];
- const e=await run(args,'capture-wallet.mjs');
- if(e.status==='BLOCKED')throw Error(e.reason??'WALLET_CAPTURE_FAILED');
- validateWalletEvidence(e,{wallet:body.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now:Date.now()});
- const raw=await boundedRead(await safeDataPath(join(e.directory,'rpc.json')),8*1024*1024);
- assert(sha(raw)===e.rawHash,'WALLET_EVIDENCE_HASH_MISMATCH');
- validateWalletEvidence(e,{wallet:body.wallet,mintX:m.mintX,mintY:m.mintY,decimalsX:m.decimalsX,marketSlot:m.slot,genesis,now:Date.now()});
+ const {e}=await captureWalletObservation(body.wallet,m,genesis);
  return {pool:scope,mintX:m.mintX,mintY:m.mintY,...walletReview(e,{expiresAt:e.receivedAt+30000})};
 }
 

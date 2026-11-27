@@ -91,6 +91,8 @@ jobs:
             research/live/paper-history-fs.test.mjs \
             research/live/research-snapshot.test.mjs \
             research/live/research-replay.test.mjs \
+            research/live/review-core.test.mjs \
+            research/live/wallet-evidence-core.test.mjs \
             research/live/research-catalog.test.mjs | tee native-paper-service.tap
       - name: Retain service output
         if: always()

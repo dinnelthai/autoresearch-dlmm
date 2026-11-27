@@ -1,8 +1,6 @@
 // T14 research review only. Never grants wallet permissions or builds transactions.
-const assert=(v,m)=>{if(!v)throw Error(m)};
-const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
-const address=v=>typeof v==='string'&&/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v);
-const amount=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0;
+import {assert,hash,poolAddress as address,finite} from './research-contract.mjs';
+const amount=v=>finite(v,0);
 export function buildReview({report,mode,rowIndex,wallet,market,position=null,reviewHash,policyHash=null,now}){
  assert(['plans','management'].includes(mode)&&address(wallet),'REVIEW_WALLET_REQUIRED');
  assert(report?.status==='RESEARCH_DIAGNOSTIC_UNVERIFIED'&&report.decisionReady===false&&report.executionReady===false,'RESEARCH_REPORT_UNAVAILABLE');

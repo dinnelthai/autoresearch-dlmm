@@ -43,3 +43,5 @@ The legacy Python optimizer is separate OHLCV exploration; use it for historical
 New evidence-builder requests archive the collection clock and source errors in the snapshot's hashed `diagnostic.json`. The response still includes a candidate summary for compatibility; its `capture` points to the snapshot, not a separate candidate directory. The catalog lists each snapshot once and retains old candidate-only pointers. Existing candidate directories are untouched.
 
 The Paper page starts directly with fixed observed-bin controls and an optional flat Adaptive row. The automatic decision path prefers collected observations, falling back to a matched reviewed observation if needed. Explicit legacy API review-bound opening remains available. The observation basis remains visible; neither source implies calibrated profitability.
+
+Wallet observations do not run integer-allocation or SDK weight/inverse diagnostics. Those diagnostics are reserved for explicit strategy review and the existing independent audit tools. Shared wallet capture verifies identity, freshness and raw bytes before returning read-only balances.
