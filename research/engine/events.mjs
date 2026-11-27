@@ -1,7 +1,7 @@
 // Extracted from the offline research engine; calculations unchanged.
 import {EPS,clone,assert,finite,price} from './numeric.mjs';
 import {nav,balances,mature} from './accounting.mjs';
-import {reference,fresh,classify} from './market.mjs';
+import {reference,fresh,classify,marketAdmission} from './market.mjs';
 import {risk} from './risk.mjs';
 import {applyAction} from './liquidity.mjs';
 function swap(s,c,e){
@@ -50,7 +50,7 @@ function executePending(s,c,t){
       assert(!g.flags.includes("TOXIC_BID")||!trial.bins.some(b=>b.y>EPS),"toxic bid blocked");
       assert(!g.flags.includes("TOXIC_ASK")||!trial.bins.some(b=>b.x>EPS),"toxic ask blocked");
       assert(!r.violations.length,"execution risk: "+r.violations.join(","));
-      assert(!["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)&&!g.flags.includes("HOLDER_CONCENTRATION"),"market admission changed");
+      assert(marketAdmission(g),"market admission changed");
     }
     Object.assign(s,trial);s.lastActionTime=t;s.receipts.push({id:op.id,t,action:op.action.type,...result,modeledCostSol,modeledTurnoverSol,costBasis:'DECLARED_LOGICAL_OPERATION_AGGREGATE'});
     if(fresh(s,c,t))record(s,s.market.ref.price,t);

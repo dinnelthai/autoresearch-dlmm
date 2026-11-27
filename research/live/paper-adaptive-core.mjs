@@ -1,5 +1,6 @@
 // T10 on a virtual observed-share position only. No chain position or signing.
 import {Engine as E} from '../engine.mjs';
+import {strategyTuning} from '../engine/numeric.mjs';
 import {rawHuman} from './engine-input.mjs';
 import {snapshotRows} from './paper-fee-core.mjs';
 import {previewManagement} from './preview-management.mjs';
@@ -10,6 +11,16 @@ import {assert,errorCode} from './research-contract.mjs';
 const raw=v=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v),'PAPER_ADAPTIVE_RAW');return BigInt(v)};
 export function adaptivePolicy(p){
  assert(p&&Number.isSafeInteger(p.cooldownSeconds)&&p.cooldownSeconds>=15&&p.cooldownSeconds<=86400&&Number.isSafeInteger(p.maxRebalances)&&p.maxRebalances>=0&&p.maxRebalances<=100&&Number.isFinite(p.maxTurnoverSol)&&p.maxTurnoverSol>0&&p.maxTurnoverSol<=100000,'PAPER_ADAPTIVE_POLICY');return {cooldownSeconds:p.cooldownSeconds,maxRebalances:p.maxRebalances,maxTurnoverSol:p.maxTurnoverSol};
+}
+// The tuned cooldown is a strategy preference, bounded below by the experiment control.
+// Absolute experiment loss limits are also upper bounds on modeled loss budgets.
+export function paperDecisionConfig(riskConfig,controls,tuning,policy){
+ const checked=adaptivePolicy(controls),prefs=strategyTuning(tuning);
+ const loss=Number(raw(policy.maxLossSolRaw))/1e9;
+ assert(Number.isFinite(loss)&&loss>0,'PAPER_ADAPTIVE_LOSS_LIMIT');
+ const cfg={...riskConfig,...checked,...prefs,cooldownSeconds:Math.max(checked.cooldownSeconds,prefs.cooldownSeconds??0),maxLossSol:Math.min(riskConfig.maxLossSol,loss)};
+ E.config(cfg);
+ return cfg;
 }
 export function paperEnvironment(reviewed){
  const {latest,observations,asOf,cfg}=reviewed;

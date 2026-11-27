@@ -8,7 +8,7 @@ import {openSnapshotExperiment,updateAdaptiveSnapshot,PAPER_SNAPSHOT_LIMIT} from
 import {nextPaperCapture,paperPublic,paperStatus} from './paper-auto-core.mjs';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {strategyTuning} from '../engine/numeric.mjs';
-import {adaptivePolicy,virtualManagement,paperEnvironment} from './paper-adaptive-core.mjs';
+import {adaptivePolicy,paperDecisionConfig,virtualManagement,paperEnvironment} from './paper-adaptive-core.mjs';
 import {reviewedObservations,collectedPaperInputs,PAPER_OBSERVATION_BASIS} from './review-observations.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha,verifiedEvidence} from './evidence-digest.mjs';
@@ -70,7 +70,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   const controls=adaptivePolicy(body.policy.adaptive??{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30}),tuning=strategyTuning(optimization?.tuning??body.policy.tuning??{});
   const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,budget,policy:body.policy,backendHash,frozenAt:Date.now(),adaptiveOnly:true});
   state.researchRequest=request;
-  state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls,...tuning}};
+  state.adaptiveRequest={...request,riskConfig:paperDecisionConfig(riskConfig,controls,tuning,state.policy)};
   const row=state.rows.find(r=>r.mode==='adaptive');row.adaptiveReason='ADAPTIVE_RESEARCH_INPUT_REQUIRED';row.mapping=null;
   state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);
   state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash:null,reportHash:sha(JSON.stringify(state.adaptiveRequest)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:'ADAPTIVE_ONLY',...(optimization?{optimization:{datasetSha256:optimization.datasetSha256,nextWindowAfter:optimization.nextWindowAfter,tuning:strategyTuning(optimization.tuning),proposalHash:sha(JSON.stringify(optimization))}}:{})};
