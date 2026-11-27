@@ -12,11 +12,14 @@ function renderActualMarket(m){
  put('actualBinTotals','MM 本金合计：'+total(d.totalYRaw,9)+' SOL / '+total(d.totalXRaw,m.decimalsX)+' MEME（不含订单流动性及费用）');
  for(const b of d.rows){const tr=document.createElement('tr');cell(tr,String(b.binId)+(b.binId===m.activeId?' · Active':''));cell(tr,Number.isFinite(b.priceSolPerMeme)&&b.priceSolPerMeme>0?b.priceSolPerMeme.toPrecision(8):'—');cell(tr,exactAmount(b.amountYRaw,9));cell(tr,exactAmount(b.amountXRaw,m.decimalsX));body.append(tr)}
 }
+function archiveExpiredReport(m,gate){
+ if(report?.terminalBinding&&(!m||report.terminalBinding.marketSlot!==m.slot||report.terminalBinding.marketRawHash!==m.rawHash||gate?.reviewHash!==report.terminalBinding.reviewHash||report.terminalBinding.expiresAt<=Date.now())){const {terminalBinding,reviewId,...archive}=report;report=archive;put('reportSource','历史研究 · Slot '+terminalBinding.marketSlot);put('bindingStatus','原快照研究结果保留；当前绑定失效，不可用于当前审阅。');put('generateStatus','已保留上次研究结果，可重新生成。')}
+}
 function applyServiceMarket(m,gate=null){
  if(!m||serviceMarket?.rawHash!==m.rawHash||serviceMarket?.slot!==m.slot){clearExternalMarket();clearModelInputs()}
  renderActualMarket(m);
  serviceReview=gate;
- if(report?.terminalBinding&&(!m||report.terminalBinding.marketSlot!==m.slot||report.terminalBinding.marketRawHash!==m.rawHash||gate?.reviewHash!==report.terminalBinding.reviewHash||report.terminalBinding.expiresAt<=Date.now())){const {terminalBinding,reviewId,...archive}=report;report=archive;put('reportSource','历史研究 · Slot '+terminalBinding.marketSlot);put('bindingStatus','原快照研究结果保留；当前市场已更新，不可用于当前审阅。');put('generateStatus','已保留上次研究结果，可重新生成。')}
+ archiveExpiredReport(m,gate);
  serviceMarket=m;
  const ready=canAnalyze();$('reviewDot').dataset.ready=String(ready);put('reviewStatus',ready?'证据版本匹配 · 待引擎验证':m?reasonText(gate?.reason??'REVIEW_STALE_OR_INVALID'):'等待可用市场快照');
  if(!report){put('activeBin',m?m.activeId+' / '+m.binStep+' bps':'—');put('slot',m?.slot??'—');put('quality',m?'采集未验收':'采集不可用')}

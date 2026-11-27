@@ -44,14 +44,12 @@ $('paperAutoStart').addEventListener('click',async()=>{
   const policy={evaluationDays:Number($('paperEvaluationDays').value),maxDrawdownBps:Math.round(dd),maxGapSeconds:gap,maxLossSolRaw:paperSolRaw($('paperAutoLoss').value.trim()),exitCostSolRaw:paperSolRaw($('paperAutoExitCost').value.trim())};
   if($('paperAdaptiveEnabled').checked)policy.adaptive={cooldownSeconds:number('paperAdaptiveCooldown'),maxRebalances:number('paperAdaptiveCount'),maxTurnoverSol:number('paperAdaptiveTurnover')};
   paperAutoBusy=true;paperAutoGeneration++;$('paperAutoStart').disabled=true;put('paperAutoStatus','正在生成并冻结虚拟方案…');
-  if(p!==target||draft!==d)throw Error('Pool 或草稿已变化');
   const res=await terminalPost('/api/terminal/paper-start',{draft:d,policy},45000),r=await res.json();
   if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'启动失败');renderAutoPaper(validateAutoPaper(r,p))
  }catch(e){if(p===target)put('paperAutoStatus','启动失败：'+e.message)}
  finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}
 });
 $('paperAutoPause').addEventListener('click',async()=>{if(paperAutoBusy||!paperAutoData?.running||paperAutoData.pool!==target)return;const p=target,id=paperAutoData.id;paperAutoBusy=true;paperAutoGeneration++;$('paperAutoPause').disabled=true;try{const res=await terminalPost('/api/terminal/paper-pause',{pool:p,id},10000),r=await res.json();if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'暂停失败');renderAutoPaper(validateAutoPaper(r,p))}catch(e){if(p===target)put('paperAutoStatus','暂停失败：'+e.message)}finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}});
-setInterval(refreshPaperAuto,15000);
 
 let paperPoolsReading=false;
 async function refreshPaperPools(){
@@ -66,4 +64,4 @@ async function refreshPaperPools(){
  finally{paperPoolsReading=false}
 }
 $('paperAutoRefresh').addEventListener('click',refreshPaperPools);
-setInterval(refreshPaperPools,15000);
+setInterval(()=>{refreshPaperAuto();refreshPaperPools()},15000);

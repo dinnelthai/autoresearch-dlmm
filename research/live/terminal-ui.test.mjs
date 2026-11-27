@@ -23,6 +23,7 @@ function mount(){
   choosePosition:i=>{$('positionRows').children[i].children.at(-1).children[0].listeners.click[0]();return positionGeneration},
   ready:manageReady,
   matchesReviewResponse,
+  expireReport:()=>{report={terminalBinding:{marketSlot:1,marketRawHash:'h',expiresAt:0},reviewId:'old',planPreview:{families:[]}};archiveExpiredReport(null,null);return {preserved:!!report.planPreview,bound:!!report.terminalBinding,review:!!report.reviewId}},
   reviewScope:()=>target,
   accountingEpoch:()=>accountingGeneration,
   refreshIndexOnly:()=>clearWalletPositions({preserveAccounting:true}),
@@ -48,3 +49,5 @@ test('management disabled when common market expires before position',()=>{
 });
 
 test('index expiration does not invalidate ongoing accounting, explicit scope reset does',()=>{const {api}=mount(),g=api.accountingEpoch();api.refreshIndexOnly();assert.equal(api.accountingEpoch(),g);api.resetIndex();assert.equal(api.accountingEpoch(),g+1)});
+
+test('expired research remains visible as historical instead of clearing the result',()=>{const {api}=mount();const r=api.expireReport();assert.equal(r.preserved,true);assert.equal(r.bound,false);assert.equal(r.review,false)});

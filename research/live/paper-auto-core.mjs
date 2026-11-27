@@ -18,7 +18,7 @@ export function pairedObservation(state){
  const base=state.rows.find(r=>r.mode==='NO_LP'),b=base?.points?.at(-1),n=state.snapshotCount;
  const count=r=>(r.pointsDropped??0)+(r.points?.length??0);
  const signed=v=>typeof v==='string'&&/^-?\d{1,80}$/.test(v);
- const eligible=[INTERVAL_FEE_BASIS,'FROZEN_FEE_FLOW_DILUTION_PROXY_V1'].includes(state.feeBasis)&&state.gapCount===0&&Number.isSafeInteger(n)&&n>=2&&base?.status==='HOLD_ONLY'&&b?.slot===state.last.slot&&count(base)===n&&signed(b.navYRaw);
+ const eligible=[INTERVAL_FEE_BASIS,'FROZEN_FEE_FLOW_DILUTION_PROXY_V1'].includes(state.feeBasis)&&state.gapCount===0&&Number.isSafeInteger(n)&&n>=2&&base?.status==='HOLD_ONLY'&&b?.slot===state.last.slot&&count(base)===n&&signed(b.navYRaw)&&signed(base.initialNavYRaw)&&BigInt(base.initialNavYRaw)>0n;
  const rows=state.rows.map(r=>{
   const p=r.points?.at(-1);let status='UNPAIRED_OBSERVATION',alpha=null;
   if(r.status==='BLOCKED')status='BLOCKED_PATH';
@@ -30,15 +30,15 @@ export function pairedObservation(state){
 // A descriptive, completed-window ranking; never a deployment decision or calibrated optimizer result.
 export function completedPaperEvaluation(state,comparison=pairedObservation(state)){
  if(!comparison.completeEvaluationWindow)return null;
- const rows=[],excluded=[];
+ const rows=[],excluded=[],initial=BigInt(state.rows.find(r=>r.mode==='NO_LP').initialNavYRaw);
  for(const row of state.rows){
   const paired=comparison.rows.find(r=>r.mode===row.mode),pt=row.points?.at(-1);
   if(paired?.status!=='PAIRED_OBSERVED_PREFIX_ONLY'||(row.mode==='adaptive'&&(!state.adaptiveRequest||!(row.adaptiveDecisions>0)))){
    excluded.push({mode:row.mode,reason:row.mode==='adaptive'&&!(row.adaptiveDecisions>0)?'NO_ADAPTIVE_MODEL_DECISIONS':paired?.status??'UNPAIRED'});continue;
   }
   try{
-   const initial=BigInt(row.initialNavYRaw),alpha=BigInt(pt.excessVsHoldYRaw),pnl=BigInt(pt.pnlYRaw),dd=row.maxDrawdownBps??pt.drawdownBps;
-   assert(initial>0n&&Number.isSafeInteger(dd)&&dd>=0&&dd<=10000,'PAPER_EVALUATION_METRICS');
+   const alpha=BigInt(pt.excessVsHoldYRaw),pnl=BigInt(pt.pnlYRaw),dd=row.maxDrawdownBps??pt.drawdownBps;
+   assert(Number.isSafeInteger(dd)&&dd>=0&&dd<=10000,'PAPER_EVALUATION_METRICS');
    const totalX=BigInt(row.claimedFeeXRaw??'0')+BigInt(pt.feeXRaw),totalY=BigInt(row.claimedFeeYRaw??'0')+BigInt(pt.feeYRaw);
    const feeMark=totalY+totalX*BigInt(pt.priceQ64Raw)/(1n<<64n);
    // Net alpha includes operating costs. Rank exact rational score at a shared initial capital.
@@ -47,7 +47,6 @@ export function completedPaperEvaluation(state,comparison=pairedObservation(stat
   }catch{excluded.push({mode:row.mode,reason:'PAPER_EVALUATION_METRICS'})}
  }
  rows.sort((a,b)=>a.score>b.score?-1:a.score<b.score?1:a.mode.localeCompare(b.mode));
- const initial=BigInt(state.rows.find(r=>r.mode==='NO_LP').initialNavYRaw);
  return {scope:'COMPLETED_WINDOW_PROXY_ONLY',objective:'NET_ALPHA_BPS_MINUS_HALF_MAX_DRAWDOWN_BPS',rows:rows.map(({score,...r})=>({...r,scoreBps:Number(score*100n/(2n*initial))/100})),excluded,allStrategiesCompared:excluded.length===0,parameterSelection:false};
 }
 export function paperPublic(state,job,{now,maxAgeMs}){
