@@ -25,3 +25,19 @@ test('stale regime, absent log, gaps and blocked paths are not fabricated',()=>{
  const r=report([mk(1,{expires:1}),mk(2,{log:false}),mk(3,{gapCount:1}),mk(4,{gapCount:1,block:true})],{maxChartPoints:2});
  assert.equal(r.gapIntervals,1);assert.equal(r.gapMs,1000);assert.equal(r.missingObservationLogs,1);assert.equal(r.environments.find(x=>x.regime==='UNKNOWN').intervals,1);assert.equal(r.strategies.find(x=>x.mode==='spot').intervalAttribution.missingIntervals,2);assert.equal(r.strategies.find(x=>x.mode==='spot').latest,null);assert.equal(r.chart.points.length,2);assert.equal(r.chart.points.at(-1).sequence,4);
 });
+
+test('horizons resolve at real elapsed time, exclude gaps, retain pending and compare adjacent regimes',()=>{
+ const rows=[];
+ for(let n=1;n<=17;n++){
+  const r=mk(n,{regime:n<3?'HEALTHY_RANGE':'UPTREND',expires:2000,feeX:BigInt(n-1)});
+  const t=n*60000;r.proof.receivedAt=new Date(t).toISOString();r.observationLog.market.asOf=n*60;r.observationLog.market.observationTime=n*60;
+  for(const row of r.rows)row.point.receivedAt=t;
+  if(n===1||n===17)r.observationLog.decision={inputHash:'h',selected:{action:'HOLD'},reason:'HOLD'};
+  rows.push(r)
+ }
+ const r=report(rows),groups=r.decisionHorizons.map(h=>h.groups.find(g=>g.action==='HOLD'));
+ assert.deepEqual(groups.map(g=>g.paired),[1,1,1]);assert.deepEqual(groups.map(g=>g.meanAlphaYRaw),['1','5','15']);assert.deepEqual(groups.map(g=>g.pending),[1,1,1]);
+ const change=r.transitions.find(x=>x.from==='HEALTHY_RANGE'&&x.to==='UPTREND');assert.equal(change.count,1);assert.equal(change.strategies.find(s=>s.mode==='adaptive').beforeAlphaYRaw,'1');assert.equal(r.strategies.find(s=>s.mode==='adaptive').intervalAttribution.feeBpsPerDeployedHour,null);
+ rows[1].gapCount=1;for(const x of rows.slice(2))x.gapCount=1;
+ const broken=report(rows);assert.deepEqual(broken.decisionHorizons.map(h=>h.groups.find(g=>g.action==='HOLD').missing),[1,1,1]);assert.deepEqual(broken.decisionHorizons.map(h=>h.groups.find(g=>g.action==='HOLD').paired),[0,0,0]);
+});
