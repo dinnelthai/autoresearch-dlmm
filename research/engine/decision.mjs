@@ -1,7 +1,7 @@
 // Extracted from the offline research engine; calculations unchanged.
 import {EPS} from './numeric.mjs';
 import {balances} from './accounting.mjs';
-import {fresh,classify} from './market.mjs';
+import {fresh,classify,marketAdmission} from './market.mjs';
 import {risk} from './risk.mjs';
 import {forecast} from './forecast.mjs';
 import {evaluate,compareWithHold} from './evaluation.mjs';
@@ -23,7 +23,7 @@ function decide(s,c,mode="adaptive"){
   if(!fresh(s,c))return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"UNKNOWN_REFERENCE",candidates:[],regime:"UNKNOWN"};
   const g=classify(s,c),p=s.market.ref.price,r=risk(s,c,p);
   if(g.regime==="UNKNOWN"&&!r.violations.length&&!g.flags.includes("HOLDER_CONCENTRATION"))return {action:{type:s.bins.length?"HOLD":"NO_LP"},reason:"WARMUP_OR_INSUFFICIENT_FEATURES",regime:g.regime,risk:r,candidates:[]};
-  if(["STRESS","DISTRIBUTION_RANGE","DEAD_RANGE","UNKNOWN"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION")){
+  if(!marketAdmission(g)){
     return {action:{type:s.bins.length?"REMOVE_AND_HOLD":"NO_LP"},reason:"MARKET_GATE",regime:g.regime,risk:r,candidates:[]};
   }
   const sc=forecast(s,c),results=candidatePlans(s,c,mode).map(a=>evaluate(s,c,a,sc)),base=results[0];

@@ -19,7 +19,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
  else result.alerts.push('OPERATION_HISTORY_UNVERIFIED');
  const cooldown=historyOk?s.lastTime-s.lastActionTime>=cfg.cooldownSeconds:false;
  const budget=historyOk&&s.rebalances<cfg.maxRebalances&&s.turnover+s.rebalanceTurnover<cfg.maxTurnoverSol;
- const marketOk=['HEALTHY_RANGE','UPTREND','DOWNTREND'].includes(g.regime)&&!g.flags.includes('HOLDER_CONCENTRATION');
+ const marketOk=Engine.marketAdmission(g);
  const activeOk=Number.isInteger(market.activeId)&&Engine.binId(cfg,p)===market.activeId;
  result.controls={operationHistorySupplied:!!historyOk,cooldownElapsed:cooldown,rebalanceBudgetAvailable:!!budget,activeBinAligned:activeOk,marketAdmission:marketOk};
  if(!activeOk)result.alerts.push('REFERENCE_AND_ACTIVE_BIN_MISMATCH');

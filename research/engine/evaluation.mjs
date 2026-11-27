@@ -1,7 +1,7 @@
 // Extracted from the offline research engine; calculations unchanged.
 import {EPS,clone,sum,assert,price,cvar} from './numeric.mjs';
 import {nav,reportAt} from './accounting.mjs';
-import {fresh,classify} from './market.mjs';
+import {fresh,classify,marketAdmission} from './market.mjs';
 import {risk} from './risk.mjs';
 import {applyAction} from './liquidity.mjs';
 import {event,executePending,submit} from './events.mjs';
@@ -21,7 +21,7 @@ function evaluate(s,c,action,scenarios,{mappedStart=null}={}){
       if(scenarios.some(v=>v.volumeDiagnostic&&(!v.volumeDiagnostic.flowWindowSeconds||v.volumeDiagnostic.modeledVolumeSol<=0)))throw Error("FORECAST_VOLUME_EVIDENCE_UNAVAILABLE");
       if(scenarios.some(v=>v.volumeDiagnostic&&(v.volumeDiagnostic.missingLiquiditySteps>0||v.volumeDiagnostic.missingCrossedBins>0)))throw Error('FORECAST_LIQUIDITY_COVERAGE_INCOMPLETE');
       if(start.turnover+start.rebalanceTurnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances)throw Error("REBALANCE_BUDGET");
-      if(["UNKNOWN","STRESS","DISTRIBUTION_RANGE","DEAD_RANGE"].includes(g.regime)||g.flags.includes("HOLDER_CONCENTRATION"))throw Error("MARKET_ADMISSION");
+      if(!marketAdmission(g))throw Error("MARKET_ADMISSION");
       if(g.flags.includes("TOXIC_BID")&&sum(start.bins.map(b=>b.y))>EPS)throw Error("TOXIC_BID");
       if(g.flags.includes("TOXIC_ASK")&&sum(start.bins.map(b=>b.x))>EPS)throw Error("TOXIC_ASK");
     }

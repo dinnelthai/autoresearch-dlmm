@@ -36,4 +36,8 @@ function classify(s,c){
   else if(efficiency>.65&&trend<-.025)regime="DOWNTREND";
   return {regime,flags,features:{trend,volatility,efficiency,buyImbalance:m.buyImbalance,holderOutflow:m.holderOutflow,markout:mature},calibration:"UNCALIBRATED_RULES"};
 }
-export {reference,fresh,classify};
+// Shared admission rule for all research and paper decision adapters.
+function marketAdmission(g){
+  return ['HEALTHY_RANGE','UPTREND','DOWNTREND'].includes(g.regime)&&!g.flags.includes('HOLDER_CONCENTRATION');
+}
+export {reference,fresh,classify,marketAdmission};

@@ -11,7 +11,7 @@ export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
  if(!model.market?.ref?.valid||!Number.isSafeInteger(asOf)||asOf<model.lastTime||asOf>model.market.ref.expiresAt||asOf-model.market.t>cfg.maxReferenceAge)return block('REFERENCE_UNAVAILABLE_OR_STALE');
  const g=Engine.classify(model,cfg),p=model.market.ref.price;
  result.currentRisk=Engine.risk(model,cfg,p);result.alerts=[...new Set([...g.flags,...result.currentRisk.violations])];result.regime=g.regime;
- if(!['HEALTHY_RANGE','UPTREND','DOWNTREND'].includes(g.regime)||g.flags.includes('HOLDER_CONCENTRATION'))return block('MARKET_ADMISSION:'+g.regime);
+ if(!Engine.marketAdmission(g))return block('MARKET_ADMISSION:'+g.regime);
  assert(Number.isInteger(market.activeId)&&Array.isArray(market.bins),'market bin metadata required');
  if(Engine.binId(cfg,p)!==market.activeId)return block('REFERENCE_AND_ACTIVE_BIN_MISMATCH');
  const known=new Map(market.bins.map(b=>[b.binId,b]));
