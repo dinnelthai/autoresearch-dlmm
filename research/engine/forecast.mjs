@@ -5,7 +5,7 @@ function forecast(s,c){
   const m=s.market,p=m.ref.price,mid=binId(c,p),step=1+c.binStepBps/10000;
   const flowWindow=Number.isFinite(m.flowWindowSeconds)&&m.flowWindowSeconds>0?m.flowWindowSeconds:null;
   const stepSeconds=c.forecastHorizonSeconds/c.forecastSteps;
-  const stepVolume=flowWindow?finite(m.flowSol,"forecast observed flow")*stepSeconds/flowWindow:0;
+  const stepVolume=flowWindow&&Number.isFinite(m.flowSol)?finite(m.flowSol,"forecast observed flow")*stepSeconds/flowWindow:0;
   assert(Number.isFinite(stepVolume),"FORECAST_VOLUME_NONFINITE");
   const g=classify(s,c),r=g.features,amp=clip(Math.round((r.volatility||.02)/Math.log(step)),2,8);
   const drift=g.regime==="UPTREND"?1:g.regime==="DOWNTREND"?-1:0;
@@ -14,7 +14,7 @@ function forecast(s,c){
     const events=[];let modeledVolumeSol=0,missingLiquiditySteps=0,crossedBins=0,missingCrossedBins=0;const missingIds=new Set();
     for(let i=1;i<=c.forecastSteps;i++){
       const id=mid+pat.f(i)+(j===0?drift*i:0),px=price(c,id),t=s.lastTime+c.forecastHorizonSeconds*i/c.forecastSteps;
-      events.push({type:"MARKET",id:"f"+j+"m"+i,t,pool:m.pool,references:[{pool:"scenario-a",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t},{pool:"scenario-b",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t}],exitDepth:m.exitDepth,tokenSafe:m.tokenSafe,holderShare:m.holderShare,holderOutflow:m.holderOutflow,buyImbalance:m.buyImbalance,flowSol:m.flowSol,flowWindowSeconds:flowWindow});
+      events.push({type:"MARKET",id:"f"+j+"m"+i,t,pool:m.pool,references:[{pool:"scenario-a",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t},{pool:"scenario-b",price:px,depth:Math.max(10,m.ref.depth/2),availableAt:t}],exitDepth:m.exitDepth,tokenSafe:m.tokenSafe,holderShare:m.holderShare,holderOutflow:m.holderOutflow,buyImbalance:m.buyImbalance,flowSol:m.flowSol,flowWindowSeconds:flowWindow,paperTargetMode:m.paperTargetMode===true,targetReference:{pool:m.pool,price:px,depth:m.exitDepth,basis:'TARGET_BIN_SNAPSHOT',observedAt:t,availableAt:t}});
       // Frozen target-bin liquidity, never independent-reference quote depth.
       // Only the explicit built-in demo uses its declared synthetic liquidity proxy.
       const targetLiquidity=k=>s.poolBins[k]??(m.pool==="DEMO_POOL"&&m.syntheticFixture===true?80:null);

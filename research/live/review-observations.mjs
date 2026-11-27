@@ -86,9 +86,7 @@ export function targetPoolReference(m,now,maxAgeMs=120000){
 }
 export function collectedPaperObservation({m,reference,external,holder,history,now=Date.now(),maxAgeMs=120000}){
  const h=featureProjection(holder,m,now,maxAgeMs),flow=boundedSwapObservation(history,m.pool,now,maxAgeMs,{recentOnly:true});
- assert(h?.distribution?.supplyConserved&&finite(h.distribution.topShare,0,1)&&Array.isArray(h.safety?.flags),'PAPER_HOLDER_FEATURES_UNAVAILABLE');
- assert(finite(h.cohort?.netDecreaseShare,0,1),'PAPER_HOLDER_COHORT_WARMUP');
- assert(flow?.sampleKind==='RECENT_EVENT_SAMPLE'&&flow.eventCount>0,'PAPER_FLOW_SAMPLE_UNAVAILABLE');
+ // Optional enrichment: missing evidence remains null, never a fabricated zero.
  let refs=[],referenceEvidence=null;
  const targetReference=targetPoolReference(m,now,maxAgeMs);
  if(reference){try{refs=meteoraReferenceInputs({m,reference,now,maxAgeMs});referenceEvidence={source:'METEORA_DLMM_SDK',capture:reference.capture,sha256:reference.manifestHash}}catch{}}
@@ -103,10 +101,19 @@ export function collectedPaperObservation({m,reference,external,holder,history,n
  assert(refs.length>=1&&new Set(refs.map(r=>r.pool)).size===refs.length&&refs.every(r=>r.pool!==m.pool),'PAPER_REFERENCE_QUOTES_INVALID');
  referenceEvidence={source:'EXTERNAL_QUOTE_FALLBACK',sha256:external.evidenceHash};}catch{refs=[];}}
  if(!referenceEvidence)referenceEvidence={source:'TARGET_BIN_SNAPSHOT',capture:m.capture,sha256:m.rawHash};
- const buy=BigInt(flow.buyLamports),sell=BigInt(flow.sellLamports),gross=buy+sell;
- assert(gross>0n,'PAPER_FLOW_SAMPLE_EMPTY');
+ const buy=BigInt(flow?.buyLamports??'0'),sell=BigInt(flow?.sellLamports??'0'),gross=buy+sell;
  const t=Math.floor(now/1000);
- return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{reference:referenceEvidence,holder:h.evidenceHash,history:flow.capture,flowSample:{kind:flow.sampleKind,eventCount:flow.eventCount,sourceEventCount:flow.sourceEventCount,firstEventTime:flow.firstEventTime,lastEventTime:flow.lastEventTime,windowSeconds:flow.windowSeconds,historyCoverage:flow.historyCoverage,coverageVerified:false}},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,targetReference,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(targetReference.depth,...refs.map(r=>r.depth))}};
+ return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{reference:referenceEvidence,holder:h?.evidenceHash??null,history:flow?.capture??null,flowSample:flow?{...flow,coverageVerified:false}:null},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,targetReference,paperTargetMode:true,tokenSafe:Array.isArray(h?.safety?.flags)?h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true:null,holderShare:h?.distribution?.supplyConserved?h.distribution.topShare:null,holderOutflow:h?.cohort?.netDecreaseShare??null,buyImbalance:gross>0n?Number((buy-sell)*1000000n/gross)/1000000:null,flowSol:gross>0n?Number(gross)/1e9:null,flowWindowSeconds:gross>0n?Math.ceil(maxAgeMs/1000):null,exitDepth:targetReference.depth}};
+}
+// Build a current pool observation every accounting tick, independently of enrichment RPC.
+export function paperTickObservation(m,asOfMs,enrichment,maxAgeMs=120000){
+ const current=collectedPaperObservation({m,now:asOfMs,maxAgeMs});
+ if(enrichment?.basis!==PAPER_OBSERVATION_BASIS||enrichment.event?.pool!==m.pool||enrichment.receivedAt>asOfMs||asOfMs-enrichment.receivedAt>maxAgeMs||enrichment.slot>m.slot)return current;
+ const e=enrichment.event;
+ for(const k of ['tokenSafe','holderShare','holderOutflow','buyImbalance','flowSol','flowWindowSeconds'])current.event[k]=e[k]??null;
+ current.event.references=e.references??[];
+ current.evidence.enrichment={slot:enrichment.slot,receivedAt:enrichment.receivedAt,...enrichment.evidence};
+ return current;
 }
 export function collectedPaperInputs({m,req,samples,asOf}){
  const cfg=Engine.requestConfig(req,{...req.riskConfig,binStepBps:m.binStep,anchorPrice:10**(m.decimalsX-m.decimalsY),maxReferenceAge:120,forecastHorizonSeconds:req.horizonSeconds});
@@ -115,6 +122,6 @@ export function collectedPaperInputs({m,req,samples,asOf}){
  if(last&&!last.ref.valid)throw Error('PAPER_REFERENCE_'+last.ref.reason);
  const observations=evaluated.filter(e=>e.ref.valid);
  const latest=observations.at(-1);
- assert(observations.length>=cfg.regimeMinObservations&&latest&&latest.ref.expiresAt>=asOf&&asOf-latest.t<=cfg.maxReferenceAge,'PAPER_COLLECTED_MODEL_WARMUP');
+ assert(latest&&latest.ref.expiresAt>=asOf&&asOf-latest.t<=cfg.maxReferenceAge,'PAPER_COLLECTED_MODEL_WARMUP');
  return {asOf,cfg,observations,latest,basis:PAPER_OBSERVATION_BASIS};
 }

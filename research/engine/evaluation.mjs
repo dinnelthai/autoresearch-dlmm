@@ -18,8 +18,8 @@ function evaluate(s,c,action,scenarios,{mappedStart=null}={}){
     const g=classify(start,c),rr=risk(start,c,p);
     if(["OPEN","ADD","REPOSITION"].includes(action.type)){
       if(!start.bins.length)throw Error("EMPTY_DEPLOYMENT");
-      if(scenarios.some(v=>v.volumeDiagnostic&&(!v.volumeDiagnostic.flowWindowSeconds||v.volumeDiagnostic.modeledVolumeSol<=0)))throw Error("FORECAST_VOLUME_EVIDENCE_UNAVAILABLE");
-      if(scenarios.some(v=>v.volumeDiagnostic&&(v.volumeDiagnostic.missingLiquiditySteps>0||v.volumeDiagnostic.missingCrossedBins>0)))throw Error('FORECAST_LIQUIDITY_COVERAGE_INCOMPLETE');
+      if(!s.market.paperTargetMode&&scenarios.some(v=>v.volumeDiagnostic&&(!v.volumeDiagnostic.flowWindowSeconds||v.volumeDiagnostic.modeledVolumeSol<=0)))throw Error("FORECAST_VOLUME_EVIDENCE_UNAVAILABLE");
+      if(!s.market.paperTargetMode&&scenarios.some(v=>v.volumeDiagnostic&&(v.volumeDiagnostic.missingLiquiditySteps>0||v.volumeDiagnostic.missingCrossedBins>0)))throw Error('FORECAST_LIQUIDITY_COVERAGE_INCOMPLETE');
       if(start.turnover+start.rebalanceTurnover>c.maxTurnoverSol||start.rebalances>c.maxRebalances)throw Error("REBALANCE_BUDGET");
       if(!marketAdmission(g))throw Error("MARKET_ADMISSION");
       if(g.flags.includes("TOXIC_BID")&&sum(start.bins.map(b=>b.y))>EPS)throw Error("TOXIC_BID");
