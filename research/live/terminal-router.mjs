@@ -6,6 +6,7 @@ import {blockedResponse,errorCode} from './research-contract.mjs';
 export function createTerminalHandler({pool,port,origin,html,assets=new Map(),startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview,paperService}){
  const blocked=reason=>blockedResponse(pool,reason);
  const postRoutes=new Map([
+  ['/api/terminal/paper-report',{lock:null,reason:null,handle:body=>paperService.report(body)}],
   ['/api/terminal/paper-start',{lock:null,reason:null,handle:body=>paperService.start(body)}],
   ['/api/terminal/paper-pause',{lock:null,reason:null,handle:body=>paperService.pause(body)}],
   ['/api/terminal/position-accounting',{lock:"positionAccounting",reason:"POSITION_ACCOUNTING_BUSY",handle:positionAccounting}],
@@ -38,6 +39,7 @@ return async function handle(req,res){
   if(req.method==='GET'&&scoped.path==='/api/terminal/research-catalog'){send(res,200,{pool:scope,scope:'HISTORICAL_ARCHIVE_INDEX_ONLY',entries:await archives.list(scope),decisionReady:false,executionReady:false});return}
   if(req.method==='GET'&&req.url==='/api/terminal/paper-pools'){send(res,200,await paperService.list());return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/paper-context'){send(res,200,await paperService.context(scope));return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/paper-reports'){send(res,200,await paperService.reportCatalog(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/paper-status'){send(res,200,await paperService.get(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/input-status'){send(res,200,await researchInputs(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/monitor'){send(res,200,scope===pool?publicMonitor():{pool:scope,enabled:false,current:{},events:[],decisionReady:false,executionReady:false});return}

@@ -22,5 +22,5 @@ export function createPaperPoolManager({entries,makeService,intervalMs=15000,con
  }
  function startScheduler(){if(closed||timer)return;timer=setInterval(()=>{void tick()},intervalMs);void tick()}
  async function stop(){closed=true;if(timer)clearInterval(timer);timer=null;await Promise.all([...services.values()].map(s=>s.stop()));if(flight)await flight}
- return {get:pool=>service(pool).get(pool),context:pool=>service(pool).context(pool),start:body=>{assert(body?.draft?.pool,'PAPER_POOL_REQUIRED');return service(body.draft.pool).start(body)},pause:body=>{assert(body?.pool,'PAPER_POOL_REQUIRED');return service(body.pool).pause(body)},list,tick,startScheduler,stop};
+ return {reportCatalog:pool=>service(pool).reportCatalog(pool),report:body=>service(body?.pool).report(body),get:pool=>service(pool).get(pool),context:pool=>service(pool).context(pool),start:body=>{assert(body?.draft?.pool,'PAPER_POOL_REQUIRED');return service(body.draft.pool).start(body)},pause:body=>{assert(body?.pool,'PAPER_POOL_REQUIRED');return service(body.pool).pause(body)},list,tick,startScheduler,stop};
 }

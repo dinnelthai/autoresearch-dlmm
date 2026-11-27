@@ -1,5 +1,5 @@
 // One configured pool per isolated virtual experiment service. No wallet or RPC writes.
-import {mkdir} from 'node:fs/promises';
+import {mkdir,readdir} from 'node:fs/promises';
 import {atomicJson as atomic,withWriterLock} from './terminal-runtime.mjs';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -14,7 +14,8 @@ import {fixedPaperReport} from './paper-share-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha,verifiedEvidence} from './evidence-digest.mjs';
 import {freezePaperWindow,paperWindowCapture,paperWindowExpired,finishPaperWindow} from './paper-window-core.mjs';
-import {createSnapshotStore} from './paper-history-store.mjs';
+import {createPaperReport} from './paper-report-core.mjs';
+import {createPaperHistoryStore,createSnapshotStore} from './paper-history-store.mjs';
 import {marketLog,decisionLog,operationLog} from './paper-history-core.mjs';
 export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,refreshFeatures,isStopping,idlPath='data/raw/dlmm-idl.json'}){
  const dir=join(DATA,'paper-auto',pool),pointer=join(dir,'active.json');
@@ -28,6 +29,30 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
  async function reader(){if(!snapshotReader)snapshotReader=createPaperSnapshotReader({ROOT,io,idl:idlPath});return snapshotReader}
  async function exclusive(fn){assert(!closed&&!isStopping()&&!flight,'PAPER_AUTO_BUSY');const task=(async()=>{await init();return withWriterLock(dir,fn)})();flight=task;try{return await task}finally{if(flight===task)flight=null}}
  async function get(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const a=await active();if(!a)return paperStatus(pool,'NO_EXPERIMENT');const state=await checkpoint(a);const current=!a.running?{status:a.finalStatus??'PAUSED',running:false}:state.backendHash!==backendHash?{status:'BLOCKED',reason:'PAPER_AUTO_CODE_CHANGED',running:true}:job?.id===a.id?job:{status:'WAITING_FOR_OBSERVATION',running:true};return paperPublic(state,{...current,features},{now:Date.now(),maxAgeMs})}
+ async function reportCatalog(scope=pool){
+  assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');
+  const a=await active();let ids=[];
+  try{ids=(await readdir(await io.safeDataPath(dir),{withFileTypes:true})).filter(x=>x.isDirectory()&&/^auto-[a-zA-Z0-9_-]{1,59}$/.test(x.name)).map(x=>x.name).sort()}catch(e){if(e.code!=='ENOENT')throw e}
+  const others=ids.filter(id=>id!==a?.id);
+  return {scope:'PAPER_REPORT_CATALOG',pool,activeId:a?.id??null,activeRunning:a?.running??false,total:ids.length,ids:[...(a?[a.id]:[]),...others.slice(0,99)]};
+ }
+ let reporting=false;
+ async function report(body){
+  assert(body?.pool===pool,'PAPER_AUTO_POOL_SCOPE');assert(!reporting,'PAPER_REPORT_BUSY');
+  reporting=true;
+  try{
+   const a=await active(),id=body.id??a?.id;
+   assert(typeof id==='string'&&/^[a-zA-Z0-9_-]{1,64}$/.test(id),'PAPER_REPORT_ID');
+   const state=await checkpoint({id}),from=body.from??Math.max(1,state.snapshotCount-29);
+   assert(Number.isSafeInteger(from)&&from>=1&&from<=state.snapshotCount,'PAPER_REPORT_PAGE');
+   const aggregate=createPaperReport(state),records=[];
+   const audit=await createPaperHistoryStore({read}).verify(join(dir,id),state,{committedPrefix:true,onRecord:r=>{
+    aggregate.add(r);if(r.sequence>=from&&r.sequence<from+30)records.push({sequence:r.sequence,slot:r.slot,time:Date.parse(r.proof.receivedAt),log:r.observationLog??null});
+   }});
+   const current=await active();
+   return {...aggregate.finish(),historyVerification:audit,experimentStatus:state.window?.status==='ENDPOINT_OBSERVED'?'ENDPOINT_OBSERVED':current?.id===id?(current.running?'RUNNING':current.finalStatus??'PAUSED'):'HISTORICAL',logPage:{from,limit:30,total:state.snapshotCount,records}};
+  }finally{reporting=false}
+ }
  async function context(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const m=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs);let r=null;try{r=await loadReview(m,Date.now())}catch{}const valid=r?.expiresAt>Date.now();return {schemaVersion:1,scope:'PAPER_OPEN_CONTEXT_RESEARCH_ONLY',pool,marketSlot:m.slot,marketRawHash:m.rawHash,reviewHash:valid?r.reviewHash:null,expiresAt:Math.min(valid?r.expiresAt:Infinity,m.receivedAt+maxAgeMs),executionReady:false,decisionReady:false,pnlReady:false}}
  async function start(body){return exclusive(async()=>{
   const a=await active();assert(!a?.running,'PAPER_AUTO_ALREADY_RUNNING');
@@ -128,5 +153,5 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   })}catch(e){job={id:job?.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_SCHEDULER_BUSY'),running:true}}
  }
  async function stop(){closed=true;if(flight)await flight.catch(()=>{});if(featureFlight)await featureFlight;snapshotReader=null}
- return {get,context,start,pause,tick,stop};
+ return {get,context,start,pause,tick,stop,reportCatalog,report};
 }

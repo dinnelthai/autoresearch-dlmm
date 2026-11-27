@@ -8,7 +8,7 @@ import {createPaperPoolManager,paperPoolConfig} from './paper-pool-manager.mjs';
 const a='A'.repeat(32),b='B'.repeat(32),c='C'.repeat(32);
 test('loopback HTTP routes isolate virtual paper pool scope and reject unavailable operations',async()=>{
  const calls=[],locks=createTerminalLocks();
- const manager=createPaperPoolManager({entries:paperPoolConfig(a,[b]),makeService:({pool})=>({get:async()=>({pool,running:false,pnlReady:false,executionReady:false}),context:async()=>({pool,executionReady:false}),start:async()=>{calls.push(['start',pool]);return {pool,pnlReady:false,executionReady:false}},pause:async()=>{calls.push(['pause',pool]);return {pool,pnlReady:false,executionReady:false}},tick:async()=>{},stop:async()=>{}})});
+ const manager=createPaperPoolManager({entries:paperPoolConfig(a,[b]),makeService:({pool})=>({get:async()=>({pool,running:false,pnlReady:false,executionReady:false}),context:async()=>({pool,executionReady:false}),reportCatalog:async()=>({pool,ids:['fixture']}),report:async body=>({pool,id:body.id,scope:'PAPER_OBSERVED_RESEARCH_REPORT'}),start:async()=>{calls.push(['start',pool]);return {pool,pnlReady:false,executionReady:false}},pause:async()=>{calls.push(['pause',pool]);return {pool,pnlReady:false,executionReady:false}},tick:async()=>{},stop:async()=>{}})});
  const server=createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
  const port=server.address().port,origin='http://127.0.0.1:'+port;
  try{
@@ -20,6 +20,7 @@ test('loopback HTTP routes isolate virtual paper pool scope and reject unavailab
   assert.equal((await (await get('paper-pools')).json()).pools.length,2);
   assert.equal((await get('paper-pools?pool='+b)).status,400);
   assert.equal((await get('paper-status?pool='+c)).status,400);
+  assert.deepEqual((await (await get('paper-reports?pool='+b)).json()).ids,['fixture']);assert.equal((await (await post('paper-report',{pool:b,id:'fixture'})).json()).pool,b);assert.equal((await post('paper-report',{pool:c,id:'fixture'})).status,400);
   assert.equal((await post('paper-start',{draft:{pool:b}},null)).status,403);
   assert.equal((await post('paper-start',{draft:{pool:b}},'https://example.invalid')).status,403);
   const release=locks.acquire('analysis');try{const started=await post('paper-start',{draft:{pool:b}});assert.equal(started.status,200);assert.equal((await started.json()).pool,b)}finally{release()}
