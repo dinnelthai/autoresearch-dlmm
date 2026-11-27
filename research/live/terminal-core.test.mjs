@@ -21,3 +21,12 @@ test('pool scoping is only available on observation endpoints and rejects duplic
  assert.deepEqual(scopedTerminalRequest('/api/terminal/state?pool='+b,a),{path:'/api/terminal/state',pool:b});
  for(const url of ['/api/terminal/plans?pool='+b,'/api/terminal/state?pool='+b+'&pool='+a,'/api/terminal/state?pool=bad','/api/terminal/state?other='+b,'//example.org/api/terminal/state'])assert.throws(()=>scopedTerminalRequest(url,a));
 });
+
+test('market model overrides survive the business request boundary',()=>{
+ const req=requestFromDraft({...d,marketModel:{regimeLookback:30,regimeMinObservations:5,trendLogReturnThreshold:.08}},m);
+ assert.equal(req.riskConfig.regimeLookback,30);
+ assert.equal(req.riskConfig.regimeMinObservations,5);
+ assert.equal(req.riskConfig.trendLogReturnThreshold,.08);
+ assert.throws(()=>requestFromDraft({...d,marketModel:{regimeLookback:2}},m));
+ assert.throws(()=>requestFromDraft({...d,marketModel:{maxLossSol:999}},m));
+});

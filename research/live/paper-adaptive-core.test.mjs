@@ -9,3 +9,14 @@ test('reduce starts a new intent; latest feasible spec supersedes old spec',()=>
 test('early observations do not reset the intent clock',()=>{const a=adaptiveIntent({row:{},preview,slot:10,requestedAt:1000,now:2000,reviewHash:'a'});const b=adaptiveIntent({row:{pendingAdaptive:a.pending},preview,slot:11,requestedAt:3000,now:4000,reviewHash:'b'});assert.equal(b.pending.createdAt,2000);assert.equal(adaptiveIntent({row:{pendingAdaptive:b.pending},preview,slot:12,requestedAt:13000,now:14000,reviewHash:'c'}).apply,preview.selected)});
 
 test('explicit virtual protective withdrawal can be revalidated without claiming scenario feasibility',()=>{const p={...preview,selected:{feasible:false,protectiveExecution:true,action:{type:'REMOVE_AND_HOLD'}}};const a=adaptiveIntent({row:{status:'OPEN_PROXY'},preview:p,slot:10,requestedAt:1000,now:2000,reviewHash:'a'});assert.equal(a.pending.action,'REMOVE_AND_HOLD');assert.equal(adaptiveIntent({row:{status:'OPEN_PROXY',pendingAdaptive:a.pending},preview:p,slot:11,requestedAt:3000,now:15000}).apply,p.selected);assert.equal(adaptiveIntent({row:{status:'OPEN_PROXY'},preview:{...p,selected:{...p.selected,protectiveExecution:false}},slot:10,requestedAt:1000,now:2000}).pending,null)});
+
+test('reentry guard shares cooldown and turnover constraints between preview and commit',async()=>{
+ const {reentryBlock}=await import('./paper-adaptive-core.mjs');
+ const cfg={cooldownSeconds:15,maxRebalances:2,maxTurnoverSol:3};
+ const row={status:'HOLD_ONLY',entries:1,lastActionTime:10,rebalances:0,turnoverYRaw:'0'};
+ assert.equal(reentryBlock(row,cfg,24),'PAPER_ADAPTIVE_REENTRY_COOLDOWN');
+ assert.equal(reentryBlock(row,cfg,25),null);
+ assert.equal(reentryBlock({...row,rebalances:2},cfg,25),'PAPER_ADAPTIVE_REENTRY_BUDGET');
+ assert.equal(reentryBlock({...row,turnoverYRaw:'3000000000'},cfg,25),'PAPER_ADAPTIVE_REENTRY_BUDGET');
+ assert.equal(reentryBlock({...row,status:'OPEN_PROXY'},cfg,25),null);
+});

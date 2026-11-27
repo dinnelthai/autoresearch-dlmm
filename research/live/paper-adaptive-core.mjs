@@ -26,7 +26,7 @@ export function paperEnvironment(reviewed){
  const {latest,observations,asOf,cfg}=reviewed;
  return E.classify({market:latest,history:observations,lastTime:asOf,marks:[],fills:[]},cfg);
 }
-export function virtualManagement({state,row,snapshot,reviewed}){
+export function restoreVirtualModel({state,row,snapshot,reviewed}){
  const {identity:i,map}=snapshotRows(snapshot),{cfg,latest,observations,asOf}=reviewed,p=row.points.at(-1);
  assert(row.mode==='adaptive'&&['HOLD_ONLY','OPEN_PROXY'].includes(row.status)&&p.slot===i.slot&&state.pool===i.pool&&latest.pool===i.pool&&asOf>=latest.t,'PAPER_ADAPTIVE_SCOPE');
  const positionBins=(row.status==='OPEN_PROXY'?row.mapping?.rows??[]:[]).map(r=>{const b=map.get(r.binId),s=raw(b.liquiditySupplyRaw),v=raw(r.shareRaw);assert(s>0n&&v*10n<=s,'PAPER_ADAPTIVE_SHARE');return {id:r.binId,x:rawHuman(String(v*raw(b.amountXRaw)/s),i.sides[0].decimals),y:rawHuman(String(v*raw(b.amountYRaw)/s),9)}});
@@ -43,14 +43,24 @@ export function virtualManagement({state,row,snapshot,reviewed}){
  // The position is marked at the capture/analysis boundary, not the older quote timestamp.
  // Do not change any evidence timestamp or synthesize a newer MARKET observation.
  model.lastTime=asOf;
+ return {model,identity:i,map,bins};
+}
+export function reentryBlock(row,cfg,asOf){
+ if(row.status!=='HOLD_ONLY')return null;
+ if(row.lastActionTime!=null&&asOf-row.lastActionTime<(cfg.cooldownSeconds??0))return 'PAPER_ADAPTIVE_REENTRY_COOLDOWN';
+ if((row.entries??0)>0&&((row.rebalances??0)>=cfg.maxRebalances||raw(row.turnoverYRaw??'0')>=scaledFloat(cfg.maxTurnoverSol,9)))return 'PAPER_ADAPTIVE_REENTRY_BUDGET';
+ return null;
+}
+export function virtualManagement({state,row,snapshot,reviewed}){
+ const {cfg,asOf}=reviewed,{model,identity:i,map,bins}=restoreVirtualModel({state,row,snapshot,reviewed});
  const checkAllocation=selected=>{
   const mapped=validatedAdaptiveRemap({row:{...row,rebalances:row.rebalances??0},selected,snapshot,state,cfg});
   const modelStart=mappedScenarioStart(model,cfg,map,i,row,mapped,selected.action.type);
   return {modelStart,basis:'OBSERVED_SHARE_PROXY',binCount:mapped.mapping?.rows.length??0,principalXRaw:String(mapped.principalX),principalYRaw:String(mapped.principalY),walletXRaw:String(mapped.walletX),walletYRaw:String(mapped.walletY),costYRaw:String(mapped.cost),navYRaw:String(mapped.nav),turnoverYRaw:String(mapped.turnover)};
  };
  if(row.status==='HOLD_ONLY'){
-  if(row.lastActionTime!=null&&asOf-row.lastActionTime<cfg.cooldownSeconds)return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'};
-  if((row.entries??0)>0&&((row.rebalances??0)>=cfg.maxRebalances||raw(row.turnoverYRaw??'0')>=scaledFloat(cfg.maxTurnoverSol,9)))return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_BUDGET'};
+  const blocked=reentryBlock(row,cfg,asOf);
+  if(blocked)return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:blocked};
   return previewPlans(model,cfg,{activeId:i.activeId,bins},{asOf,checkAllocation});
  }
  const position={position:'VIRTUAL:'+state.id},operations={position:position.position,asOf,lastActionTime:row.lastActionTime??Math.floor(state.frozenAt/1000),rebalances:row.rebalances??0,rebalanceTurnoverSol:rawHuman(row.turnoverYRaw??'0',9),spotTurnoverSol:0};

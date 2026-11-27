@@ -1,7 +1,7 @@
 // Fixed opening allocation, observed-share proxy. Independent of swap replay.
 import {IntegerKernel as K} from '../integer.mjs';
 import {mapPaperPlans,principalForShares as principal} from './paper-share-core.mjs';
-import {adaptiveIntent,validatedAdaptiveRemap} from './paper-adaptive-core.mjs';
+import {adaptiveIntent,validatedAdaptiveRemap,reentryBlock} from './paper-adaptive-core.mjs';
 import {snapshotRows,intervalFees,INTERVAL_FEE_BASIS} from './paper-fee-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 const raw=(v,bits=128)=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v)&&BigInt(v)<(1n<<BigInt(bits)),'PAPER_SNAPSHOT_RAW_INVALID');return BigInt(v)};
@@ -97,7 +97,8 @@ export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHa
  const c=facts(snapshot);assert(state.last.slot===c.i.slot&&state.last.proof.accountsHash===c.proof.accountsHash,'PAPER_ADAPTIVE_POINT_SCOPE');
  const intent=adaptiveIntent({row,preview,slot:c.i.slot,requestedAt:c.requested,now,reviewHash,delaySeconds:Math.max(1,reviewed.cfg.executionDelaySeconds)});
  let next={...row,pendingAdaptive:intent.pending,adaptiveReason:intent.reason,adaptiveDecisions:(row.adaptiveDecisions??0)+(preview?.selected&&(preview.selected.feasible===true||preview.selected.protectiveExecution===true)?1:0)};
- if(row.status==='HOLD_ONLY'&&row.lastActionTime!=null&&(reviewed.asOf??reviewed.latest.t)-row.lastActionTime<(reviewed.cfg.cooldownSeconds??0))return {...state,rows:state.rows.map(r=>r===row?{...next,pendingAdaptive:null,adaptiveReason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'}:r)};
+ const blocked=reentryBlock(row,reviewed.cfg,reviewed.asOf??reviewed.latest.t);
+ if(blocked)return {...state,rows:state.rows.map(r=>r===row?{...next,pendingAdaptive:null,adaptiveReason:blocked}:r)};
  if(intent.apply){
   try{
    const r=validatedAdaptiveRemap({row:{...row,rebalances:row.rebalances??0},selected:intent.apply,snapshot,state,cfg:reviewed.cfg}),last=row.points.at(-1);
