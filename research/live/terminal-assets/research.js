@@ -32,7 +32,7 @@ function showHistoricalRun(x,p){
  }else{
   const rows=x.report.planPreview?.families??[];if(!Array.isArray(rows)||rows.length>7||rows.some(a=>!Object.hasOwn(names,a.family)&&a.family!=='NO_LP'))throw Error('历史策略结构无效');
   $('replayRows').replaceChildren();for(const a of rows){const tr=document.createElement('tr');cell(tr,names[a.family]??a.family);cell(tr,String(a.feasible)+' / '+String(a.total));cell(tr,fmt(a.best?.scenarioEstimates?.pnlSol));cell(tr,fmt(a.best?.scenarioEstimates?.cvarLossSol));$('replayRows').append(tr)}
-  put('replayStatus','已载入历史研究 '+x.runId.slice(0,12)+' · Slot '+x.marketSlot+' · '+x.status+' · 非当前方案');
+  put('replayStatus','已载入历史研究 '+x.runId.slice(0,12)+' · Slot '+x.marketSlot+' · '+x.status+' · '+(x.report.planPreview?.reason??x.report.gaps?.[0]??'未验收')+' · 非当前方案');
  }
 }
 $('refreshResearchCatalog').addEventListener('click',refreshResearchCatalog);
@@ -60,12 +60,8 @@ $('buildResearchEvidence').addEventListener('click',async()=>{
   if(x.scope!=='RESEARCH_CANDIDATE_ONLY'||x.pool!==p||x.marketSlot!==m.slot||x.marketRawHash!==m.rawHash||!hash(x.candidateId)||!hash(x.snapshotId)||x.modelInputReady!==false||x.executionReady!==false||x.decisionReady!==false||!Array.isArray(x.gaps))throw Error('候选证据身份无效');
   $('replaySnapshotId').value=x.snapshotId;put('researchSnapshotStatus','已保存 '+x.snapshotId.slice(0,12)+' · Slot '+x.marketSlot+' · '+x.reviewStatus);
   put('researchBuilderStatus','候选 '+x.candidateId.slice(0,12)+' · '+(x.clock?'区块时间已读取（未独立验收）':'区块时间缺失')+' · '+(x.replay?.runId?'已归档研究重放 '+x.replay.runId.slice(0,12):x.replayReason??'待审阅')+' · '+x.gaps.concat((x.sourceErrors??[]).map(z=>z.source+':'+z.reason)).join('；'));
-  if(x.replay&&draft===d){
-   const y=x.replay;if(y.scope!=='HISTORICAL_RESEARCH_ONLY'||y.pool!==p||y.snapshotId!==x.snapshotId||!hash(y.runId)||y.decisionReady!==false||y.executionReady!==false||y.pnlReady!==false||y.report?.pool!==p||y.report?.terminalBinding||y.report?.reviewId)throw Error('历史研究身份无效');
-   const families=y.report.planPreview?.families??[];if(!Array.isArray(families)||families.length>7||families.some(f=>!Object.hasOwn(names,f.family)&&f.family!=='NO_LP'))throw Error('历史策略结构无效');
-   $('replayRows').replaceChildren();for(const f of families){const tr=document.createElement('tr');cell(tr,names[f.family]??f.family);cell(tr,String(f.feasible)+' / '+String(f.total));cell(tr,fmt(f.best?.scenarioEstimates?.pnlSol));cell(tr,fmt(f.best?.scenarioEstimates?.cvarLossSol));$('replayRows').append(tr)}
-   put('replayStatus','历史研究 '+y.runId.slice(0,12)+' · '+y.status+' · 非当前方案/实际收益');
-  }
+  if(x.replay&&draft===d){if(x.replay.snapshotId!==x.snapshotId||x.replay.mode!=='plans')throw Error('历史研究身份无效');showHistoricalRun(x.replay,p)}
+  await refreshResearchCatalog();
   await refreshModelInputs(p,e);
  }catch(err){if(sameScope(e,p,poolEpoch,target))put('researchBuilderStatus','收集阻塞：'+err.message)}finally{builderRequestBusy=false;$('buildResearchEvidence').disabled=false}
 });
@@ -75,7 +71,7 @@ $('saveResearchSnapshot').addEventListener('click',async()=>{
  try{const res=await terminalPost('/api/terminal/research-snapshot',{pool:p,marketSlot:m.slot,marketRawHash:m.rawHash},45000),x=await res.json();
   if(!sameScope(e,p,poolEpoch,target))return;if(!res.ok)throw Error(x.gaps?.[0]??'SNAPSHOT_UNAVAILABLE');
   if(x.scope!=='IMMUTABLE_RESEARCH_DIAGNOSTIC'||x.pool!==p||x.marketSlot!==m.slot||x.marketRawHash!==m.rawHash||x.modelInputReady!==false||x.decisionReady!==false||x.executionReady!==false||!/^[0-9a-f]{64}$/.test(x.snapshotId))throw Error('快照契约错误');
-  $('replaySnapshotId').value=x.snapshotId;put('researchSnapshotStatus','已保存 '+x.snapshotId.slice(0,12)+' · Slot '+x.marketSlot+' · '+x.reviewStatus+' · 仅研究归档');
+  $('replaySnapshotId').value=x.snapshotId;put('researchSnapshotStatus','已保存 '+x.snapshotId.slice(0,12)+' · Slot '+x.marketSlot+' · '+x.reviewStatus+' · 仅研究归档');await refreshResearchCatalog();
  }catch(err){if(sameScope(e,p,poolEpoch,target))put('researchSnapshotStatus','保存失败：'+err.message)}finally{snapshotRequestBusy=false;$('saveResearchSnapshot').disabled=false}
 });
 $('runResearchReplay').addEventListener('click',async()=>{
@@ -86,11 +82,7 @@ $('runResearchReplay').addEventListener('click',async()=>{
   const res=await terminalPost('/api/terminal/research-replay',{pool:p,snapshotId:id,draft:d},45000),x=await res.json();
   if(!sameScope(e,p,poolEpoch,target))return;if(draft!==d){put('replayStatus','研究预算已变化，旧结果未显示；归档仍保留');return}
   if(!res.ok)throw Error(x.gaps?.[0]??'REPLAY_UNAVAILABLE');
-  if(x.scope!=='HISTORICAL_RESEARCH_ONLY'||x.pool!==p||x.snapshotId!==id||x.executionReady!==false||x.decisionReady!==false||x.pnlReady!==false||!hash(x.runId)||x.report?.pool!==p||x.report?.terminalBinding||x.report?.reviewId)throw Error('历史结果身份无效');
-  const families=x.report.planPreview?.families??[];
-  if(!Array.isArray(families)||families.length>7||families.some(f=>!Object.hasOwn(names,f.family)&&f.family!=='NO_LP'))throw Error('历史策略结构无效');
-  for(const f of families){const tr=document.createElement('tr');cell(tr,names[f.family]??f.family);cell(tr,String(f.feasible)+' / '+String(f.total));cell(tr,fmt(f.best?.scenarioEstimates?.pnlSol));cell(tr,fmt(f.best?.scenarioEstimates?.cvarLossSol));$('replayRows').append(tr)}
-  put('replayStatus','历史研究 '+x.runId.slice(0,12)+' · Slot '+x.marketSlot+' · '+x.status+' · '+(x.report.planPreview?.reason??x.report.gaps?.[0]??'未验收')+' · 非当前方案/实际收益');
+  if(x.snapshotId!==id||x.mode!=='plans')throw Error('历史结果身份无效');showHistoricalRun(x,p);await refreshResearchCatalog();
  }catch(err){if(sameScope(e,p,poolEpoch,target))put('replayStatus','重放阻塞：'+err.message)}finally{replayRequestBusy=false;$('runResearchReplay').disabled=false}
 });
 $('holderFeatureRefresh').addEventListener('click',async()=>{

@@ -1,3 +1,7 @@
+import {watchLocked} from './terminal-runtime.mjs';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createPaperSnapshotReader,snapshotCheckpoint,readSnapshotCheckpoint} from './paper-snapshot.mjs';
@@ -14,3 +18,5 @@ test('cached decode still checks raw and manifest bytes and is isolated from cal
 test('cache bounded by entries; missing archive still blocks',async()=>{const x=fixture(),read=createPaperSnapshotReader({ROOT,io:x.io,idl:'/research/idl',cacheLimit:1});await read(x.p);const q=x.p+'2';x.set(q);await read(q);await read(x.p);assert.equal(x.calls(),6);x.files.delete(x.p+'/manifest.json');await assert.rejects(()=>read(x.p),/MISSING/)});
 
 test('shared snapshot checkpoint binds identity and detects alteration',()=>{const s={id:'fixture',pool,scope:'PAPER_SNAPSHOT_FIXED_SHARE_ONLY',executionReady:false,pnlReady:false};const cp=snapshotCheckpoint(s);assert.deepEqual(readSnapshotCheckpoint(cp,s.id,pool),s);assert.throws(()=>readSnapshotCheckpoint({...cp,pnlReady:true},s.id,pool));assert.throws(()=>readSnapshotCheckpoint(cp,'other'));});
+
+test('offline command shares writer lifecycle and releases lock after a step',async()=>{const dir=await mkdtemp(join(tmpdir(),'paper-watch-'));try{let calls=0;await watchLocked(dir,{step:async()=>{calls++},onError:e=>{throw e}});await watchLocked(dir,{step:async()=>{calls++},onError:e=>{throw e}});assert.equal(calls,2);await assert.rejects(()=>watchLocked(dir,{step:async()=>{throw Error('STEP')},onError:e=>{throw e}}),/STEP/);await watchLocked(dir,{step:async()=>{calls++},onError:e=>{throw e}});assert.equal(calls,3)}finally{await rm(dir,{recursive:true,force:true})}});

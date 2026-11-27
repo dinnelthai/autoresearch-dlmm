@@ -30,7 +30,7 @@ async function researchInputs(scope){
  return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:marketObservations.external(scope),holder:m?marketObservations.holder(scope,m.mintX):null,review,reviewReason:reason,now,maxAgeMs});
 }
 function snapshotReviewPath(scope){const map=cfg.researchReviews;if(map&&typeof map==='object'&&!Array.isArray(map)&&Object.hasOwn(map,scope)&&typeof map[scope]==='string')return map[scope];return scope===pool?cfg.review:null}
-async function saveResearchSnapshot(body,pinned=null){
+async function captureResearchSnapshot(body,pinned=null){
  const scope=validateScope(body?.pool),now=pinned?.at??Date.now(),state=pinned?.state??await loadState(scope),m=currentMarket(state,scope,now,maxAgeMs);
  assert(body.marketSlot===m.slot&&body.marketRawHash===m.rawHash,'MARKET_CHANGED_REFRESH_REQUIRED');
  const source=await safeDataPath(m.capture),mb=await boundedRead(await safeDataPath(join(source,'manifest.json')),16*1024*1024),manifest=JSON.parse(mb);
@@ -55,8 +55,9 @@ async function saveResearchSnapshot(body,pinned=null){
  const out=snapshotManifest({pool:scope,market:m,createdAt:now,files:[...files].map(([name,b])=>({name,sha256:sha(b),bytes:b.length})),reviewStatus,diagnostic});
  const dir=await saveArchive(join(DATA,'research-snapshots'),out.snapshotId,out,files);
  await archives.add({kind:'snapshot',pool:scope,id:out.snapshotId,snapshotId:out.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:now,status:out.reviewStatus});
- return {...out,capture:relative(ROOT,dir)};
+ return {snapshot:{...out,capture:relative(ROOT,dir)},diagnostic};
 }
+async function saveResearchSnapshot(body){return (await captureResearchSnapshot(body)).snapshot}
 async function replayResearchSnapshot(body){
  const scope=validateScope(body?.pool),id=body?.snapshotId;
  assert(typeof id==='string'&&/^[0-9a-f]{64}$/.test(id),'INVALID_SNAPSHOT_ID');
@@ -97,8 +98,7 @@ async function buildResearchCandidate(body){
   (async()=>{try{await marketObservations.holderObservation({pool:scope},m)}catch(e){reason('HOLDER',e)}})()
  ]);
  const at=Date.now();currentMarket(state,scope,at,maxAgeMs);
- const snapshot=await saveResearchSnapshot({pool:scope,marketSlot:m.slot,marketRawHash:m.rawHash},{state,at});
- const diagnostic=JSON.parse(await boundedRead(await safeDataPath(join(snapshot.capture,'diagnostic.json')),8*1024*1024));
+ const {snapshot,diagnostic}=await captureResearchSnapshot({pool:scope,marketSlot:m.slot,marketRawHash:m.rawHash},{state,at});
  const candidate=assembleCandidate({market:m,snapshot,diagnostic,clock,sourceErrors,createdAt:at});
  const dest=await saveArchive(join(DATA,'research-candidates',scope),candidate.candidateId,candidate);
  await archives.add({kind:'candidate',pool:scope,id:candidate.candidateId,snapshotId:snapshot.snapshotId,marketSlot:m.slot,marketRawHash:m.rawHash,createdAt:at,status:'RESEARCH_CANDIDATE_ONLY'});
