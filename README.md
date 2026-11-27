@@ -29,6 +29,10 @@ This contract governs new development, refactoring and acceptance. Prefer a comp
 
 在 Terminal 的 Performance / 自动快照模拟区域点击 **导出联调日志**，无需停止实验。也可访问 `/api/terminal/diagnostics?pool=POOL_ADDRESS`。JSON 包含当前池采集状态、Paper 实验参数、仓位及账本、最近 128 条已提交业务记录（市场、候选拒绝原因、动作和收益）和 Terminal 进程最近 500 条结构化事件。历史尾部未做全链审计；读取失败单独标记，导出不依赖完整报告。采集器独立进程的完整 stdout 不在该文件内，必要时另外保留终端输出。重启会清空内存事件，已提交业务记录保留。分享前检查文件，勿附带 RPC 密钥、环境变量或私钥。
 
+## 核心数学算法与优化路线
+
+[Dynamic LP 算法原理与数学优化路线](docs/dynamic-lp-algorithm-and-roadmap.md)：当前快照输入、市场识别、库存预算、Bin 权重、情景预测、效用函数、Paper 账本及 O01–O08 后续数学研究。先完成 C01–C03 核心业务联调并持续积累真实数据，再开展数学优化；路线不是当前开发前置任务。
+
 ## Primary workflow
 
 Real market observations → market features → JS mathematical strategy engine → one Adaptive virtual position → Paper accounting → research report → manual parameter research.
