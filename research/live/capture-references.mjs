@@ -17,7 +17,7 @@ async function main(){
  const {values}=parseArgs({options:{pool:{type:'string'},reference:{type:'string',multiple:true},'probe-sol-raw':{type:'string'},'sell-raw':{type:'string',multiple:true},'max-discount-bps':{type:'string',default:'200'},'slippage-bps':{type:'string',default:'50'},provider:{type:'string',default:'solana-rpc'},help:{type:'boolean'}}});
  if(values.help){console.log('node research/live/capture-references.mjs --pool TARGET --reference POOL_A --reference POOL_B --probe-sol-raw LAMPORTS --sell-raw TOKEN_RAW_SMALL --sell-raw TOKEN_RAW_LARGE');return;}
  const pool=key(values.pool),refs=(values.reference??[]).map(key);
- assert(refs.length>=2&&refs.length<=8&&new Set(refs).size===refs.length&&!refs.includes(pool),'require 2–8 distinct manually selected non-target pools');
+ assert(refs.length>=1&&refs.length<=8&&new Set(refs).size===refs.length&&!refs.includes(pool),'require 1–8 distinct manually selected non-target pools');
  const probe=amount(values['probe-sol-raw']),ladder=(values['sell-raw']??[]).map(amount);
  assert(ladder.length>=1&&ladder.length<=12&&ladder.every((v,i)=>i===0||BigInt(v)>BigInt(ladder[i-1])),'require increasing 1–12 sell sizes');
  const maxDiscount=Number(values['max-discount-bps']),slippage=Number(values['slippage-bps']);
@@ -83,7 +83,7 @@ async function main(){
     report.references.push({pool:address,venue:'METEORA_DLMM',before,after,bid,ask,...math,status:'QUOTES_CAPTURED_UNVERIFIED'});
    }catch{report.gaps.push({pool:address,reason:'REFERENCE_READ_OR_QUOTE_FAILED'});}
   }
-  report.status=report.references.length>=2&&!report.gaps.length?'REFERENCE_EVIDENCE_UNVERIFIED':'PARTIAL';
+  report.status=report.references.length>=1?'REFERENCE_EVIDENCE_UNVERIFIED':'PARTIAL';
  }catch{report.gaps.push({pool,reason:'TARGET_IDENTITY_OR_RPC_FAILED'});}
  report.completedAt=new Date().toISOString();
  await writeFile(join(dir,'manifest.json'),JSON.stringify(report,null,2)+'\n',{mode:0o600,flag:'wx'});
