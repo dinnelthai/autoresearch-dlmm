@@ -27,3 +27,5 @@ assert.equal(mergeHistory(c,[],2).gapObserved,true);assert.equal(mergeHistory(c,
 assert.throws(()=>mergeHistory({records:[{signature:'x',slot:1},{signature:'x',slot:2}]},[]));assert.throws(()=>mergeHistory(null,[],0));
 assert.equal(historyBatch(['p','a','b'],0).addresses[0],'p');assert.equal(historyBatch(['p','a','b'],1).addresses[0],'a');assert.equal(historyBatch(['p','a','b'],2).nextCursor,0);assert.equal(historyBatch(['p','a','b'],9).addresses[0],'p');assert.equal(historyBatch(['p','a','b'],2,true).addresses.length,3);
 const old={status:'CAPTURED_UNVERIFIED',receivedAt:1,evidence:{slot:2}};const pending=pendingStream(old,10);assert.equal(pending.status,'PENDING');assert.equal(pending.previousEvidence.slot,2);assert.equal(streamHealth(pending,10,100),'UNAVAILABLE_OR_STALE');
+
+assert.equal(pending.previousStatus,old.status);assert.equal(pending.previousReceivedAt,old.receivedAt);assert.equal(pendingStream(pending,20).previousReceivedAt,1);

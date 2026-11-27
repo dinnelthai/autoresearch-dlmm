@@ -15,7 +15,7 @@ const read=async(p,n)=>io.boundedRead(await io.safeDataPath(p),n);
 async function main(){
  if(values.help){console.log('Open: --id ID --snapshot CAPTURE --report REPORT --policy POLICY [--budget BUDGET]; Step: --id ID --snapshot CAPTURE [--exit]');return}
  assert(typeof values.id==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(values.id)&&values.snapshot,'PAPER_SNAPSHOT_ARGUMENTS');
- const idl=await io.safeDataPath(values.idl),reader=createPaperSnapshotReader({ROOT,io,idl}),{backendHash}=await sourceInventory(ROOT),dir=join(DATA,'paper-snapshot-runs',values.id);
+ const idl=await io.safeDataPath(values.idl),reader=createPaperSnapshotReader({ROOT,io,idl}),{paperModelHash:backendHash}=await sourceInventory(ROOT),dir=join(DATA,'paper-snapshot-runs',values.id);
  await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir);
  const target=join(dir,'checkpoint.json');
  await withWriterLock(dir,async()=>{

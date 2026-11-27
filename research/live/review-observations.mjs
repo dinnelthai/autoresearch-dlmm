@@ -62,7 +62,7 @@ export function collectedPaperObservation({m,external,holder,history,now=Date.no
  const buy=BigInt(flow.buyLamports),sell=BigInt(flow.sellLamports),gross=buy+sell;
  assert(gross>0n,'PAPER_FLOW_SAMPLE_EMPTY');
  const t=Math.floor(now/1000);
- return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{external:external.evidenceHash,holder:h.evidenceHash,history:history.evidence?.capture??null},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(...refs.map(r=>r.depth))}};
+ return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{external:external.evidenceHash,holder:h.evidenceHash,history:flow.capture},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(...refs.map(r=>r.depth))}};
 }
 export function collectedPaperInputs({m,req,samples,asOf}){
  const cfg=Engine.requestConfig(req,{...req.riskConfig,binStepBps:m.binStep,anchorPrice:10**(m.decimalsX-m.decimalsY),maxReferenceAge:120,forecastHorizonSeconds:req.horizonSeconds});

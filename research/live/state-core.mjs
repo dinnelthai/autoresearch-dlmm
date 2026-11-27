@@ -16,7 +16,8 @@ function mergeHistory(previous,rows,limit=2000){
  return {records,status:gapObserved?"OVERLAP_MISSING":!rows.length?"EMPTY_OR_UNAVAILABLE":"BOUNDED_HISTORY_UNVERIFIED",added,overlap,gapObserved,retentionLimit:limit,retentionTruncated:previous?.retentionTruncated===true||dropped>0,droppedThisMerge:dropped,historyComplete:false};
 }
 function streamHealth(stream,now,maxAgeMs){if(!stream||stream.status!=="CAPTURED_UNVERIFIED"||!Number.isFinite(stream.receivedAt)||stream.receivedAt>now||now-stream.receivedAt>maxAgeMs)return "UNAVAILABLE_OR_STALE";return "RECENT_UNVERIFIED";}
-function pendingStream(old,startedAt){return {status:"PENDING",startedAt,previousEvidence:old?.evidence??old?.previousEvidence??null};}
+function pendingStream(old,startedAt){const pending=old?.status==='PENDING';return {status:"PENDING",startedAt,previousEvidence:old?.evidence??old?.previousEvidence??null,previousStatus:pending?old.previousStatus:old?.status??null,previousReceivedAt:pending?old.previousReceivedAt:old?.receivedAt??null};}
+function observedStream(stream){return stream?.status==='PENDING'?{status:stream.previousStatus,receivedAt:stream.previousReceivedAt,evidence:stream.previousEvidence}:stream;}
 // Preserve the verified signature index when a complete bounded capture contains no
 // decoded events. This says nothing about elapsed-window or swap-flow completeness.
 function completeEmptyEventIndex(manifest,decoded){
@@ -26,4 +27,4 @@ function completeEmptyEventIndex(manifest,decoded){
 }
 // Round robin one history stream per service tick. --once retains full diagnostic sweep.
 function historyBatch(addresses,cursor,once=false){if(!Array.isArray(addresses)||!addresses.length||!Number.isSafeInteger(cursor)||cursor<0)throw Error("invalid history scheduler");const i=cursor%addresses.length;return {addresses:once?addresses.slice():[addresses[i]],nextCursor:(i+1)%addresses.length};}
-export {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex};
+export {mergeHistory,streamHealth,pendingStream,historyBatch,completeEmptyEventIndex,observedStream};

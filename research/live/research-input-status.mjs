@@ -1,12 +1,13 @@
 // Diagnostic projection only. Never manufactures MARKET events or research acceptance.
 import {featureProjection} from './market-features.mjs';
+import {observedStream} from './state-core.mjs';
 import {distinctReferenceArtifacts} from './quote-evidence.mjs';
 const positive=v=>typeof v==='string'&&/^\d{1,20}$/.test(v)&&BigInt(v)<(1n<<64n);
 import {hash,finite} from './research-contract.mjs';
 const fresh=(v,now,max)=>Number.isSafeInteger(v)&&v<=now&&now-v<=max;
 const evidence=v=>typeof v?.path==='string'&&hash(v?.sha256);
 export function boundedSwapObservation(stream,pool,now,maxAgeMs){
- const d=stream?.evidence?.decoded;
+ stream=observedStream(stream);const d=stream?.evidence?.decoded;
  if(stream?.status!=='CAPTURED_UNVERIFIED'||!fresh(stream.receivedAt,now,maxAgeMs)||d?.pool!==pool||d.position!=null||d.status!=='EVENTS_DECODED_UNVERIFIED'||!Array.isArray(d.gaps)||d.gaps.length||!Array.isArray(d.events)||!d.events.length||d.events.length>20000||!Array.isArray(d.transactions))return null;
  let buy=0n,sell=0n,buyCount=0,sellCount=0,minTime=Infinity,maxTime=-Infinity;
  if(d.transactions.length>20000||d.transactions.some(t=>typeof t?.signature!=='string'||!Number.isSafeInteger(t.slot)||t.slot<0))return null;
@@ -20,7 +21,7 @@ export function boundedSwapObservation(stream,pool,now,maxAgeMs){
   else return null;
  }
  const recent=minTime>=Math.floor((now-maxAgeMs)/1000),sampleKind=stream.evidence.repairCapture===true?'HISTORICAL_BACKFILL':recent?'RECENT_EVENT_SAMPLE':'OLDER_EVENT_SAMPLE';
- return {scope:'BOUNDED_SAMPLE_ONLY',sampleKind,collectionReceivedAt:stream.receivedAt,eventAgeSeconds:Math.floor(now/1000)-maxTime,buyLamports:buy.toString(),sellLamports:sell.toString(),grossLamports:(buy+sell).toString(),buyCount,sellCount,firstEventTime:minTime,lastEventTime:maxTime,eventCount:ids.size,coverageVerified:false,modelFlowEligible:false};
+ return {scope:'BOUNDED_SAMPLE_ONLY',sampleKind,collectionReceivedAt:stream.receivedAt,eventAgeSeconds:Math.floor(now/1000)-maxTime,buyLamports:buy.toString(),sellLamports:sell.toString(),grossLamports:(buy+sell).toString(),buyCount,sellCount,firstEventTime:minTime,lastEventTime:maxTime,eventCount:ids.size,capture:stream.evidence.capture??null,coverageVerified:false,modelFlowEligible:false};
 }
 export function reviewShape(review,m,now){
  if(!review||!m)return {status:'MISSING',observations:0,missing:['REVIEW_ARTIFACT_REQUIRED']};
