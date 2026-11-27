@@ -80,7 +80,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
    if(remove){try{const selected={...remove,protectiveExecution:true};if(checkAllocation){const {modelStart,...summary}=checkAllocation(selected);selected.integerMapping=summary;}result.selected=selected;result.reason='VIRTUAL_MARKET_OR_RISK_GATE_REMOVE';}catch(e){result.reason=String(e.message).slice(0,180);result.alerts.push('VIRTUAL_PROTECTION_MAPPING_BLOCKED')}}
   }
  }else if(hold?.feasible){
-  result.selected=Engine.selectByUtility(result.candidates,hold,cfg,{scoreKey:'score'});
+  result.selected=Engine.selectByUtility(result.candidates,hold,{...cfg,uncertaintySol:Engine.referenceUncertainty(s,cfg)},{scoreKey:'score'});
   result.reason=result.selected===hold?'HOLD_BASELINE_OR_UNCERTAINTY_MARGIN':'RESEARCH_SCENARIO_IMPROVEMENT';
  }else result.reason='HOLD_BASELINE_UNAVAILABLE';
  result.status='RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED';

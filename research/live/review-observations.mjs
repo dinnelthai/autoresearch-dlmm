@@ -62,17 +62,37 @@ export function meteoraReferenceInputs({m,reference,now,maxAgeMs=120000}){
   assert(finite(price,Number.MIN_VALUE)&&finite(depth,Number.MIN_VALUE),'METEORA_REFERENCE_DEPTH_UNAVAILABLE');
   return {pool:v.pool,price,depth,observedAt:Math.floor(observed/1000),availableAt:Math.floor(available/1000)};
  });
- assert(refs.length>=2&&new Set(refs.map(v=>v.pool)).size===refs.length,'METEORA_TWO_REFERENCE_POOLS_REQUIRED');
+ assert(refs.length>=1&&new Set(refs.map(v=>v.pool)).size===refs.length,'METEORA_REFERENCE_POOLS_UNAVAILABLE');
  return refs;
+}
+// Target-pool fallback uses the captured active-bin mark and actual SOL inventory
+// in contiguous sell-side bins within a declared 2% price band. This is a
+// gross observed depth proxy, not a swap quote or guaranteed executable capacity.
+export function targetPoolReference(m,now,maxAgeMs=120000){
+ assert(Number.isSafeInteger(m.receivedAt)&&m.receivedAt<=now&&now-m.receivedAt<=maxAgeMs&&Number.isInteger(m.activeId)&&m.decimalsY===9&&Number.isInteger(m.decimalsX)&&Array.isArray(m.bins)&&hash(m.rawHash),'PAPER_TARGET_CAPTURE_INVALID');
+ const map=new Map(m.bins.map(b=>[b.binId,b])),active=map.get(m.activeId);
+ const positive=v=>typeof v==='string'&&/^[1-9]\d{0,38}$/.test(v);
+ assert(positive(active?.priceQ64Raw),'PAPER_TARGET_PRICE_UNAVAILABLE');
+ const q=BigInt(active.priceQ64Raw),price=Number(q)/2**64*10**(m.decimalsX-9);
+ let depth=0n;
+ for(let id=m.activeId;map.has(id);id--){
+  const b=map.get(id);
+  if(!positive(b.priceQ64Raw)||BigInt(b.priceQ64Raw)*10000n<q*9800n)break;
+  assert(typeof b.amountYRaw==='string'&&/^\d{1,20}$/.test(b.amountYRaw),'PAPER_TARGET_DEPTH_INVALID');
+  depth+=BigInt(b.amountYRaw);
+ }
+ assert(finite(price,Number.MIN_VALUE)&&finite(Number(depth)/1e9,0),'PAPER_TARGET_NUMERIC_DOMAIN');
+ return {pool:m.pool,price,depth:Number(depth)/1e9,basis:'TARGET_BIN_SNAPSHOT',depthBasis:'OBSERVED_CONTIGUOUS_SOL_WITHIN_200_BPS_GROSS',observedAt:Math.floor(m.receivedAt/1000),availableAt:Math.floor(m.receivedAt/1000)};
 }
 export function collectedPaperObservation({m,reference,external,holder,history,now=Date.now(),maxAgeMs=120000}){
  const h=featureProjection(holder,m,now,maxAgeMs),flow=boundedSwapObservation(history,m.pool,now,maxAgeMs,{recentOnly:true});
  assert(h?.distribution?.supplyConserved&&finite(h.distribution.topShare,0,1)&&Array.isArray(h.safety?.flags),'PAPER_HOLDER_FEATURES_UNAVAILABLE');
  assert(finite(h.cohort?.netDecreaseShare,0,1),'PAPER_HOLDER_COHORT_WARMUP');
  assert(flow?.sampleKind==='RECENT_EVENT_SAMPLE'&&flow.eventCount>0,'PAPER_FLOW_SAMPLE_UNAVAILABLE');
- let refs,referenceEvidence;
- if(reference){refs=meteoraReferenceInputs({m,reference,now,maxAgeMs});referenceEvidence={source:'METEORA_DLMM_SDK',capture:reference.capture,sha256:reference.manifestHash}}
- else{
+ let refs=[],referenceEvidence=null;
+ const targetReference=targetPoolReference(m,now,maxAgeMs);
+ if(reference){try{refs=meteoraReferenceInputs({m,reference,now,maxAgeMs});referenceEvidence={source:'METEORA_DLMM_SDK',capture:reference.capture,sha256:reference.manifestHash}}catch{}}
+ if(!refs.length&&external){try{
  assert(external?.marketSlot===m.slot&&external.marketRawHash===m.rawHash&&external.pool===m.pool&&external.mintX===m.mintX&&external.mintY===m.mintY&&external.expiresAt>=now&&hash(external.evidenceHash)&&external.rawEvidenceCheck?.scope==='RAW_QUOTE_RECHECK_ONLY','PAPER_REFERENCE_QUOTES_UNAVAILABLE');
  refs=external.rawEvidenceCheck.venues.map(v=>{
   const q=external[v.venue],records=external.evidence.filter(e=>e.file===(v.venue==='orca'?'orca-':'')+'ask.json'||e.file===(v.venue==='orca'?'orca-':'')+'bid-0.json');
@@ -80,12 +100,13 @@ export function collectedPaperObservation({m,reference,external,holder,history,n
   assert(q?.pool===v.pool&&records.length===2&&records.every(r=>hash(r.sha256))&&finite(v.midSolPerMeme,Number.MIN_VALUE)&&finite(depth,Number.MIN_VALUE)&&Number.isSafeInteger(observedAt),'PAPER_REFERENCE_DEPTH_UNAVAILABLE');
   return {pool:v.pool,price:v.midSolPerMeme,depth,observedAt,availableAt:Math.floor(external.fetchedAt/1000)};
  });
- assert(refs.length>=2&&new Set(refs.map(r=>r.pool)).size===refs.length&&refs.every(r=>r.pool!==m.pool),'PAPER_TWO_REFERENCE_QUOTES_REQUIRED');
- referenceEvidence={source:'EXTERNAL_QUOTE_FALLBACK',sha256:external.evidenceHash};}
+ assert(refs.length>=1&&new Set(refs.map(r=>r.pool)).size===refs.length&&refs.every(r=>r.pool!==m.pool),'PAPER_REFERENCE_QUOTES_INVALID');
+ referenceEvidence={source:'EXTERNAL_QUOTE_FALLBACK',sha256:external.evidenceHash};}catch{refs=[];}}
+ if(!referenceEvidence)referenceEvidence={source:'TARGET_BIN_SNAPSHOT',capture:m.capture,sha256:m.rawHash};
  const buy=BigInt(flow.buyLamports),sell=BigInt(flow.sellLamports),gross=buy+sell;
  assert(gross>0n,'PAPER_FLOW_SAMPLE_EMPTY');
  const t=Math.floor(now/1000);
- return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{reference:referenceEvidence,holder:h.evidenceHash,history:flow.capture,flowSample:{kind:flow.sampleKind,eventCount:flow.eventCount,sourceEventCount:flow.sourceEventCount,firstEventTime:flow.firstEventTime,lastEventTime:flow.lastEventTime,windowSeconds:flow.windowSeconds,historyCoverage:flow.historyCoverage,coverageVerified:false}},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(...refs.map(r=>r.depth))}};
+ return {basis:PAPER_OBSERVATION_BASIS,slot:m.slot,marketRawHash:m.rawHash,receivedAt:now,evidence:{reference:referenceEvidence,holder:h.evidenceHash,history:flow.capture,flowSample:{kind:flow.sampleKind,eventCount:flow.eventCount,sourceEventCount:flow.sourceEventCount,firstEventTime:flow.firstEventTime,lastEventTime:flow.lastEventTime,windowSeconds:flow.windowSeconds,historyCoverage:flow.historyCoverage,coverageVerified:false}},event:{type:'MARKET',id:'collected:'+m.rawHash,t,pool:m.pool,references:refs,targetReference,tokenSafe:h.safety.flags.length===0&&h.safety.mintAuthorityRevoked===true&&h.safety.freezeAuthorityRevoked===true,holderShare:h.distribution.topShare,holderOutflow:h.cohort.netDecreaseShare,buyImbalance:Number((buy-sell)*1000000n/gross)/1000000,flowSol:Number(gross)/1e9,flowWindowSeconds:Math.ceil(maxAgeMs/1000),exitDepth:Math.max(targetReference.depth,...refs.map(r=>r.depth))}};
 }
 export function collectedPaperInputs({m,req,samples,asOf}){
  const cfg=Engine.requestConfig(req,{...req.riskConfig,binStepBps:m.binStep,anchorPrice:10**(m.decimalsX-m.decimalsY),maxReferenceAge:120,forecastHorizonSeconds:req.horizonSeconds});

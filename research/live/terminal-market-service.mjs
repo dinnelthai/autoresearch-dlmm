@@ -80,8 +80,9 @@ async function captureMarketTime(m){
  const flowStream=observedStream(state?.streams?.['history:'+m.pool]);
  out.sources.history={status:flowStream?.status??'UNAVAILABLE',reason:flowStream?.reason??flowStream?.evidence?.historyStatus??null,capture:flowStream?.evidence?.capture??null};
   try{
-   assert(reference||external,out.sources.reference?.reason??'METEORA_REFERENCE_UNAVAILABLE');
+   // References enhance the model but are not a prerequisite for a target capture.
    out.observation=collectedPaperObservation({m,reference,external,holder,history:state?.streams?.['history:'+m.pool],now:out.observedAt,maxAgeMs:120000});
+   out.sources.reference={...out.sources.reference,status:'OBSERVED',...out.observation.evidence.reference};
    out.modelInputStatus='OBSERVED_PROXY';
   }catch(e){out.modelInputStatus='WAITING';out.modelInputReason=reason(e)}
   return out;

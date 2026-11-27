@@ -51,7 +51,7 @@ export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
   rows.push(row);
  }
  const base=rows.find(r=>r.family===BASE);
- const selected=Engine.selectByUtility(rows,base,cfg,{scoreKey:'score'});
+ const selected=Engine.selectByUtility(rows,base,{...cfg,uncertaintySol:Engine.referenceUncertainty(model,cfg)},{scoreKey:'score'});
  const reason=!selected?'BASELINE_UNAVAILABLE_NO_DEPLOYMENT':selected===base?'NO_LP_BASELINE_OR_UNCERTAINTY_MARGIN':'HIGHEST_FEASIBLE_SCENARIO_SCORE';
  const families=[BASE,'spot','curve','bid_ask','hybrid','asymmetric','hybrid_grid'].map(f=>({family:f,total:rows.filter(r=>r.family===f).length,feasible:rows.filter(r=>r.family===f&&r.feasible).length,best:rows.filter(r=>r.family===f&&r.feasible).sort((a,b)=>b.score-a.score)[0]??null}));
  return {...result,status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',reason,regime:g.regime,selected,candidates:rows,families,limitations:['Path CVaR measures maximum loss from initial NAV on sampled scenarios, not continuous drawdown. Path breach counts are diagnostics, not calibrated probabilities or execution approval.','No implicit spot acquisition or disposal; existing-position actions belong to T10.','Scenario estimates are model outputs, not expected realized income, calibrated probability, or protocol-exact amounts.','Observed bin share uses model value proxy, not protocol liquidity shares; exact SDK feasibility and rounding are pending.','No LP is a valid baseline; no deployment if baseline unavailable.']};

@@ -154,7 +154,7 @@ try{
  }
  let referenceDiscovery=null;
  async function reference(){
-  assert(cfg.autoReferenceDiscovery!==false||references.length>=2,'REFERENCES_NOT_CONFIGURED');
+  assert(cfg.autoReferenceDiscovery!==false||references.length>=1,'REFERENCES_NOT_CONFIGURED');
   let market;try{market=extractMarket(state)}catch{throw Error('REFERENCE_WAITING_FOR_MARKET')}
   assert(Date.now()-market.receivedAt<=maxAge*1000,'REFERENCE_TARGET_MARKET_STALE');
   let refs=references;
@@ -164,7 +164,7 @@ try{
    }
    refs=referenceDiscovery.pools;
   }
-  assert(refs.length>=2,'METEORA_TWO_REFERENCE_POOLS_REQUIRED');
+  assert(refs.length>=1,'OPTIONAL_REFERENCE_POOLS_UNAVAILABLE');
   const probes=referenceProbeSizes(market,cfg);
   const r=await run('research/live/capture-references.mjs',['--pool',pool,'--provider',provider,...refs.flatMap(a=>['--reference',a]),'--probe-sol-raw',probes.buyRaw,...probes.sellRaw.flatMap(a=>['--sell-raw',a])]);
   const p=await capturePath(r.report.directory),m=await readManifest(p);
@@ -236,7 +236,7 @@ try{
   for(const a of Object.keys(state.history))if(![pool,...positions].includes(a))delete state.history[a];
   const lanes=[{name:'market',intervalMs:interval*1000,run:marketTick},{name:'history',intervalMs:historySeconds*1000,run:historyTick}];
   if(positions.length)lanes.push({name:'positions',intervalMs:positionSeconds*1000,run:positionTick});
-  if(references.length>=2||cfg.autoReferenceDiscovery!==false)lanes.push({name:'references',intervalMs:referenceSeconds*1000,run:()=>refreshLane('references',reference)});
+  if(references.length>=1||cfg.autoReferenceDiscovery!==false)lanes.push({name:'references',intervalMs:referenceSeconds*1000,run:()=>refreshLane('references',reference)});
   else state.streams.references={status:'BLOCKED',reason:'REFERENCES_NOT_CONFIGURED'};
   await persist();await runCollectorLanes(lanes,controller,{onFatal:stop});
  }
