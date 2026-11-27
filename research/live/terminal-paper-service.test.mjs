@@ -16,7 +16,7 @@ async function fixture(t){
  const {backendHash}=await sourceInventory(ROOT);
  const io=createTerminalRuntime({ROOT,DATA}),services=[];
  t.after(async()=>{try{await Promise.all(services.map(s=>s.stop()))}finally{await rm(DATA,{recursive:true,force:true})}});
- const service=(pool)=>{const s=createTerminalPaperService({ROOT,DATA,pool,maxAgeMs:60000,backendHash,io,loadState:async()=>{throw Error('RPC_UNAVAILABLE')},preview:async()=>{throw Error('UNEXPECTED_PREVIEW')},loadReview:async()=>{throw Error('UNEXPECTED_REVIEW')},isStopping:()=>false});services.push(s);return s};
+ const service=(pool)=>{const s=createTerminalPaperService({ROOT,DATA,pool,maxAgeMs:60000,backendHash,io,loadState:async()=>{throw Error('RPC_UNAVAILABLE')},preview:async()=>{throw Error('UNEXPECTED_PREVIEW')},loadReview:async()=>{throw Error('UNEXPECTED_REVIEW')},refreshFeatures:async m=>{featureCalls.push(m.slot);return {slot:m.slot,observedAt:now,sources:{external:{status:'OBSERVED'},holder:{status:'UNAVAILABLE'}}}},isStopping:()=>false});services.push(s);return s};
  async function seed(pool,{expired=false,endpoint=false,corrupt=false}={}){
   const now=Date.now(),id='native-fixture',dir=join(DATA,'paper-auto',pool),dst=join(dir,id);
   const endAt=expired?now-120000:now+86400000;
@@ -76,7 +76,7 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const {backendHash}=await sourceInventory(ROOT);
  const io=createTerminalRuntime({ROOT,DATA}),captures=new Map(),services=[];
  t.after(async()=>{try{await Promise.all(services.map(s=>s.stop()))}finally{await rm(DATA,{recursive:true,force:true})}});
- let now=1800000000000,current;
+ let now=1800000000000,current,featureCalls=[];
  t.mock.method(Date,'now',()=>now);
  const mintX='C'.repeat(32),mintY='D'.repeat(32),idl=join(DATA,'idl.json');
  await writeFile(idl,'{}');
@@ -118,4 +118,6 @@ test('real service starts, advances twice, archives and resumes from disk with i
  assert.equal(waiting.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');
  now+=10000;await capture(5,110n,now-1000,now);await resumed.tick();
  const observed=await resumed.get();assert.equal(observed.snapshotCount,2);assert.equal(observed.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');assert.equal(observed.rows.find(r=>r.mode==='adaptive').adaptiveReason,'UNEXPECTED_REVIEW');
+ assert.deepEqual(featureCalls,[5]);assert.equal(observed.featureCollection.slot,5);
+ now+=10000;await capture(6,120n,now-1000,now);await resumed.tick();assert.deepEqual(featureCalls,[5]);assert.equal((await resumed.get()).snapshotCount,3);
 });

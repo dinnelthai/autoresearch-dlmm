@@ -27,7 +27,7 @@ async function researchInputs(scope){
  try{state=await loadState(scope);m=currentMarket(state,scope,now,maxAgeMs)}catch{reason='MARKET_CAPTURE_UNAVAILABLE'}
  if(m&&snapshotReviewPath(scope)){try{review=(await loadReview(m,now,snapshotReviewPath(scope))).review}catch(e){reason=errorCode(e,'REVIEW_VALIDATION_FAILED')}}
  else if(m)reason='POOL_RESEARCH_NOT_CONFIGURED';
- return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:marketObservations.external(),holder:m?marketObservations.holder(scope,m.mintX):null,review,reviewReason:reason,now,maxAgeMs});
+ return inputStatus({pool:scope,market:m,history:state?.streams?.['history:'+scope],external:marketObservations.external(scope),holder:m?marketObservations.holder(scope,m.mintX):null,review,reviewReason:reason,now,maxAgeMs});
 }
 function snapshotReviewPath(scope){const map=cfg.researchReviews;if(map&&typeof map==='object'&&!Array.isArray(map)&&Object.hasOwn(map,scope)&&typeof map[scope]==='string')return map[scope];return scope===pool?cfg.review:null}
 async function saveResearchSnapshot(body,pinned=null){
@@ -43,7 +43,7 @@ async function saveResearchSnapshot(body,pinned=null){
   await reviewedBytes(reviewEvidenceRefs(candidate.review),'SNAPSHOT_REVIEW_HASH_MISMATCH');
   reviewed=candidate;reviewStatus='MATCHED_HASHES_UNVERIFIED';
  }catch{reviewStatus='REVIEW_MISSING_STALE_OR_UNVERIFIED'}}
- const externalLast=marketObservations.external();
+ const externalLast=marketObservations.external(scope);
  const external=externalLast?.pool===scope&&externalLast.marketSlot===m.slot&&externalLast.marketRawHash===m.rawHash&&externalLast.expiresAt>now?externalLast:null,holder=marketObservations.holder(scope,m.mintX);
  const diagnostic=inputStatus({pool:scope,market:m,history:state.streams?.['history:'+scope],external,holder,review:reviewed?.review,reviewReason:reviewStatus,now,maxAgeMs});
  const frozen={...state,streams:{market:state.streams.market},history:{}};

@@ -11,8 +11,7 @@ import {createReadRpc} from './rpc-read.mjs';
 import {chainTimeFact} from './evidence-builder.mjs';
 import {assert,sha} from './terminal-runtime.mjs';
 export function createMarketObservationService({ROOT,DATA,cfg,maxAgeMs,validateScope,loadState,safeDataPath,boundedRead}){
- let externalLast=null,holderLastAttempt=0;
-const holderCache=new Map(),series=featureSeries(DATA);
+ const externalCache=new Map(),externalAttempts=new Map(),holderAttempts=new Map(),holderCache=new Map(),series=featureSeries(DATA);
 async function archivedHolderBaseline(m){
  try{const row=(await series.read(m.pool,m.mintX,'holder')).at(-1);if(!row||Date.now()-row.receivedAt>1800000)return null;
   const dir=await safeDataPath(row.capture),bytes=await boundedRead(await safeDataPath(join(dir,'manifest.json')),256*1024);assert(sha(bytes)===row.sha256,'HOLDER_BASELINE_HASH');const x=JSON.parse(bytes);
@@ -24,7 +23,7 @@ async function archivedHolderBaseline(m){
 async function holderObservation(body,pinned=null){
  const scope=validateScope(body?.pool),m=pinned??currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),key=scope+':'+m.mintX,now=Date.now(),old=holderCache.get(key);assert(m.pool===scope,'HOLDER_PINNED_SCOPE');
  if(old&&now-old.public.receivedAt<60000)return old.public;
- if(now-holderLastAttempt<60000)throw Error('HOLDER_RETRY_COOLDOWN');holderLastAttempt=now;
+ if(now-(holderAttempts.get(key)??-Infinity)<60000)throw Error('HOLDER_RETRY_COOLDOWN');holderAttempts.set(key,now);
  const base=join(DATA,'raw');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'holder-'));
  const x=await captureHolderFeatures(m,{archive:(name,raw)=>writeFile(join(dir,name),raw,{mode:0o600,flag:'wx'})});
  const prior=old?.internal??await archivedHolderBaseline(m);
@@ -37,14 +36,15 @@ async function holderObservation(body,pinned=null){
 }
 async function externalObservation(body,pinned=null){
  const scope=validateScope(body?.pool),m=pinned??currentMarket(await loadState(scope),scope,Date.now(),maxAgeMs),now=Date.now();assert(m.pool===scope,'EXTERNAL_PINNED_SCOPE');
- if(externalLast&&externalLast.pool===scope&&externalLast.marketRawHash===m.rawHash&&externalLast.expiresAt>now)return externalLast;
- if(externalLast&&now-externalLast.fetchedAt<10000)throw Error('EXTERNAL_RETRY_COOLDOWN');
+ const cached=externalCache.get(scope);
+ if(cached?.marketRawHash===m.rawHash&&cached.expiresAt>now)return cached;
+ if(now-(externalAttempts.get(scope)??-Infinity)<10000)throw Error('EXTERNAL_RETRY_COOLDOWN');externalAttempts.set(scope,now);
  const base=join(DATA,'raw');await mkdir(base,{recursive:true,mode:0o700});const dir=await mkdtemp(join(base,'external-'));
  const result=await observeExternalMarket(m,{config:cfg.externalMarket??{},archive:(name,raw)=>writeFile(join(dir,name),raw,{mode:0o600,flag:'wx'})});
  const verified=await verifyQuoteEvidence(result,m,async name=>boundedRead(await safeDataPath(join(dir,name)),1024*1024));
  const bytes=JSON.stringify({...result,rawEvidenceCheck:verified},null,2)+'\n';await writeFile(join(dir,'manifest.json'),bytes,{mode:0o600,flag:'wx'});
  const capture=relative(ROOT,dir),evidenceHash=sha(bytes);await series.add({kind:'external',pool:scope,mint:m.mintX,slot:m.slot,receivedAt:result.fetchedAt,capture,sha256:evidenceHash});
- externalLast={...result,rawEvidenceCheck:verified,capture,evidenceHash};return externalLast;
+ const observed={...result,rawEvidenceCheck:verified,capture,evidenceHash};externalCache.set(scope,observed);return observed;
 }
 async function captureMarketTime(m){
  const endpoint=process.env.SOLANA_RPC_URL;assert(endpoint,'CHAIN_TIME_RPC_REQUIRED');
@@ -56,5 +56,10 @@ async function captureMarketTime(m){
  return {...fact,capture:relative(ROOT,dir),evidenceHash:sha(bytes)};
 }
 
- return {holderObservation,externalObservation,captureMarketTime,external:()=>externalLast,holder:(scope,mint)=>holderCache.get(scope+':'+mint)?.public??null};
+ async function refreshPaperFeatures(m){
+  const names=['external','holder','chainTime'];
+  const results=await Promise.allSettled([externalObservation({pool:m.pool},m),holderObservation({pool:m.pool},m),captureMarketTime(m)]);
+  return {slot:m.slot,observedAt:Date.now(),sources:Object.fromEntries(results.map((r,i)=>[names[i],r.status==='fulfilled'?{status:'OBSERVED',capture:r.value.capture,evidenceHash:r.value.evidenceHash}:{status:'UNAVAILABLE',reason:typeof r.reason?.message==='string'&&/^[A-Z0-9_]{1,96}$/.test(r.reason.message)?r.reason.message:'FEATURE_COLLECTION_FAILED'}]))};
+ }
+ return {holderObservation,externalObservation,captureMarketTime,refreshPaperFeatures,external:scope=>scope?externalCache.get(scope)??null:[...externalCache.values()].at(-1)??null,holder:(scope,mint)=>holderCache.get(scope+':'+mint)?.public??null};
 }
