@@ -20,3 +20,11 @@ function requestConfig(request,overrides={}){
   return config({...goals[request.goal??"balanced"],...(request.horizonSeconds!=null?{forecastHorizonSeconds:finite(request.horizonSeconds,"horizon",1)}:{}),...overrides});
 }
 export {EPS,clone,sum,clip,DEFAULTS,assert,finite,config,price,binId,cvar,requestConfig};
+
+// Only decision preferences can be searched; capital, fees, risk limits and market facts stay fixed.
+const TUNING_KEYS=['lambda','kappaSol','targetRatio','minImprovementSol','uncertaintySol','cooldownSeconds'];
+export function strategyTuning(overrides={}){
+ assert(overrides&&typeof overrides==='object'&&!Array.isArray(overrides)&&Object.keys(overrides).every(k=>TUNING_KEYS.includes(k)),'invalid strategy tuning keys');
+ for(const [k,v] of Object.entries(overrides)){finite(v,k,k==='cooldownSeconds'?15:0,k==='targetRatio'?1:k==='cooldownSeconds'?86400:100);if(k==='cooldownSeconds')assert(Number.isInteger(v),'integer cooldown required')}
+ return {...overrides};
+}

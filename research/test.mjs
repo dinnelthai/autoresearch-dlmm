@@ -64,3 +64,8 @@ const emergency=Engine.createSession(stressReq,{...cfg,cooldownSeconds:3600},"ad
 const pending=Engine.createSession(req,{...cfg,executionDelaySeconds:100},"adaptive");for(const e of ev.slice(0,5))pending.push(e);pending.action({type:"OPEN",spec:{shape:"spot",width:4,bidFraction:.5,askFraction:.5}});pending.push({...ev[6],exitDepth:.1});check(pending.snapshot().state.receipts.some(r=>r.status==="CANCELLED"&&r.reason==="RISK_OVERRIDE"),"cancel pending exposure");
 const weighted=Engine.run(req,ev,cfg,"hodl");check(weighted.timeWeightedNav>0&&weighted.capitalSeconds>0,"capital time accounting");
 console.log("Safety integration assertions:",count);
+
+const tuneSamples=[0,1,2,3].map(i=>({id:'opt'+i,group:'opt'+i,split:i<2?'train':'validation',request:bizReq,events:Engine.demo('range').slice(0,8).map(e=>({...e,t:e.t+i*10000,...(e.references?{references:e.references.map(r=>({...r,availableAt:r.availableAt+i*10000,...(r.observedAt!=null?{observedAt:r.observedAt+i*10000}:{})}))}:{})}))}));
+const opt=Engine.optimizeSamples([...tuneSamples,{id:'untouched',group:'untouched',split:'test'}],cfg,{candidates:[{lambda:1}]});check(opt.train.length===2&&opt.testEvaluated===false&&opt.validationStart>opt.trainEnd,'optimizer split and untouched test');
+let badTune=false;try{Engine.optimizeSamples(tuneSamples,cfg,{candidates:[{maxBinShare:1}]})}catch{badTune=true}check(badTune,'optimizer cannot change hard constraints');
+let badTime=false;try{Engine.optimizeSamples(tuneSamples.map(s=>s.split==='validation'?{...s,events:tuneSamples[0].events}:s),cfg)}catch{badTime=true}check(badTime,'optimizer chronology');

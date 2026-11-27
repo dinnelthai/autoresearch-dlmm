@@ -7,6 +7,7 @@ import {createPaperSnapshotReader,readSnapshotCheckpoint,snapshotCheckpoint,adva
 import {openSnapshotExperiment,updateAdaptiveSnapshot,PAPER_SNAPSHOT_LIMIT} from './paper-snapshot-run-core.mjs';
 import {nextPaperCapture,paperPublic} from './paper-auto-core.mjs';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
+import {strategyTuning} from '../engine/numeric.mjs';
 import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
 import {reviewedObservations} from './review-observations.mjs';
 import {fixedPaperReport} from './paper-share-core.mjs';
@@ -48,7 +49,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   }
   const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,report:r,budget,policy:body.policy,backendHash,frozenAt:Date.now()});
   if(body.policy.adaptive){
-   const controls=adaptivePolicy(body.policy.adaptive);state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls}};
+   const controls=adaptivePolicy(body.policy.adaptive),tuning=strategyTuning(body.policy.tuning??{});state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls,...tuning}};
    const row=state.rows.find(r=>r.mode==='adaptive'),base=state.rows[0];
    if(row?.status==='BLOCKED'&&base.status==='HOLD_ONLY')state.rows=state.rows.map(v=>v===row?{...structuredClone(base),mode:'adaptive',mapping:null,entries:0,adaptiveReason:row.reason}:v);
   }
