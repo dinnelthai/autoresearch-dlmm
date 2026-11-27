@@ -22,7 +22,7 @@ function renderAutoPaper(r){
  paperAutoData=r;const body=$('paperAutoRows');body.replaceChildren();
  $('paperAutoPause').disabled=paperAutoBusy||!r?.running;$('paperAutoStart').disabled=paperAutoBusy||!!r?.running;
  if(!r)return;
- const summary=[r.status,r.reason,r.checkpointFresh?'最近观察':'非当前观察',r.slot!=null?'Slot '+r.slot+' · '+r.snapshotCount+' 个快照':null,r.window? r.window.days+'天 · '+r.window.status:null,r.adaptiveInputBasis,r.comparison?'配对 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 缺口 '+r.comparison.gapCount:null,r.comparison?.completedEvaluation?.rows?.length?'最高观察分 '+r.comparison.completedEvaluation.rows[0].mode+' '+fmt(r.comparison.completedEvaluation.rows[0].scoreBps)+' bps':null];
+ const summary=[r.status,r.reason,r.checkpointFresh?'最近观察':'非当前观察',r.slot!=null?'Slot '+r.slot+' · '+r.snapshotCount+' 个快照':null,r.window? r.window.days+'天 · '+r.window.status:null,r.adaptiveInputBasis,r.comparison?'估值有效 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 缺口 '+r.comparison.gapCount:null,r.comparison?.completedEvaluation?.rows?.length?'期末观察分 '+r.comparison.completedEvaluation.rows[0].mode+' '+fmt(r.comparison.completedEvaluation.rows[0].scoreBps)+' bps':null];
  put('paperAutoStatus',summary.filter(Boolean).join(' · '));
  for(const x of r.rows){const tr=document.createElement('tr');cell(tr,x.mode==='NO_LP'?'No LP / HODL':names[x.mode]??x.mode);cell(tr,x.status+(x.reason?' · '+x.reason:'')+(x.adaptiveReason?' · '+x.adaptiveReason:'')+(x.mode==='adaptive'?' · 开仓 '+(x.entries??'—')+' · 调仓/再入场 '+x.rebalances:''));cell(tr,paperSignedSol(x.initialNavYRaw));for(const k of ['navYRaw','pnlYRaw','excessVsHoldYRaw','costYRaw'])cell(tr,paperSignedSol(x.latest?.[k]));cell(tr,Number.isFinite(x.latest?.maxDrawdownBps)?fmt(x.latest.maxDrawdownBps/100)+'%':'—');body.append(tr)}
 }
@@ -42,7 +42,7 @@ $('paperAutoStart').addEventListener('click',async()=>{
   if(!draft||draft.pool!==p)throw Error('请先在策略页为当前 Pool 准备虚拟本金草稿');const d=draft;
   const dd=number('paperAutoDrawdown')*100,gap=number('paperAutoGap');if(!Number.isFinite(dd)||Math.abs(dd-Math.round(dd))>1e-8||dd<1||dd>10000||!Number.isInteger(gap))throw Error('风险参数无效');
   const policy={evaluationDays:Number($('paperEvaluationDays').value),maxDrawdownBps:Math.round(dd),maxGapSeconds:gap,maxLossSolRaw:paperSolRaw($('paperAutoLoss').value.trim()),exitCostSolRaw:paperSolRaw($('paperAutoExitCost').value.trim())};
-  if($('paperAdaptiveEnabled').checked)policy.adaptive={cooldownSeconds:number('paperAdaptiveCooldown'),maxRebalances:number('paperAdaptiveCount'),maxTurnoverSol:number('paperAdaptiveTurnover')};
+  policy.adaptive={cooldownSeconds:number('paperAdaptiveCooldown'),maxRebalances:number('paperAdaptiveCount'),maxTurnoverSol:number('paperAdaptiveTurnover')};
   paperAutoBusy=true;paperAutoGeneration++;$('paperAutoStart').disabled=true;put('paperAutoStatus','正在生成并冻结虚拟方案…');
   const res=await terminalPost('/api/terminal/paper-start',{draft:d,policy},45000),r=await res.json();
   if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'启动失败');renderAutoPaper(validateAutoPaper(r,p))

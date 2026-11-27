@@ -10,7 +10,6 @@ import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {strategyTuning} from '../engine/numeric.mjs';
 import {adaptivePolicy,virtualManagement,paperEnvironment} from './paper-adaptive-core.mjs';
 import {reviewedObservations,collectedPaperInputs,PAPER_OBSERVATION_BASIS} from './review-observations.mjs';
-import {fixedPaperReport} from './paper-share-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha,verifiedEvidence} from './evidence-digest.mjs';
 import {freezePaperWindow,paperWindowCapture,paperWindowExpired,finishPaperWindow} from './paper-window-core.mjs';
@@ -68,26 +67,15 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   }
   const {solRaw,memeRaw,riskConfig}=request;
   const budget={solRaw,memeRaw,allowDispose:false,minSolReserve:riskConfig.minSolReserve,operationCostSol:riskConfig.operationCostSol,maxBinShare:riskConfig.maxBinShare};
-  let r=fixedPaperReport({snapshot:capture,budget}),reviewHash=null;
-  if(body.reviewHash!=null&&!optimization){
-   // Optional reviewed research can replace fixed controls; failures never suppress the controls.
-   try{
-    const reviewed=await preview(body,'plans'),b=reviewed.terminalBinding;
-    assert(reviewed.status==='RESEARCH_DIAGNOSTIC_UNVERIFIED'&&reviewed.planPreview?.status==='RESEARCH_PLAN_PREVIEW_UNVERIFIED'&&b?.scope==='RESEARCH_ONLY'&&b.expiresAt>Date.now()&&b.marketSlot===m.slot&&b.marketRawHash===m.rawHash&&b.reviewHash===body.reviewHash,'PAPER_AUTO_PLAN_BLOCKED');
-    assert(Object.keys(budget).every(k=>budget[k]===b.researchBudget[k]),'PAPER_AUTO_REVIEW_BUDGET_CHANGED');
-    r=reviewed;reviewHash=b.reviewHash;
-   }catch(e){r.planPreview.adaptiveReason=errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}
-  }
-  const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,report:r,budget,policy:body.policy,backendHash,frozenAt:Date.now()});
+  const controls=adaptivePolicy(body.policy.adaptive??{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30}),tuning=strategyTuning(optimization?.tuning??body.policy.tuning??{});
+  const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,budget,policy:body.policy,backendHash,frozenAt:Date.now(),adaptiveOnly:true});
   state.researchRequest=request;
-  if(body.policy.adaptive){
-   const controls=adaptivePolicy(body.policy.adaptive),tuning=strategyTuning(optimization?.tuning??body.policy.tuning??{});state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls,...tuning}};
-   const row=state.rows.find(r=>r.mode==='adaptive'),base=state.rows[0];
-   if(row?.status==='BLOCKED'&&base.status==='HOLD_ONLY')state.rows=state.rows.map(v=>v===row?{...structuredClone(base),mode:'adaptive',mapping:null,entries:0,adaptiveReason:row.reason}:v);
-  }
-  state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:reviewHash?'REVIEWED_MODEL':'FIXED_OBSERVED_BIN_CONTROL',...(optimization?{optimization:{datasetSha256:optimization.datasetSha256,nextWindowAfter:optimization.nextWindowAfter,tuning:strategyTuning(optimization.tuning),proposalHash:sha(JSON.stringify(optimization))}}:{})};
-  assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
-  state.observationLog={market:marketLog(m,null,null,'INITIAL_OBSERVATION'),decision:decisionLog(r.planPreview,{slot:m.slot,observedAt:state.frozenAt,reason:'INITIAL_FROZEN_CONTROLS',kind:'INITIAL_CONTROLS',decidedAt:state.frozenAt,inputHash:state.researchBinding.reportHash}),operations:operationLog(null,state)};
+  state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls,...tuning}};
+  const row=state.rows.find(r=>r.mode==='adaptive');row.adaptiveReason='ADAPTIVE_RESEARCH_INPUT_REQUIRED';row.mapping=null;
+  state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);
+  state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash:null,reportHash:sha(JSON.stringify(state.adaptiveRequest)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:'ADAPTIVE_ONLY',...(optimization?{optimization:{datasetSha256:optimization.datasetSha256,nextWindowAfter:optimization.nextWindowAfter,tuning:strategyTuning(optimization.tuning),proposalHash:sha(JSON.stringify(optimization))}}:{})};
+  assert(state.rows[0].status==='HOLD_ONLY'&&row.status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
+  state.observationLog={market:marketLog(m,null,null,'INITIAL_OBSERVATION'),decision:decisionLog(null,{slot:m.slot,observedAt:state.frozenAt,reason:'INITIAL_ADAPTIVE_WARMUP',kind:'INITIAL_CONTROLS',decidedAt:state.frozenAt,inputHash:state.researchBinding.reportHash}),operations:operationLog(null,state)};
   await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};features=null;lastFeatureAttempt=-Infinity;return get();
  })}
  async function finish(a,status,reason=null){await atomic(pointer,{...a,running:false,finalStatus:status,finishedAt:Date.now()});job={id:a.id,status,running:false,...(reason?{reason}:{})}}
