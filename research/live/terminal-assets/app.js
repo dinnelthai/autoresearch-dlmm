@@ -4,7 +4,7 @@ rows();
 syncShape();
 renderPosition();renderShadow();renderPaper();
 renderMonitorRows();renderMonitorSelection();renderAutoMonitor();
-refreshService({initial:true}).then(refreshAutoMonitor);
+refreshService({initial:true}).then(()=>{refreshAutoMonitor();refreshPaperAuto()});
 setInterval(()=>refreshService().then(refreshAutoMonitor),15000);
 setInterval(()=>{
  const now=Date.now();

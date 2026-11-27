@@ -36,7 +36,7 @@ function renderAutoPaper(r){
  for(const [id,val] of [['paperLiveNav',v?.navYRaw],['paperLivePnl',v?.pnlYRaw],['paperLiveAlpha',v?.excessVsHoldYRaw],['paperLiveFee',v?.totalFeeYRaw]]){put(id,paperSignedSol(val));const el=$(id);delete el.dataset.sign;if((id==='paperLivePnl'||id==='paperLiveAlpha')&&typeof val==='string'&&/^-?\d{1,80}$/.test(val)){const n=BigInt(val);el.dataset.sign=n>0n?'positive':n<0n?'negative':'neutral'}}
  put('paperLiveDrawdown',Number.isFinite(v?.maxDrawdownBps)?fmt(v.maxDrawdownBps/100)+'%':'—');
  put('paperLiveEntries',x?String(x.entries??'—')+' / '+String(x.rebalances??'—'):'—');
- if(!r){put('paperAutoStatus','等待当前 Pool 的实验状态');return}
+ if(!r){put('paperAutoStatus','等待当前 Pool 的实验状态');$('paperAutoStatus').dataset.state='normal';return}
  const summary=[r.status,r.reason,r.checkpointFresh?'最近观察':'非当前观察',r.slot!=null?'Slot '+r.slot+' · '+r.snapshotCount+' 个快照':null,r.window? (r.window.days<1?Math.round(r.window.days*1440)+'分钟':r.window.days+'天')+' · '+r.window.status:null,r.adaptiveInputBasis,r.comparison?'估值有效 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 缺口 '+r.comparison.gapCount:null,r.comparison?.completedEvaluation?.rows?.length?'期末观察分 '+r.comparison.completedEvaluation.rows[0].mode+' '+fmt(r.comparison.completedEvaluation.rows[0].scoreBps)+' bps':null];
  put('paperAutoStatus',[status,r.reason?reasonText(r.reason):null,x?.adaptiveReason?reasonText(x.adaptiveReason):null,r.snapshotCount!=null?r.snapshotCount+' 次快照':null].filter(Boolean).join(' · '));
  $('paperAutoStatus').title=summary.filter(Boolean).join(' · ');$('paperAutoStatus').dataset.state=r.status==='BLOCKED'?'error':'normal';
@@ -48,7 +48,7 @@ async function refreshPaperAuto(){
  if(paperAutoReading||paperAutoBusy||page!=='terminal'||!target)return;
  paperAutoReading=true;const p=target,g=++paperAutoGeneration;
  try{const res=await terminalGet('/api/terminal/paper-status',p);const r=await res.json();if(g!==paperAutoGeneration||p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'服务不可用');renderAutoPaper(validateAutoPaper(r,p))}
- catch(e){if(g===paperAutoGeneration&&p===target){renderAutoPaper(null);put('paperAutoStatus','读取失败：'+e.message+' · 不展示旧值')}}
+ catch(e){if(g===paperAutoGeneration&&p===target){renderAutoPaper(null);put('paperAutoStatus','读取失败：'+e.message+' · 不展示旧值');$('paperAutoStatus').dataset.state='error';put('paperLiveState','状态读取失败');put('workspaceRunBadge','读取失败');$('workspaceRunBadge').dataset.state='error'}}
  finally{paperAutoReading=false}
 }
 $('paperAutoRefresh').addEventListener('click',refreshPaperAuto);
@@ -71,7 +71,7 @@ $('paperAutoStart').addEventListener('click',async()=>{
   paperAutoBusy=true;paperAutoGeneration++;$('paperAutoStart').disabled=true;put('paperAutoStatus','正在生成并冻结虚拟方案…');
   const res=await terminalPost('/api/terminal/paper-start',{draft:d,policy},45000),r=await res.json();
   if(p!==target)return;if(!res.ok)throw Error(reasonText(r.gaps?.[0]??'启动失败'));renderAutoPaper(validateAutoPaper(r,p))
- }catch(e){if(p===target)put('paperAutoStatus','启动失败：'+e.message)}
+ }catch(e){if(p===target){put('paperAutoStatus','启动失败：'+e.message);$('paperAutoStatus').dataset.state='error'}}
  finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}
 });
 $('paperAutoPause').addEventListener('click',async()=>{if(paperAutoBusy||!paperAutoData?.running||paperAutoData.pool!==target)return;const p=target,id=paperAutoData.id;paperAutoBusy=true;paperAutoGeneration++;$('paperAutoPause').disabled=true;try{const res=await terminalPost('/api/terminal/paper-pause',{pool:p,id},10000),r=await res.json();if(p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'暂停失败');renderAutoPaper(validateAutoPaper(r,p))}catch(e){if(p===target)put('paperAutoStatus','暂停失败：'+e.message)}finally{paperAutoBusy=false;$('paperAutoStart').disabled=!!paperAutoData?.running;$('paperAutoPause').disabled=!paperAutoData?.running}});
