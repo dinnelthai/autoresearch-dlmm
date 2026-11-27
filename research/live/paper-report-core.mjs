@@ -49,7 +49,7 @@ export function createPaperReport(state,{maxChartPoints=2000}={}){
  function segment(regime,start,end){const last=timeline.at(-1);if(last?.regime===regime&&last.endAt===start){last.endAt=end;last.intervals++;return}timelineCount++;timeline.push({regime,startAt:start,endAt:end,intervals:1});if(timeline.length>1000)timeline.shift()}
  function observeFollowup(previous,current,elapsed,gap){
   const log=previous.r.observationLog,d=log?.decision;if(!d||d.kind==='INITIAL_CONTROLS'||d.reason==='INITIAL_FROZEN_CONTROLS')return;
-  const op=log.operations?.find(o=>o.mode==='adaptive'&&['OPEN','REENTRY','REPOSITION','REMOVE_AND_HOLD','EXIT'].includes(o.action));
+  const op=log.operations?.find(o=>o.mode==='adaptive'&&['OPEN','REENTRY','REDUCE','REPOSITION','REMOVE_AND_HOLD','EXIT'].includes(o.action));
   const selected=d.selected?.action??'NO_SELECTION',action=op?.action??(selected==='HOLD'||selected==='NO_LP'?selected:'NO_OPERATION'),key=action,group=followups.get(key)??{action,decisions:0,paired:0,missing:0,observedMs:0,nextNetYRaw:0n,nextAlphaYRaw:0n,positiveAlpha:0,immediateSamples:0,immediateNavChangeYRaw:0n};
   group.decisions++;
   if(op?.comparisonBasis==='SAME_CAPTURE_PRE_DECISION'&&op.before?.slot===op.after?.slot&&op.after?.slot===previous.r.slot){try{group.immediateNavChangeYRaw+=integer(op.after.navYRaw)-integer(op.before.navYRaw);group.immediateSamples++}catch{}}
@@ -63,7 +63,7 @@ export function createPaperReport(state,{maxChartPoints=2000}={}){
   for(const h of horizons){
    if(gap||!continuous){for(const q of h.pending)horizonGroup(h,q.action).missing++;h.pending=[]}
    else{let done=0;while(done<h.pending.length&&h.pending[done].due<=t){const q=h.pending[done++],g=horizonGroup(h,q.action);if(v&&t-q.due<=state.policy.maxGapSeconds*1000){const alpha=v.alpha-q.alpha;g.paired++;g.sumAlphaYRaw+=alpha;g.sumNetYRaw+=v.nav-q.nav;g.elapsedMs+=t-q.start;if(alpha>0n)g.positiveAlpha++}else g.missing++}if(done)h.pending=h.pending.slice(done)}
-   const l=r.observationLog,d=l?.decision,op=l?.operations?.find(o=>o.mode==='adaptive'&&['OPEN','REENTRY','REPOSITION','REMOVE_AND_HOLD','EXIT'].includes(o.action));
+   const l=r.observationLog,d=l?.decision,op=l?.operations?.find(o=>o.mode==='adaptive'&&['OPEN','REENTRY','REDUCE','REPOSITION','REMOVE_AND_HOLD','EXIT'].includes(o.action));
    if(!d||(!op&&!adaptiveDecision(d)))continue;
    const action=op?.action??(['HOLD','NO_LP'].includes(d.selected?.action)?d.selected.action:'NO_OPERATION'),g=horizonGroup(h,action);g.eligible++;
    const start=Math.max(t,Number.isFinite(d.decidedAt)?d.decidedAt:t);

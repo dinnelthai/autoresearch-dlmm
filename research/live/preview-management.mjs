@@ -3,7 +3,7 @@ import {Engine} from '../engine.mjs';
 const finite=n=>typeof n==='number'&&Number.isFinite(n);
 const sum=(a,k)=>a.reduce((s,b)=>s+b[k],0);
 const copy=v=>JSON.parse(JSON.stringify(v));
-export function previewManagement(model,cfg,market,{asOf,operations=null,position=null}={}){
+export function previewManagement(model,cfg,market,{asOf,operations=null,position=null,virtualProtection=false}={}){
  const result={status:'BLOCKED',decisionReady:false,executionReady:false,selected:null,candidates:[],alerts:[],forecastLabel:'SYNTHETIC_EQUAL_WEIGHT_SCENARIOS_NOT_CALIBRATED',volumeBasis:'EXPLICIT_FLOW_WINDOW_FROZEN_TARGET_BIN_PROXY',scope:'EXISTING_POSITION_ONLY'};
  const block=reason=>({...result,reason});
  if(!model.bins.some(b=>b.liquidity>0)||model.status!=='OPEN')return block('NO_NONEMPTY_POSITION');
@@ -71,6 +71,12 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
   result.protectiveAlternatives=protective;
   result.protectiveDiagnostics=result.candidates.filter(r=>r.protectiveDiagnostic).map(r=>({action:r.action.type,feasible:r.feasible,reason:r.reason,...r.protectiveDiagnostic}));
   result.reason='HARD_RISK_REVIEW_NO_AUTOMATIC_SELECTION';
+  // Paper follows the canonical market gate by withdrawing exposure, even when
+  // retained inventory still violates risk limits. Never relabel a failed scenario as feasible.
+  if(virtualProtection){
+   const remove=result.candidates.find(r=>r.action.type==='REMOVE_AND_HOLD'&&r.protectiveDiagnostic&&r.allocation?.bins.length===0&&finite(r.estimatedOperationCostSol)&&r.postRisk?.bid===0);
+   if(remove){result.selected={...remove,protectiveExecution:true};result.reason='VIRTUAL_MARKET_OR_RISK_GATE_REMOVE';}
+  }
  }else if(hold?.feasible){
   const best=result.candidates.filter(r=>r.feasible&&r.action.type!=='HOLD').sort((a,b)=>b.score-a.score)[0];
   result.selected=best&&best.score-hold.score>cfg.uncertaintySol+cfg.minImprovementSol?best:hold;

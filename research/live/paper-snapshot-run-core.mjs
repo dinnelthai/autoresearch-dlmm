@@ -62,21 +62,21 @@ export function advanceSnapshotExperiment(state,{previous,snapshot,backendHash,n
   const last=r.points.at(-1),block=reason=>({...r,status:'BLOCKED',reason,blockedAtSlot:c.i.slot,pendingAdaptive:null});
   try{
    assert(last&&last.slot===b.i.slot,'PAPER_SNAPSHOT_ROW_STALE');
-   let wallet={x:raw(last.walletXRaw),y:raw(last.walletYRaw)},p=zero(),fees=zero(),cost=raw(last.costYRaw),status=r.status,reason=r.reason,claimedX=raw(r.claimedFeeXRaw??'0'),claimedY=raw(r.claimedFeeYRaw??'0'),observedPeak=raw(last.peakYRaw),feeGrowth=r.feeGrowth??[];
+   let wallet={x:raw(last.walletXRaw),y:raw(last.walletYRaw)},p=zero(),fees=zero(),cost=raw(last.costYRaw),status=r.status,reason=r.reason,claimedX=raw(r.claimedFeeXRaw??'0'),claimedY=raw(r.claimedFeeYRaw??'0'),observedPeak=raw(last.peakYRaw),feeGrowth=r.feeGrowth??[],feeCarry=r.feeCarry??null;
    if(status==='OPEN_PROXY'){
     assert(!gap,'PAPER_SNAPSHOT_GAP');
     p=principal(c.map,r.mapping.rows);
-    const interval=intervalFees(b.map,c.map,r.mapping.rows,feeGrowth);fees=interval.fees;feeGrowth=interval.growth;
+    const interval=intervalFees(b.map,c.map,r.mapping.rows,feeGrowth);fees={x:interval.fees.x+raw(feeCarry?.xRaw??'0'),y:interval.fees.y+raw(feeCarry?.yRaw??'0')};feeGrowth=interval.growth;
     const nav=mark(wallet.x+p.x+fees.x,wallet.y+p.y+fees.y,c.price),peak=raw(last.peakYRaw),high=nav>peak?nav:peak;
     observedPeak=high;
     const loss=initial-nav,dd=high?(high-nav)*10000n/high:0n;
     if(exit||loss>=raw(state.policy.maxLossSolRaw)||dd>=BigInt(state.policy.maxDrawdownBps)){
      const feeCost=raw(state.policy.exitCostSolRaw);assert(wallet.y+p.y+fees.y>=feeCost,'PAPER_SNAPSHOT_EXIT_COST_UNFUNDED');
-     claimedX+=fees.x;claimedY+=fees.y;wallet={x:wallet.x+p.x+fees.x,y:wallet.y+p.y+fees.y-feeCost};cost+=feeCost;p=zero();fees=zero();feeGrowth=[];status='EXITED_PROXY';reason=exit?'MANUAL_VIRTUAL_EXIT':'RISK_VIRTUAL_EXIT';
+     claimedX+=fees.x;claimedY+=fees.y;wallet={x:wallet.x+p.x+fees.x,y:wallet.y+p.y+fees.y-feeCost};cost+=feeCost;p=zero();fees=zero();feeGrowth=[];feeCarry=null;status='EXITED_PROXY';reason=exit?'MANUAL_VIRTUAL_EXIT':'RISK_VIRTUAL_EXIT';
     }
    }
    const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet,principal:p,fees,initial,hold,peak:observedPeak,cost,status});
-   return {...r,status,reason,feeGrowth,...(status==='EXITED_PROXY'?{pendingAdaptive:null}:{}),claimedFeeXRaw:s(claimedX),claimedFeeYRaw:s(claimedY),...appendPoint(r,point)};
+   return {...r,status,reason,feeGrowth,...(r.feeCarry?{feeCarry}:{}),...(status==='EXITED_PROXY'?{pendingAdaptive:null}:{}),claimedFeeXRaw:s(claimedX),claimedFeeYRaw:s(claimedY),...appendPoint(r,point)};
   }catch(e){return block(errorCode(e,'PAPER_SNAPSHOT_UPDATE_FAILED'))}
  });
  return {...state,last:{slot:c.i.slot,proof:c.proof},snapshotCount:state.snapshotCount+1,gapCount:(state.gapCount??0)+(gap?1:0),rows};
@@ -96,11 +96,11 @@ export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHa
   try{
    const r=remapAdaptive({row:{...row,rebalances:row.rebalances??0},selected:intent.apply,snapshot,state,cfg:reviewed.cfg}),last=row.points.at(-1);
    const initial=raw(row.initialNavYRaw),hold=mark(raw(state.capital.xRaw),raw(state.capital.yRaw),c.price);
-   const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet:{x:r.walletX,y:r.walletY},principal:{x:r.principalX,y:r.principalY},fees:zero(),initial,hold,peak:raw(last.peakYRaw),cost:raw(last.costYRaw)+r.cost,status:r.status});
+   const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet:{x:r.walletX,y:r.walletY},principal:{x:r.principalX,y:r.principalY},fees:r.retainedFees??zero(),initial,hold,peak:raw(last.peakYRaw),cost:raw(last.costYRaw)+r.cost,status:r.status});
    assert(BigInt(point.navYRaw)<=BigInt(last.navYRaw),'PAPER_ADAPTIVE_NAV_INCREASE_ON_ACTION');
    if(r.status==='OPEN_PROXY')assert(initial-BigInt(point.navYRaw)<raw(state.policy.maxLossSolRaw)&&point.drawdownBps<state.policy.maxDrawdownBps,'PAPER_ADAPTIVE_POST_ACTION_RISK_LIMIT');
    const action=intent.apply.action.type,entries=row.entries??(row.status==='OPEN_PROXY'?1:0);
-   next={...next,mapping:r.mapping,feeGrowth:[],status:r.status,reason:r.status==='HOLD_ONLY'?'VIRTUAL_T10_REMOVE':null,pendingAdaptive:null,segmentOpening:r.status==='OPEN_PROXY'?{slot:c.i.slot,proof:c.proof}:null,lastActionTime:Math.floor(c.received/1000),entries:entries+(action==='OPEN'?1:0),rebalances:(row.rebalances??0)+(action==='REPOSITION'||action==='OPEN'&&entries>0?1:0),turnoverYRaw:s(r.turnover),claimedFeeXRaw:s(raw(row.claimedFeeXRaw??'0')+raw(last.feeXRaw)),claimedFeeYRaw:s(raw(row.claimedFeeYRaw??'0')+raw(last.feeYRaw)),points:[...row.points.slice(0,-1),point],maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps),adaptiveReason:'VIRTUAL_T10_'+intent.apply.action.type};
+   next={...next,mapping:r.mapping,feeGrowth:[],feeCarry:r.retainedFees?{xRaw:s(r.retainedFees.x),yRaw:s(r.retainedFees.y)}:null,...(action==='REDUCE'?{reductions:(row.reductions??0)+1}:{}),status:r.status,reason:r.status==='HOLD_ONLY'?'VIRTUAL_T10_REMOVE':null,pendingAdaptive:null,segmentOpening:r.status==='OPEN_PROXY'?{slot:c.i.slot,proof:c.proof}:null,lastActionTime:Math.floor(c.received/1000),entries:entries+(action==='OPEN'?1:0),rebalances:(row.rebalances??0)+(action==='REPOSITION'||action==='OPEN'&&entries>0?1:0),turnoverYRaw:s(r.turnover),claimedFeeXRaw:s(raw(row.claimedFeeXRaw??'0')+ (r.retainedFees?0n:raw(last.feeXRaw))),claimedFeeYRaw:s(raw(row.claimedFeeYRaw??'0')+(r.retainedFees?0n:raw(last.feeYRaw))),points:[...row.points.slice(0,-1),point],maxDrawdownBps:Math.max(row.maxDrawdownBps??0,point.drawdownBps),adaptiveReason:'VIRTUAL_T10_'+intent.apply.action.type};
   }catch(e){next={...next,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REMAP_BLOCKED')}}
  }
  return {...state,rows:state.rows.map(r=>r===row?next:r)};

@@ -48,3 +48,6 @@ assert.equal(withdraw.currentMemeDelta,0);
 assert.equal(withdraw.disposal,false);
 assert.equal(withdraw.executionReady,false);
 assert.equal(protection.currentExitDiagnostic.netLiquidationValue,null);
+
+const virtualProtection=P(stressed,c,market,{...opts,virtualProtection:true});
+assert.equal(virtualProtection.selected.action.type,'REMOVE_AND_HOLD');assert.equal(virtualProtection.selected.feasible,false);assert.equal(virtualProtection.selected.protectiveExecution,true);assert.ok(virtualProtection.selected.postRisk.violations.includes('EXIT_CAPACITY'));assert.equal(virtualProtection.executionReady,false);

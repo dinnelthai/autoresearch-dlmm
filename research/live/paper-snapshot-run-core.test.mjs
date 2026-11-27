@@ -117,3 +117,17 @@ test('adaptive risk exit cannot reenter even with later profitable preview',()=>
 });
 
 test('advancing uses only the preceding capture and frozen original baseline',async()=>{const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);const second=advance(state,a,a,b),calls=[];const third=await advancePaperCapture(second,{load:async path=>{calls.push(path);assert.equal(path,b.proof.path);return b},snapshot:c,backendHash,now:1000000});assert.deepEqual(calls,[b.proof.path]);assert.equal(third.rows[0].initialNavYRaw,state.rows[0].initialNavYRaw);assert.equal(third.opening.priceQ64Raw,state.opening.priceQ64Raw);assert.throws(()=>advanceSnapshotExperiment({...second,opening:{...second.opening,priceQ64Raw:String(2n*Q)}},{previous:b,snapshot:c,backendHash,now:1000000}),/PAPER_BASELINE_CHANGED/)});
+
+test('REDUCE retains half the virtual shares and all pending fees, then later removal claims once',async()=>{
+ const {operationLog}=await import('./paper-history-core.mjs'),{a,state}=fixture(),b=snapshot(2,1n),c=snapshot(3,2n),d=snapshot(4,3n),e=snapshot(5,4n),f=snapshot(6,5n);
+ state.adaptiveRequest={goal:'balanced'};
+ const cfg={executionDelaySeconds:1,operationCostSol:0,maxRebalances:8,maxTurnoverSol:30,minSolReserve:0,maxBinShare:.1};
+ const reduce={status:'RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED',selected:{feasible:true,action:{type:'REDUCE',fraction:.5},estimatedOperationCostSol:0}};
+ const remove={status:'RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED',selected:{feasible:true,action:{type:'REMOVE_AND_HOLD'},estimatedOperationCostSol:0}};
+ const update=(s,x,p)=>updateAdaptiveSnapshot(s,{snapshot:x,reviewed:{cfg,latest:{t:x.identity.slot*10+1}},preview:p,reviewHash:'e'.repeat(64),now:x.identity.slot*10000+2000});
+ const s2=update(advance(state,a,a,b),b,reduce),s3=update(advance(s2,a,b,c),c,reduce),r=s3.rows[7],p=r.points.at(-1);
+ assert.equal(r.reductions,1);assert.equal(r.status,'OPEN_PROXY');assert.equal(r.mapping.rows[0].shareRaw,String(BigInt(state.rows[7].mapping.rows[0].shareRaw)/2n));assert.equal(p.principalXRaw,'500000');assert.equal(p.walletXRaw,'1500000');assert.equal(p.feeXRaw,'18');assert.equal(r.claimedFeeXRaw,'0');assert.equal(p.excessVsHoldYRaw,'18');assert.equal(operationLog(s2,s3).find(x=>x.mode==='adaptive').action,'REDUCE');
+ const s4=update(advance(s3,a,c,d),d,remove);assert.equal(s4.rows[7].points.at(-1).feeXRaw,'22');
+ const s5=update(advance(s4,a,d,e),e,remove);assert.equal(s5.rows[7].status,'HOLD_ONLY');assert.equal(s5.rows[7].claimedFeeXRaw,'27');assert.equal(s5.rows[7].points.at(-1).feeXRaw,'0');
+ const s6=advance(s5,a,e,f);assert.equal(s6.rows[7].claimedFeeXRaw,'27');assert.equal(s6.rows[7].points.at(-1).excessVsHoldYRaw,'27');
+});

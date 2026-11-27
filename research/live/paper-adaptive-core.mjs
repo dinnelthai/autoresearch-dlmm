@@ -20,6 +20,11 @@ export function virtualManagement({state,row,snapshot,reviewed}){
  assert(row.mode==='adaptive'&&['HOLD_ONLY','OPEN_PROXY'].includes(row.status)&&p.slot===i.slot&&state.pool===i.pool&&latest.pool===i.pool&&asOf>=latest.t,'PAPER_ADAPTIVE_SCOPE');
  const positionBins=(row.status==='OPEN_PROXY'?row.mapping?.rows??[]:[]).map(r=>{const b=map.get(r.binId),s=raw(b.liquiditySupplyRaw),v=raw(r.shareRaw);assert(s>0n&&v*10n<=s,'PAPER_ADAPTIVE_SHARE');return {id:r.binId,x:rawHuman(String(v*raw(b.amountXRaw)/s),i.sides[0].decimals),y:rawHuman(String(v*raw(b.amountYRaw)/s),9)}});
  const model=E.newState({pool:i.pool,entry:positionBins.length?'position':p.walletXRaw==='0'?'sol':'holding',meme:rawHuman(p.walletXRaw,i.sides[0].decimals),sol:rawHuman(p.walletYRaw,9),pendingFeeX:rawHuman(p.feeXRaw,i.sides[0].decimals),pendingFeeY:rawHuman(p.feeYRaw,9),positionBins,initialPrice:latest.ref.price,goal:state.adaptiveRequest.goal,allowDispose:false},cfg);
+ // Restore the frozen experiment capital rather than treating each management tick as a new investment.
+ model.baseline={x:rawHuman(state.capital.xRaw,i.sides[0].decimals),y:rawHuman(state.capital.yRaw,9)};
+ model.initialNav=rawHuman(row.initialNavYRaw,9);model.cost=rawHuman(p.costYRaw,9);
+ model.claimed={x:rawHuman(row.claimedFeeXRaw??'0',i.sides[0].decimals),y:rawHuman(row.claimedFeeYRaw??'0',9)};
+ model.feesEarned={x:model.claimed.x+model.pendingFees.x,y:model.claimed.y+model.pendingFees.y};
  model.history=observations.slice(0,-1);E.event(model,cfg,{...latest,id:'virtual-market:'+latest.id});
  const bins=[...map.values()],external=bins.flatMap(b=>{const x=rawHuman(b.amountXRaw,i.sides[0].decimals),y=rawHuman(b.amountYRaw,9);return x+y>0?[{id:b.binId,externalLiquiditySol:x*E.price(cfg,b.binId)+y}]:[]});
  if(external.length)E.event(model,cfg,{type:'POOL_STATE',id:'virtual-pool:'+i.rawHash,t:latest.t,bins:external});
@@ -29,11 +34,11 @@ export function virtualManagement({state,row,snapshot,reviewed}){
   return previewPlans(model,cfg,{activeId:i.activeId,bins},{asOf});
  }
  const position={position:'VIRTUAL:'+state.id},operations={position:position.position,asOf,lastActionTime:row.lastActionTime??Math.floor(state.frozenAt/1000),rebalances:row.rebalances??0,rebalanceTurnoverSol:rawHuman(row.turnoverYRaw??'0',9),spotTurnoverSol:0};
- return previewManagement(model,cfg,{activeId:i.activeId,bins},{asOf,position,operations});
+ return previewManagement(model,cfg,{activeId:i.activeId,bins},{asOf,position,operations,virtualProtection:true});
 }
 // Require a later observation and elapsed intent delay; always apply the current feasible plan.
 export function adaptiveIntent({row,preview,slot,requestedAt,now,reviewHash,delaySeconds=10}){
- const flat=row.status==='HOLD_ONLY',selected=preview?.status===(flat?'RESEARCH_PLAN_PREVIEW_UNVERIFIED':'RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED')?preview.selected:null,action=selected?.feasible&&(flat?['OPEN']:['REPOSITION','REMOVE_AND_HOLD']).includes(selected.action?.type)&&!selected.action.acquireSol?selected.action.type:null;
+ const flat=row.status==='HOLD_ONLY',selected=preview?.status===(flat?'RESEARCH_PLAN_PREVIEW_UNVERIFIED':'RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED')?preview.selected:null,action=(selected?.feasible||!flat&&selected?.protectiveExecution===true&&selected?.action?.type==='REMOVE_AND_HOLD')&&(flat?['OPEN']:['REDUCE','REPOSITION','REMOVE_AND_HOLD']).includes(selected.action?.type)&&!selected.action.acquireSol?selected.action.type:null;
  if(!action)return {pending:null,apply:null,reason:preview?.reason??'PAPER_ADAPTIVE_NO_SELECTION'};
  const pending=row.pendingAdaptive;
  if(pending&&pending.action===action&&now-pending.createdAt<=600000){
@@ -48,6 +53,17 @@ export function remapAdaptive({row,selected,snapshot,state,cfg}){
  assert(cost<=walletY,'PAPER_ADAPTIVE_COST_UNFUNDED');
  const x=walletX+principalX+feeX,y=walletY+principalY+feeY-cost;
  const oldTurnover=raw(row.turnoverYRaw??'0'),price=raw(pt.priceQ64Raw),value=(a,b)=>b+a*price/(1n<<64n);
+ if(selected.action.type==='REDUCE'){
+  assert(row.status==='OPEN_PROXY'&&Number.isFinite(selected.action.fraction)&&selected.action.fraction>0&&selected.action.fraction<1,'PAPER_ADAPTIVE_REDUCE_FRACTION');
+  const fraction=scaledFloat(selected.action.fraction,9),den=1000000000n;
+  assert(fraction>0n&&fraction<den,'PAPER_ADAPTIVE_REDUCE_FRACTION');
+  const rows=row.mapping.rows.map(r=>({binId:r.binId,shareRaw:String(raw(r.shareRaw)*(den-fraction)/den)})).filter(r=>raw(r.shareRaw)>0n);
+  assert(rows.length&&rows.some((r)=>raw(r.shareRaw)<raw(row.mapping.rows.find(x=>x.binId===r.binId).shareRaw)),'PAPER_ADAPTIVE_REDUCE_DUST');
+  const retained=principalForShares(map,rows),dx=principalX-retained.x,dy=principalY-retained.y;
+  assert(dx>=0n&&dy>=0n,'PAPER_ADAPTIVE_REDUCE_PRINCIPAL');
+  const mapping={...row.mapping,integerAllocation:null,rows,allocation:{...row.mapping.allocation,shares:rows},reductionBasis:'RETAINED_OBSERVED_SHARES'};
+  return {mapping,walletX:walletX+dx,walletY:walletY+dy-cost,principalX:retained.x,principalY:retained.y,cost,turnover:oldTurnover+value(dx,dy),status:'OPEN_PROXY',retainedFees:{x:feeX,y:feeY}};
+ }
  if(selected.action.type==='REMOVE_AND_HOLD')return {mapping:null,walletX:x,walletY:y,principalX:0n,principalY:0n,cost,turnover:oldTurnover+value(principalX,principalY),status:'HOLD_ONLY'};
  assert((opening?row.status==='HOLD_ONLY':selected.action.type==='REPOSITION'&&row.status==='OPEN_PROXY'&&row.rebalances<cfg.maxRebalances)&&Array.isArray(selected.allocation?.bins)&&selected.allocation.bins.length>0,'PAPER_ADAPTIVE_REPOSITION');
  const bins=selected.allocation.bins,lo=Math.min(...bins.map(b=>b.binId)),hi=Math.max(...bins.map(b=>b.binId));
