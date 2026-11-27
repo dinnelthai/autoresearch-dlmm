@@ -21,6 +21,10 @@ This contract governs new development, refactoring and acceptance. Prefer a comp
 
 - **Current integration acceptance (highest priority, 2026-11-27):** the active Codex task is to run the existing single Adaptive Paper loop on user-selected Meteora pools (DLMM / requested DLMM V2, verify actual protocol identity). Accept the core path when real target-pool inputs reach the math engine, a feasible plan maps into a virtual LP position, and subsequent snapshots continuously update fees, NAV and adaptive decisions. Do not wait for the experiment endpoint or force an exit. A legitimate NO_LP decision is not a failure, but does not by itself prove opening. Diagnose actual candidate rejection and use existing offline fixtures for unobserved actions. Fix only demonstrated blockers in this path. Full-suite cleanup, exhaustive parameter sweeps, experiment lifecycle, version migration, report expansion, recovery infrastructure and unsupported market coverage are deferred unless directly blocking the core loop. Never fabricate inputs, force deployment or weaken mathematical/accounting invariants. Follow [the focused Codex handoff](docs/codex-dynamic-main-flow.md); it supersedes older broad integration checklists for this phase.
 
+## 一键启动
+
+在仓库根目录执行 `./start.sh`（或 `bash start.sh`）。默认使用现有 basket 配置和 8788/8790 端口，依次启动采集服务及 Web 服务，检查 HTTP 健康接口，日志保存在 `data/run-logs/` 下本次启动目录。保持终端打开；Ctrl+C 同时停止两个服务。HTTP 就绪不代表行情已经就绪。可通过 `NODE_BIN`、`LIVE_CONFIG`、`TERMINAL_CONFIG` 指定现有本地运行环境与配置；不自动安装依赖、不修改配置、不自动发起实验。
+
 ## 联调日志导出
 
 在 Terminal 的 Performance / 自动快照模拟区域点击 **导出联调日志**，无需停止实验。也可访问 `/api/terminal/diagnostics?pool=POOL_ADDRESS`。JSON 包含当前池采集状态、Paper 实验参数、仓位及账本、最近 128 条已提交业务记录（市场、候选拒绝原因、动作和收益）和 Terminal 进程最近 500 条结构化事件。历史尾部未做全链审计；读取失败单独标记，导出不依赖完整报告。采集器独立进程的完整 stdout 不在该文件内，必要时另外保留终端输出。重启会清空内存事件，已提交业务记录保留。分享前检查文件，勿附带 RPC 密钥、环境变量或私钥。
