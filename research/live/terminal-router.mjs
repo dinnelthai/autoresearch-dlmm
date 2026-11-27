@@ -1,7 +1,7 @@
 // Explicit route registry; local origin and error envelope remain centralized.
 import {randomUUID} from 'node:crypto';
 import {currentMarket,scopedTerminalRequest} from './terminal-core.mjs';
-import {diagnosticLog} from './diagnostic-log.mjs';
+import {diagnosticLog,diagnosticRecent} from './diagnostic-log.mjs';
 import {blockedResponse,errorCode} from './research-contract.mjs';
 export function createTerminalHandler({pool,port,origin,html,assets=new Map(),startup,isStopping,validateScope,locks,jsonBody,send,archives,researchInputs,publicMonitor,loadState,maxAgeMs,indexedPool,indexedHistory,scopedOverview,positionAccounting,readPositionDetail,readPositionIndex,buildResearchCandidate,loadResearchRun,replayResearchSnapshot,saveResearchSnapshot,holderObservation,externalObservation,observeWallet,inspectWalletEvidence,inspectReview,rememberReport,preview,paperService}){
  const blocked=reason=>blockedResponse(pool,reason);
@@ -40,6 +40,12 @@ return async function handle(req,res){
   if(req.method==='GET'&&req.url==='/api/terminal/paper-pools'){send(res,200,await paperService.list());return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/paper-context'){send(res,200,await paperService.context(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/paper-reports'){send(res,200,await paperService.reportCatalog(scope));return}
+  if(req.method==='GET'&&scoped.path==='/api/terminal/diagnostics'){
+   const bundle={schemaVersion:1,exportedAt:new Date().toISOString(),pool:scope,terminalEvents:diagnosticRecent(),collector:null,paper:null,errors:[]};
+   try{const s=await loadState(scope);bundle.collector={pool:scope,sequence:s.sequence,streams:Object.fromEntries(Object.entries(s.streams??{}).map(([k,v])=>[k,{status:v.status,reason:v.reason,startedAt:v.startedAt,receivedAt:v.receivedAt,completedAt:v.completedAt,slot:v.evidence?.slot,historyStatus:v.evidence?.historyStatus}]))}}catch(e){bundle.errors.push({stage:'COLLECTOR',reason:errorCode(e)})}
+   try{bundle.paper=await paperService.diagnostics(scope)}catch(e){bundle.errors.push({stage:'PAPER',reason:errorCode(e)})}
+   send(res,200,bundle);return;
+  }
   if(req.method==='GET'&&scoped.path==='/api/terminal/paper-status'){send(res,200,await paperService.get(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/input-status'){send(res,200,await researchInputs(scope));return}
   if(req.method==='GET'&&scoped.path==='/api/terminal/monitor'){send(res,200,scope===pool?publicMonitor():{pool:scope,enabled:false,current:{},events:[],decisionReady:false,executionReady:false});return}

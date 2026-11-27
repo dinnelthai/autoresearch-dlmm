@@ -4,4 +4,6 @@ export function diagnosticEvent({component,event,status,reason,durationMs,reques
  const safe=(v,re)=>typeof v==='string'&&re.test(v)?v:null;
  return {schemaVersion:1,at:new Date().toISOString(),component:code(component),event:code(event),status:code(status),reason:reason==null?null:code(reason),durationMs:Number.isSafeInteger(durationMs)&&durationMs>=0?durationMs:null,requestId:safe(requestId,/^[a-f0-9-]{36}$/),stream:safe(stream,/^(market|references|position:[1-9A-HJ-NP-Za-km-z]{32,44}|history:[1-9A-HJ-NP-Za-km-z]{32,44})$/),script:safe(script,/^[a-z0-9-]{1,60}\.mjs$/)};
 }
-export function diagnosticLog(x){console.log(JSON.stringify(diagnosticEvent(x)))}
+const recent=[];
+export function diagnosticRecent(){return recent.slice()}
+export function diagnosticLog(x){const e=diagnosticEvent(x);recent.push(e);if(recent.length>500)recent.shift();console.log(JSON.stringify(e))}

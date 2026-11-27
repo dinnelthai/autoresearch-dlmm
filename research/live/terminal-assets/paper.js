@@ -36,6 +36,13 @@ async function refreshPaperAuto(){
  finally{paperAutoReading=false}
 }
 $('paperAutoRefresh').addEventListener('click',refreshPaperAuto);
+$('paperDiagnosticExport').addEventListener('click',async()=>{
+ const p=target;if(!p)return;
+ const button=$('paperDiagnosticExport');button.disabled=true;
+ try{const res=await terminalGet('/api/terminal/diagnostics',p,30000),r=await res.json();if(!res.ok||r.pool!==p)throw Error('诊断导出失败');
+ const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(r,null,2)],{type:'application/json'}));a.href=url;a.download='paper-debug-'+p.slice(0,8)+'-'+Date.now()+'.json';a.click();URL.revokeObjectURL(url);
+ }catch(e){put('paperAutoStatus','导出失败：'+e.message)}finally{button.disabled=false}
+});
 $('paperAutoStart').addEventListener('click',async()=>{
  if(paperAutoBusy)return;
  const p=target;try{

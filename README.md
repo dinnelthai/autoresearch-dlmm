@@ -21,6 +21,10 @@ This contract governs new development, refactoring and acceptance. Prefer a comp
 
 - **Current integration acceptance (highest priority, 2026-11-27):** the active Codex task is to run the existing single Adaptive Paper loop on user-selected Meteora pools (DLMM / requested DLMM V2, verify actual protocol identity). Accept the core path when real target-pool inputs reach the math engine, a feasible plan maps into a virtual LP position, and subsequent snapshots continuously update fees, NAV and adaptive decisions. Do not wait for the experiment endpoint or force an exit. A legitimate NO_LP decision is not a failure, but does not by itself prove opening. Diagnose actual candidate rejection and use existing offline fixtures for unobserved actions. Fix only demonstrated blockers in this path. Full-suite cleanup, exhaustive parameter sweeps, experiment lifecycle, version migration, report expansion, recovery infrastructure and unsupported market coverage are deferred unless directly blocking the core loop. Never fabricate inputs, force deployment or weaken mathematical/accounting invariants. Follow [the focused Codex handoff](docs/codex-dynamic-main-flow.md); it supersedes older broad integration checklists for this phase.
 
+## 联调日志导出
+
+在 Terminal 的 Performance / 自动快照模拟区域点击 **导出联调日志**，无需停止实验。也可访问 `/api/terminal/diagnostics?pool=POOL_ADDRESS`。JSON 包含当前池采集状态、Paper 实验参数、仓位及账本、最近 128 条已提交业务记录（市场、候选拒绝原因、动作和收益）和 Terminal 进程最近 500 条结构化事件。历史尾部未做全链审计；读取失败单独标记，导出不依赖完整报告。采集器独立进程的完整 stdout 不在该文件内，必要时另外保留终端输出。重启会清空内存事件，已提交业务记录保留。分享前检查文件，勿附带 RPC 密钥、环境变量或私钥。
+
 ## Primary workflow
 
 Real market observations → market features → JS mathematical strategy engine → one Adaptive virtual position → Paper accounting → research report → manual parameter research.

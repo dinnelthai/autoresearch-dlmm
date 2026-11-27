@@ -10,6 +10,7 @@ import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {strategyTuning} from '../engine/numeric.mjs';
 import {adaptivePolicy,paperDecisionConfig,virtualManagement,paperEnvironment} from './paper-adaptive-core.mjs';
 import {reviewedObservations,collectedPaperInputs,paperTickObservation} from './review-observations.mjs';
+import {diagnosticLog} from './diagnostic-log.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha,verifiedEvidence} from './evidence-digest.mjs';
 import {freezePaperWindow,paperWindowCapture,paperWindowExpired,finishPaperWindow} from './paper-window-core.mjs';
@@ -51,6 +52,21 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
    const current=await active();
    return {...aggregate.finish(),historyVerification:audit,experimentStatus:state.window?.status==='ENDPOINT_OBSERVED'?'ENDPOINT_OBSERVED':current?.id===id?(current.running?(state.backendHash!==backendHash?'BLOCKED_MODEL_CHANGED':job?.id===id?job.status:'RUNNING'):current.finalStatus??'PAUSED'):'HISTORICAL',logPage:{from,limit:30,total:state.snapshotCount,records}};
   }finally{reporting=false}
+ }
+ // Export a bounded committed-history tail independently of the report/strategy gates.
+ async function diagnostics(scope=pool){
+  assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');
+  const out={pool,job:job??null,features:features??null,backendHash,experiment:null,history:[],errors:[]};
+  try{const a=await active();out.active=a;if(a){
+   const state=await checkpoint(a);
+   out.experiment={id:state.id,snapshotCount:state.snapshotCount,backendHash:state.backendHash,capital:state.capital,policy:state.policy,adaptiveRequest:state.adaptiveRequest,last:state.last,historyHead:state.historyHead,rows:state.rows.map(r=>({mode:r.mode,status:r.status,reason:r.reason,adaptiveReason:r.adaptiveReason,pendingAdaptive:r.pendingAdaptive,mapping:r.mapping,latest:r.points?.at(-1)}))};
+   const end=state.snapshotCount,start=Math.max(1,end-127);
+   for(let k=Math.floor((start-1)/128);k<=Math.floor((end-1)/128);k++){
+    try{const rows=JSON.parse(await read(join(dir,a.id,'history-'+String(k).padStart(6,'0')+'.json'),4*1024*1024));out.history.push(...rows.filter(r=>r.sequence>=start&&r.sequence<=end&&r.pool===pool&&r.id===a.id))}catch(e){out.errors.push({stage:'HISTORY_READ',reason:errorCode(e)})}
+   }
+   out.historyScope={from:start,to:end,complete:out.history.length===end-start+1,chainVerified:false};
+  }}catch(e){out.errors.push({stage:'CHECKPOINT_READ',reason:errorCode(e)})}
+  return out;
  }
  async function context(scope=pool){assert(scope===pool,'PAPER_AUTO_POOL_SCOPE');const m=currentMarket(await loadState(pool),pool,Date.now(),maxAgeMs);let r=null;try{r=await loadReview(m,Date.now())}catch{}const valid=r?.expiresAt>Date.now();return {schemaVersion:1,scope:'PAPER_OPEN_CONTEXT_RESEARCH_ONLY',pool,marketSlot:m.slot,marketRawHash:m.rawHash,reviewHash:valid?r.reviewHash:null,expiresAt:Math.min(valid?r.expiresAt:Infinity,m.receivedAt+maxAgeMs),executionReady:false,decisionReady:false,pnlReady:false}}
  async function start(body){return exclusive(async()=>{
@@ -128,6 +144,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     if(windowCapture==='ENDPOINT')next={...next,window:finishPaperWindow(state.window,'ENDPOINT_OBSERVED',Date.parse(snapshot.proof.receivedAt))};
     next.observationLog={market:logMarket,decision:logDecision,featureCollection:features?{slot:features.slot,observedAt:features.observedAt,sources:features.sources,modelInputStatus:features.modelInputStatus??null,modelInputReason:features.modelInputReason??null}:null,operations:operationLog(state,next,logDecision.selected?beforeDecision:null)};
     next=await save(next,state);
+    diagnosticLog({component:'PAPER',event:'MODEL_TICK',status:logDecision.selected?'SELECTED':'NO_ACTION',reason:logDecision.reason??logDecision.outcome});
     if(windowCapture==='ENDPOINT'){await finish(a,'ENDPOINT_OBSERVED');return}
     if(next.snapshotCount>=PAPER_SNAPSHOT_LIMIT){await finish(a,'SNAPSHOT_LIMIT_REACHED');return}
     job={id:a.id,status:'UPDATED_UNVERIFIED',running:true};
@@ -136,11 +153,12 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
      lastFeatureAttempt=Date.now();const task=Promise.resolve().then(()=>refreshFeatures(m)).then(result=>{if(job?.id===a.id&&job.running)features=result}).catch(()=>{}).finally(()=>{if(featureFlight===task)featureFlight=null});featureFlight=task;
     }
    }catch(e){job={id:a.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_UPDATE_FAILED'),running:true};
+    diagnosticLog({component:'PAPER',event:'UPDATE',status:'BLOCKED',reason:job.reason});
     // No successful endpoint is fabricated on unavailable market data. Stop after grace, retain last committed history.
     try{const last=await checkpoint(a);if(paperWindowExpired(last.window,Date.now())){await finish(a,'MISSED_ENDPOINT',errorCode(e,'PAPER_AUTO_UPDATE_FAILED'))}}catch{}
    }
   })}catch(e){job={id:job?.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_SCHEDULER_BUSY'),running:true}}
  }
  async function stop(){closed=true;if(flight)await flight.catch(()=>{});if(featureFlight)await featureFlight;snapshotReader=null}
- return {get,context,start,pause,tick,stop,reportCatalog,report};
+ return {get,context,start,pause,tick,stop,reportCatalog,report,diagnostics};
 }
