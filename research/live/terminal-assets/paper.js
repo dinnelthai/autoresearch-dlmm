@@ -21,6 +21,11 @@ function paperSignedSol(v){if(typeof v!=='string'||! /^-?\d{1,80}$/.test(v))retu
 function renderAutoPaper(r){
  paperAutoData=r;const body=$('paperAutoRows');body.replaceChildren();
  $('paperAutoPause').disabled=paperAutoBusy||!r?.running;$('paperAutoStart').disabled=paperAutoBusy||!!r?.running;
+ const x=r?.rows?.find(v=>v.mode==='adaptive'),v=x?.latest;
+ put('paperLiveState',r?[r.running?'运行中':'未运行',r.status,r.reason,x?.adaptiveReason,r.slot!=null?'Slot '+r.slot:null].filter(Boolean).join(' · '):'等待有效状态');
+ for(const [id,val] of [['paperLiveNav',v?.navYRaw],['paperLivePnl',v?.pnlYRaw],['paperLiveAlpha',v?.excessVsHoldYRaw],['paperLiveFee',v?.totalFeeYRaw]])put(id,paperSignedSol(val));
+ put('paperLiveDrawdown',Number.isFinite(v?.maxDrawdownBps)?fmt(v.maxDrawdownBps/100)+'%':'—');
+ put('paperLiveEntries',x?String(x.entries??'—')+' / '+String(x.rebalances??'—'):'—');
  if(!r)return;
  const summary=[r.status,r.reason,r.checkpointFresh?'最近观察':'非当前观察',r.slot!=null?'Slot '+r.slot+' · '+r.snapshotCount+' 个快照':null,r.window? (r.window.days<1?Math.round(r.window.days*1440)+'分钟':r.window.days+'天')+' · '+r.window.status:null,r.adaptiveInputBasis,r.comparison?'估值有效 '+r.comparison.pairedStrategies+'/'+r.comparison.totalStrategies+' · 缺口 '+r.comparison.gapCount:null,r.comparison?.completedEvaluation?.rows?.length?'期末观察分 '+r.comparison.completedEvaluation.rows[0].mode+' '+fmt(r.comparison.completedEvaluation.rows[0].scoreBps)+' bps':null];
  put('paperAutoStatus',summary.filter(Boolean).join(' · '));
@@ -29,13 +34,15 @@ function renderAutoPaper(r){
 function validateAutoPaper(r,scope){if(r?.scope!=='PAPER_AUTO_RESEARCH_ONLY'||r.pool!==scope||typeof r.running!=='boolean'||!Array.isArray(r.rows)||r.rows.length>8)throw Error('模拟服务响应不符');return r}
 async function refreshPaperAuto(){
  if(paperAutoData&&paperAutoData.pool!==target){paperAutoGeneration++;renderAutoPaper(null);put('paperAutoStatus','Pool 已切换，等待重新读取。')}
- if(paperAutoReading||paperAutoBusy||page!=='performance'||$('paperPerformance').hidden||!target)return;
+ if(paperAutoReading||paperAutoBusy||page!=='terminal'||!target)return;
  paperAutoReading=true;const p=target,g=++paperAutoGeneration;
  try{const res=await terminalGet('/api/terminal/paper-status',p);const r=await res.json();if(g!==paperAutoGeneration||p!==target)return;if(!res.ok)throw Error(r.gaps?.[0]??'服务不可用');renderAutoPaper(validateAutoPaper(r,p))}
  catch(e){if(g===paperAutoGeneration&&p===target){renderAutoPaper(null);put('paperAutoStatus','读取失败：'+e.message+' · 不展示旧值')}}
  finally{paperAutoReading=false}
 }
 $('paperAutoRefresh').addEventListener('click',refreshPaperAuto);
+for(const b of document.querySelectorAll('[data-page="terminal"],[data-go="terminal"]'))b.addEventListener('click',()=>void refreshPaperAuto());
+for(const b of document.querySelectorAll('[data-page="performance"],[data-go="performance"],[data-perf="paper"]'))b.addEventListener('click',()=>void refreshPaperPools());
 $('paperDiagnosticExport').addEventListener('click',async()=>{
  const p=target;if(!p)return;
  const button=$('paperDiagnosticExport');button.disabled=true;
@@ -46,7 +53,7 @@ $('paperDiagnosticExport').addEventListener('click',async()=>{
 $('paperAutoStart').addEventListener('click',async()=>{
  if(paperAutoBusy)return;
  const p=target;try{
-  if(!draft||draft.pool!==p)throw Error('请先在策略页为当前 Pool 准备虚拟本金草稿');const d=draft;
+  if(!$('request').reportValidity())throw Error('请检查本金及风险参数');$('request').requestSubmit($('checkDraft'));if(!draft||draft.pool!==p)throw Error('本金或风险参数未通过检查，请查看配置提示');const d=draft;
   const dd=number('paperAutoDrawdown')*100,gap=number('paperAutoGap');if(!Number.isFinite(dd)||Math.abs(dd-Math.round(dd))>1e-8||dd<1||dd>10000||!Number.isInteger(gap))throw Error('风险参数无效');
   const policy={evaluationDays:Number($('paperEvaluationDays').value),maxDrawdownBps:Math.round(dd),maxGapSeconds:gap,maxLossSolRaw:paperSolRaw($('paperAutoLoss').value.trim()),exitCostSolRaw:paperSolRaw($('paperAutoExitCost').value.trim())};
   policy.adaptive={cooldownSeconds:number('paperAdaptiveCooldown'),maxRebalances:number('paperAdaptiveCount'),maxTurnoverSol:number('paperAdaptiveTurnover')};
