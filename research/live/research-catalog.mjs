@@ -1,8 +1,8 @@
 // Scoped archive pointer index; never represents a current strategy or live readiness.
-import {mkdir,open,rename,unlink,writeFile} from 'node:fs/promises';
+import {mkdir} from 'node:fs/promises';
+import {atomicJson,withWriterLock} from './terminal-runtime.mjs';
+import {assert,poolAddress as key,hash} from './research-contract.mjs';
 import {join} from 'node:path';
-const key=v=>typeof v==='string'&&/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v),hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
-const assert=(v,m)=>{if(!v)throw Error(m)};
 export function catalogEntry(x,pool){
  assert(key(pool)&&x?.pool===pool&&['snapshot','candidate','run'].includes(x.kind)&&hash(x.id)&&hash(x.snapshotId)&&Number.isSafeInteger(x.marketSlot)&&x.marketSlot>=0&&hash(x.marketRawHash)&&Number.isSafeInteger(x.createdAt)&&x.createdAt>=0&&typeof x.status==='string'&&/^[A-Z0-9_]{1,100}$/.test(x.status),'RESEARCH_CATALOG_ENTRY_INVALID');
  assert(x.kind!=='snapshot'||x.id===x.snapshotId,'RESEARCH_CATALOG_SNAPSHOT_INVALID');
@@ -22,8 +22,8 @@ export function researchCatalog(data,readBounded){
   try{const bytes=await readBounded(join(dir(pool),'index.json'),128*1024),rows=JSON.parse(bytes);assert(Array.isArray(rows)&&rows.length<=64,'RESEARCH_CATALOG_LIMIT');return rows.map(x=>catalogEntry(x,pool))}catch(e){if(e.code==='ENOENT')return [];throw e}
  }
  async function add(entry){
-  const d=dir(entry.pool);await mkdir(d,{recursive:true,mode:0o700});const lock=join(d,'writer.lock'),h=await open(lock,'wx',0o600);
-  try{const rows=addCatalog(await list(entry.pool),entry);await writeFile(join(d,'index.tmp'),JSON.stringify(rows),{mode:0o600});await rename(join(d,'index.tmp'),join(d,'index.json'))}finally{try{await h.close()}finally{await unlink(lock)}}
+  const d=dir(entry.pool);await mkdir(d,{recursive:true,mode:0o700});
+  await withWriterLock(d,async()=>atomicJson(join(d,'index.json'),addCatalog(await list(entry.pool),entry)))
  }
  return {list,add};
 }

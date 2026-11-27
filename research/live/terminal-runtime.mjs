@@ -1,10 +1,22 @@
 // Terminal infrastructure; explicit checkout roots, no business policy.
-import {realpath,open} from 'node:fs/promises';
+import {realpath,open,writeFile,rename,unlink} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
 import {resolve,join,relative,isAbsolute} from 'node:path';
 import {spawn} from 'node:child_process';
 import {assert} from './research-contract.mjs';
 export {assert} from './research-contract.mjs';
 export {sha} from './evidence-digest.mjs';
+// Common local persistence for experiment runners and the catalog.
+export async function atomicJson(path,value){
+ const tmp=path+'.'+randomUUID()+'.tmp';
+ try{await writeFile(tmp,JSON.stringify(value),{flag:'wx',mode:0o600});await rename(tmp,path)}
+ finally{try{await unlink(tmp)}catch(e){if(e.code!=='ENOENT')throw e}}
+}
+export async function withWriterLock(dir,fn){
+ const path=join(dir,'writer.lock'),h=await open(path,'wx',0o600);
+ try{await h.writeFile(String(process.pid));return await fn()}
+ finally{try{await h.close()}finally{await unlink(path)}}
+}
 export function createTerminalRuntime({ROOT,DATA}){
 async function safeDataPath(path){const root=await realpath(DATA),p=await realpath(resolve(ROOT,path)),rel=relative(root,p);assert(rel&&!rel.startsWith('..')&&!isAbsolute(rel),'INVALID_DATA_PATH');return p}
 async function boundedRead(path,limit){const h=await open(path,'r');try{const st=await h.stat();assert(st.isFile()&&st.size<=limit,'EVIDENCE_SIZE_EXCEEDED');const bytes=Buffer.alloc(st.size+1);let n=0;while(n<bytes.length){const r=await h.read(bytes,n,bytes.length-n,n);if(!r.bytesRead)break;n+=r.bytesRead;}assert(n===st.size,'EVIDENCE_SIZE_CHANGED');return bytes.subarray(0,n)}finally{await h.close()}}

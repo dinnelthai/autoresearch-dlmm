@@ -1,9 +1,9 @@
 // Read-only evidence consumer. Explicit local config/sample; never calls an RPC or signs.
-import {mkdir,open,writeFile,rename,unlink} from 'node:fs/promises';
+import {mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
-import {createTerminalRuntime} from './terminal-runtime.mjs';
+import {createTerminalRuntime,atomicJson,withWriterLock} from './terminal-runtime.mjs';
 import {sourceInventory} from './source-inventory.mjs';
 import {paperConfig,preparePaper,calculatePaper} from './paper-core.mjs';
 import {assert,errorCode} from './research-contract.mjs';
@@ -17,13 +17,11 @@ async function main(){
  const interval=Number(values.interval);assert(Number.isInteger(interval)&&interval>=10&&interval<=600,'PAPER_INTERVAL_INVALID');
  const config=JSON.parse(await read(values.config,128*1024));paperConfig(config);
  const {backendHash}=await sourceInventory(ROOT),dir=join(DATA,'paper',config.id);await mkdir(dir,{recursive:true,mode:0o700});await io.safeDataPath(dir);
- const lock=join(dir,'writer.lock'),h=await open(lock,'wx',0o600),target=join(dir,'checkpoint.json');
+ const target=join(dir,'checkpoint.json');
  let stop=false;const cancel=()=>{stop=true};process.once('SIGINT',cancel);process.once('SIGTERM',cancel);
- try{
-  await h.writeFile(String(process.pid));
+ try{await withWriterLock(dir,async()=>{
   do{
    try{
-    assert((await sourceInventory(ROOT)).backendHash===backendHash,'PAPER_CODE_CHANGED_RESTART_REQUIRED');
     assert(JSON.stringify(JSON.parse(await read(values.config,128*1024)))===JSON.stringify(config),'PAPER_CONFIG_CHANGED_RESTART_REQUIRED');
     const sample=JSON.parse(await read(values.sample,32*1024*1024));let previous=null;
     try{previous=JSON.parse(await read(target,64*1024*1024))}catch(e){if(e.code!=='ENOENT')throw e}
@@ -33,13 +31,12 @@ async function main(){
     else{
      const checkpoint=calculatePaper(plan,sample),bytes=JSON.stringify(checkpoint);
      assert(Buffer.byteLength(bytes)<=64*1024*1024,'PAPER_CHECKPOINT_SIZE');
-     assert((await sourceInventory(ROOT)).backendHash===backendHash,'PAPER_CODE_CHANGED_DURING_REPLAY');
-     await writeFile(join(dir,'checkpoint.tmp'),bytes,{mode:0o600});await rename(join(dir,'checkpoint.tmp'),target);
+     await atomicJson(target,checkpoint);
      console.log(JSON.stringify({status:checkpoint.report.status,id:config.id,end:checkpoint.end,report:target,rows:checkpoint.report.rows.map(({mode,status,virtualNavSol,pnlSol,excessVsHoldSol,feesSol,maxDrawdown})=>({mode,status,virtualNavSol,pnlSol,excessVsHoldSol,feesSol,maxDrawdown})),executionReady:false,pnlReady:false},null,2));
     }
    }catch(e){console.error(JSON.stringify({status:'PAPER_BLOCKED',reason:errorCode(e,'PAPER_INPUT_OR_EVIDENCE_FAILED'),lastCheckpointNotCurrent:true,executionReady:false,pnlReady:false}));if(!values.watch){process.exitCode=1;break}}
    if(values.watch&&!stop)await new Promise(r=>{const timer=setInterval(()=>{if(stop){clearInterval(timer);clearTimeout(deadline);r()}},250),deadline=setTimeout(()=>{clearInterval(timer);r()},interval*1000)});
   }while(values.watch&&!stop);
- }finally{process.removeListener('SIGINT',cancel);process.removeListener('SIGTERM',cancel);try{await h.close()}finally{await unlink(lock)}}
+ })}finally{process.removeListener('SIGINT',cancel);process.removeListener('SIGTERM',cancel)}
 }
 main().catch(e=>{console.error(JSON.stringify({status:'PAPER_BLOCKED',reason:errorCode(e,'PAPER_STARTUP_FAILED'),executionReady:false,pnlReady:false}));process.exitCode=1});

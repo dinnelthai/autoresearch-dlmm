@@ -1,6 +1,7 @@
 // Shared raw snapshot re-decoder. No RPC or signing. Cache only decoded data, never skip evidence reads.
 import {join,relative} from 'node:path';
-import {assert} from './research-contract.mjs';
+import {assert,hash} from './research-contract.mjs';
+import {advanceSnapshotExperiment} from './paper-snapshot-run-core.mjs';
 import {sha} from './evidence-digest.mjs';
 export function createPaperSnapshotReader({ROOT,io,idl,cacheLimit=4}){
  assert(Number.isSafeInteger(cacheLimit)&&cacheLimit>=0&&cacheLimit<=4,'PAPER_SNAPSHOT_CACHE_LIMIT');
@@ -21,4 +22,24 @@ export function createPaperSnapshotReader({ROOT,io,idl,cacheLimit=4}){
   return out;
  }
  return snapshot;
+}
+
+export function snapshotCheckpoint(state){
+ const cp={...state,checkpointHash:sha(JSON.stringify(state))};
+ assert(Buffer.byteLength(JSON.stringify(cp))<=32*1024*1024,'PAPER_SNAPSHOT_CHECKPOINT_SIZE');
+ return cp;
+}
+export function readSnapshotCheckpoint(cp,id,pool=null){
+ const {checkpointHash,...state}=cp??{};
+ assert(hash(checkpointHash)&&sha(JSON.stringify(state))===checkpointHash&&state.id===id&&(!pool||state.pool===pool)&&state.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.executionReady===false&&state.pnlReady===false,'PAPER_SNAPSHOT_CHECKPOINT_HASH');
+ return state;
+}
+// Both manual and scheduled runs consume the same opening, prior and adaptive segment snapshots.
+export async function advancePaperCapture(state,{load,snapshot,backendHash,now,exit=false}){
+ const opening=await load(state.opening.proof.path);
+ const previous=state.opening.slot===state.last.slot?opening:await load(state.last.proof.path);
+ const segmentOpenings={};
+ for(const row of state.rows)if(row.status==='OPEN_PROXY'&&row.segmentOpening)
+  segmentOpenings[row.mode]=row.segmentOpening.slot===state.opening.slot?opening:row.segmentOpening.slot===state.last.slot?previous:await load(row.segmentOpening.proof.path);
+ return advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,segmentOpenings,exit});
 }
