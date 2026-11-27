@@ -39,6 +39,7 @@ export async function reviewedObservations({m,req,review,evidence,now=Date.now()
    const e={type:'MARKET',id:o.id,t:o.t,pool:m.pool,references:o.references.map(r=>({pool:r.pool,price:r.price,depth:r.depth,observedAt:r.observedAt,availableAt:r.availableAt})),tokenSafe:o.tokenSafe,holderShare:o.holderShare,holderOutflow:o.holderOutflow,buyImbalance:o.buyImbalance,flowSol:o.flowSol,flowWindowSeconds:o.flowWindowSeconds??null,exitDepth:o.exitDepth};
    const ref=Engine.reference(e,cfg);assert(ref.valid,'reference quality: '+ref.reason);observations.push({...e,ref});
   }
+  assert(observations.length>=cfg.regimeMinObservations,'insufficient configured regime observations');
   const latest=observations.at(-1);checkTime(latest.t,latest.t,asOf,maxAge);
   assert(latest.t>=review.marketAvailableAt,'latest observation predates snapshot availability');
   assert(latest.ref.expiresAt>=asOf,'reference expired at analysis boundary');
@@ -93,6 +94,6 @@ export function collectedPaperInputs({m,req,samples,asOf}){
  if(last&&!last.ref.valid)throw Error('PAPER_REFERENCE_'+last.ref.reason);
  const observations=evaluated.filter(e=>e.ref.valid);
  const latest=observations.at(-1);
- assert(observations.length>=3&&latest&&latest.ref.expiresAt>=asOf&&asOf-latest.t<=cfg.maxReferenceAge,'PAPER_COLLECTED_MODEL_WARMUP');
+ assert(observations.length>=cfg.regimeMinObservations&&latest&&latest.ref.expiresAt>=asOf&&asOf-latest.t<=cfg.maxReferenceAge,'PAPER_COLLECTED_MODEL_WARMUP');
  return {asOf,cfg,observations,latest,basis:PAPER_OBSERVATION_BASIS};
 }

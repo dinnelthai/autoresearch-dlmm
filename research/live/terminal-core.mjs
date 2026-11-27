@@ -1,9 +1,18 @@
 // T12 local terminal contract. Read-only, no SDK signing or execution.
+import {config as engineConfig} from '../engine/numeric.mjs';
 import {extractMarket} from './engine-input.mjs';
 import {assert,poolAddress,finite,hash,sameSnapshot} from './research-contract.mjs';
 export {poolAddress} from './research-contract.mjs';
 const allocationBounds=Object.freeze({maxInventoryRatio:[0,1],maxInventoryTokens:[0],minSolReserve:[0],maxLossSol:[0],stressDrop:[0,1],maxBinShare:[Number.MIN_VALUE,1],operationCostSol:[0],feeBps:[0,9999],protocolShare:[0,1],slippageBps:[0,9999]});
 function parseRiskConfig(input,bounds){const result={};for(const [k,[lo,hi]] of Object.entries(bounds)){const v=input?.[k];assert(finite(v,lo,hi),'INVALID_RISK_'+k);result[k]=v}return result}
+// Optional market-model overrides; existing drafts retain the original defaults.
+const regimeKeys=['regimeLookback','regimeMinObservations','trendEfficiencyThreshold','trendLogReturnThreshold','stressLogReturnThreshold','holderOutflowThreshold','toxicMarkoutBps','toxicMarkoutMinSamples'];
+export function marketModelOverrides(input={}){
+ assert(input&&typeof input==='object'&&!Array.isArray(input),'INVALID_MARKET_MODEL_CONFIG');
+ assert(Object.keys(input).every(k=>regimeKeys.includes(k)),'INVALID_MARKET_MODEL_KEY');
+ const checked=engineConfig(input);
+ return Object.fromEntries(Object.keys(input).map(k=>[k,checked[k]]));
+}
 export function toRaw(value,decimals){
  assert(typeof value==='string'&&/^\d+(\.\d+)?$/.test(value)&&value.length<=40&&Number.isInteger(decimals)&&decimals>=0&&decimals<=18,'INVALID_AMOUNT');
  const [whole,frac='']=value.split('.');assert(frac.length<=decimals,'AMOUNT_PRECISION_EXCEEDED');
@@ -22,7 +31,7 @@ export function requestFromDraft(d,m){
  assert(['sol','holding'].includes(d.entry)&&['balanced','defensive','growth'].includes(d.goal)&&Number.isSafeInteger(d.horizonSeconds)&&d.horizonSeconds>0&&d.horizonSeconds<=30*86400,'INVALID_REQUEST');
  const solRaw=toRaw(d.solHuman,m.decimalsY),memeRaw=toRaw(d.memeHuman,m.decimalsX);
  assert(d.entry==='sol'?BigInt(solRaw)>0n&&BigInt(memeRaw)===0n:BigInt(memeRaw)>0n,'INVALID_ENTRY_ASSETS');
- const riskConfig=parseRiskConfig(d.riskConfig,allocationBounds);
+ const riskConfig={...parseRiskConfig(d.riskConfig,allocationBounds),...marketModelOverrides(d.marketModel)};
  assert(riskConfig.minSolReserve+riskConfig.operationCostSol<=Number(solRaw)/10**m.decimalsY,'SOL_RESERVE_AND_COST_EXCEED_BUDGET');
  return {pool:m.pool,entry:d.entry,goal:d.goal,horizonSeconds:d.horizonSeconds,capitalScope:'USER_DECLARED_ALLOCATION',allowDispose:false,solRaw,memeRaw,riskConfig};
 }

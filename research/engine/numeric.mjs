@@ -9,7 +9,7 @@ function config(overrides={}) {
   const c={...DEFAULTS,...overrides};
   for(const [k,v] of Object.entries(c))finite(v,k);
   for(const k of ["maxInventoryRatio","stressDrop","maxBinShare","targetRatio","beta","maxReferenceDivergence","maxHolderShare","protocolShare","trendEfficiencyThreshold","holderOutflowThreshold"])finite(c[k],k,0,1);
-  assert(Number.isInteger(c.regimeLookback)&&c.regimeLookback>=3&&c.regimeLookback<=10000&&Number.isInteger(c.regimeMinObservations)&&c.regimeMinObservations>=3&&c.regimeMinObservations<=c.regimeLookback&&Number.isInteger(c.toxicMarkoutMinSamples)&&c.toxicMarkoutMinSamples>=1,'invalid regime sample domain');
+  assert(Number.isInteger(c.regimeLookback)&&c.regimeLookback>=3&&c.regimeLookback<=1000&&Number.isInteger(c.regimeMinObservations)&&c.regimeMinObservations>=3&&c.regimeMinObservations<=c.regimeLookback&&Number.isInteger(c.toxicMarkoutMinSamples)&&c.toxicMarkoutMinSamples>=1,'invalid regime sample domain');
   assert(c.beta<1&&c.maxBinShare>0&&c.binStepBps>0&&c.anchorPrice>0&&c.referencePrice>0&&c.feeBps<10000&&c.slippageBps<10000&&c.forecastSteps>=2&&Number.isInteger(c.forecastSteps)&&c.forecastSteps<=100&&c.forecastHorizonSeconds>0&&Number.isInteger(c.maxRebalances),"invalid config domain");
   return c;
 }
