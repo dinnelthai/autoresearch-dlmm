@@ -105,7 +105,7 @@ test('real service starts, advances twice, archives and resumes from disk with i
  assert.equal((await history.verify(dir,state)).records,3);
  assert.equal((await resumed.pause({pool:A,id:started.id})).running,false);
  const ctx=await resumed.context();assert.equal(ctx.reviewHash,null);
- const fixed=await resumed.start({draft,policy:body.policy});
+ const fixed=await resumed.start({draft:{...draft,memeHuman:'10'},policy:body.policy});
  assert.equal(fixed.planBasis,'FIXED_OBSERVED_BIN_CONTROL');
  assert.equal(fixed.rows.find(r=>r.mode==='spot').status,'OPEN_PROXY');
  assert.equal(fixed.rows.find(r=>r.mode==='adaptive').reason,'ADAPTIVE_RESEARCH_INPUT_REQUIRED');
