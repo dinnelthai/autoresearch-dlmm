@@ -102,7 +102,7 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const third=await resumed.get();assert.equal(third.snapshotCount,3);assert.equal(third.rows.find(r=>r.mode==='spot').latest.totalFeeXRaw,'18');assert.equal(third.rows.find(r=>r.mode==='NO_LP').latest.pnlYRaw,'0');assert.equal(third.pnlReady,false);
  const dir=join(DATA,'paper-auto',A,started.id),{checkpointHash,...state}=JSON.parse(await readFile(join(dir,'checkpoint.json'),'utf8'));assert.equal(checkpointHash,sha(JSON.stringify(state)));
  const history=createPaperHistoryStore({read:(p,n)=>io.safeDataPath(p).then(path=>io.boundedRead(path,n)),atomic:async()=>{throw Error('UNEXPECTED_WRITE')}});
- assert.equal((await history.verify(dir,state)).records,3);
+ assert.equal((await history.verify(dir,state)).records,3);const records=JSON.parse(await readFile(join(dir,'history-000000.json'),'utf8'));assert.equal(records[0].observationLog.market.regime,'UNKNOWN');assert.equal(records[0].observationLog.operations.some(x=>x.action==='OPEN'),true);assert.equal(records[2].observationLog.decision.reason,'ADAPTIVE_DISABLED');
  assert.equal((await resumed.pause({pool:A,id:started.id})).running,false);
  const ctx=await resumed.context();assert.equal(ctx.reviewHash,null);
  const fixed=await resumed.start({draft:{...draft,memeHuman:'10'},policy:body.policy});
@@ -119,8 +119,8 @@ test('real service starts, advances twice, archives and resumes from disk with i
  const tuned=JSON.parse(await readFile(join(DATA,'paper-auto',A,waiting.id,'checkpoint.json'),'utf8'));assert.equal(tuned.adaptiveRequest.riskConfig.lambda,1.25);
  now+=10000;await capture(5,110n,now-1000,now);await resumed.tick();
  const observed=await resumed.get();assert.equal(observed.snapshotCount,2);assert.equal(observed.rows.find(r=>r.mode==='adaptive').status,'HOLD_ONLY');assert.equal(observed.rows.find(r=>r.mode==='adaptive').adaptiveReason,'UNEXPECTED_REVIEW');
- assert.deepEqual(featureCalls,[5]);assert.equal(observed.featureCollection.slot,5);
- now+=10000;await capture(6,120n,now-1000,now);await resumed.tick();assert.deepEqual(featureCalls,[5]);assert.equal((await resumed.get()).snapshotCount,3);
+ assert.deepEqual(featureCalls,[4,5]);assert.equal(observed.featureCollection.slot,5);
+ now+=10000;await capture(6,120n,now-1000,now);await resumed.tick();assert.deepEqual(featureCalls,[4,5]);assert.equal((await resumed.get()).snapshotCount,3);
  await resumed.pause({pool:A,id:waiting.id});
  const proposal={status:'PROPOSED_FOR_NEW_PAPER_WINDOW',source:'UNVERIFIED_NORMALIZED_EVENT_OPTIMIZATION',datasetSha256:'e'.repeat(64),validationPools:[A],nextWindowAfter:Math.floor(now/1000),tuning:{lambda:1.5}};
  const optBody={draft:{...draft,memeHuman:'10'},policy:{...body.policy,adaptive:{cooldownSeconds:120,maxRebalances:8,maxTurnoverSol:30},optimization:proposal}};

@@ -11,6 +11,10 @@ const raw=v=>{assert(typeof v==='string'&&/^\d{1,39}$/.test(v),'PAPER_ADAPTIVE_R
 export function adaptivePolicy(p){
  assert(p&&Number.isSafeInteger(p.cooldownSeconds)&&p.cooldownSeconds>=15&&p.cooldownSeconds<=86400&&Number.isSafeInteger(p.maxRebalances)&&p.maxRebalances>=0&&p.maxRebalances<=100&&Number.isFinite(p.maxTurnoverSol)&&p.maxTurnoverSol>0&&p.maxTurnoverSol<=100000,'PAPER_ADAPTIVE_POLICY');return {cooldownSeconds:p.cooldownSeconds,maxRebalances:p.maxRebalances,maxTurnoverSol:p.maxTurnoverSol};
 }
+export function paperEnvironment(reviewed){
+ const {latest,observations,asOf,cfg}=reviewed;
+ return E.classify({market:latest,history:observations,lastTime:asOf,marks:[],fills:[]},cfg);
+}
 export function virtualManagement({state,row,snapshot,reviewed}){
  const {identity:i,map}=snapshotRows(snapshot),{cfg,latest,observations,asOf}=reviewed,p=row.points.at(-1);
  assert(row.mode==='adaptive'&&['HOLD_ONLY','OPEN_PROXY'].includes(row.status)&&p.slot===i.slot&&state.pool===i.pool&&latest.pool===i.pool&&asOf>=latest.t,'PAPER_ADAPTIVE_SCOPE');

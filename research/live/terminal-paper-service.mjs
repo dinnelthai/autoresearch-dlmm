@@ -8,13 +8,14 @@ import {openSnapshotExperiment,updateAdaptiveSnapshot,PAPER_SNAPSHOT_LIMIT} from
 import {nextPaperCapture,paperPublic,paperStatus} from './paper-auto-core.mjs';
 import {currentMarket,requestFromDraft} from './terminal-core.mjs';
 import {strategyTuning} from '../engine/numeric.mjs';
-import {adaptivePolicy,virtualManagement} from './paper-adaptive-core.mjs';
+import {adaptivePolicy,virtualManagement,paperEnvironment} from './paper-adaptive-core.mjs';
 import {reviewedObservations,collectedPaperInputs,PAPER_OBSERVATION_BASIS} from './review-observations.mjs';
 import {fixedPaperReport} from './paper-share-core.mjs';
 import {assert,hash,errorCode} from './research-contract.mjs';
 import {sha,verifiedEvidence} from './evidence-digest.mjs';
 import {freezePaperWindow,paperWindowCapture,paperWindowExpired,finishPaperWindow} from './paper-window-core.mjs';
 import {createSnapshotStore} from './paper-history-store.mjs';
+import {marketLog,decisionLog,operationLog} from './paper-history-core.mjs';
 export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,io,loadState,preview,loadReview,refreshFeatures,isStopping,idlPath='data/raw/dlmm-idl.json'}){
  const dir=join(DATA,'paper-auto',pool),pointer=join(dir,'active.json');
  const read=async(p,n)=>io.boundedRead(await io.safeDataPath(p),n);
@@ -53,6 +54,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
    }catch(e){r.planPreview.adaptiveReason=errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}
   }
   const id='auto-'+randomUUID(),state=openSnapshotExperiment({id,snapshot:capture,report:r,budget,policy:body.policy,backendHash,frozenAt:Date.now()});
+  state.researchRequest=request;
   if(body.policy.adaptive){
    const controls=adaptivePolicy(body.policy.adaptive),tuning=strategyTuning(optimization?.tuning??body.policy.tuning??{});state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls,...tuning}};
    const row=state.rows.find(r=>r.mode==='adaptive'),base=state.rows[0];
@@ -60,6 +62,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   }
   state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:reviewHash?'REVIEWED_MODEL':'FIXED_OBSERVED_BIN_CONTROL',...(optimization?{optimization:{datasetSha256:optimization.datasetSha256,nextWindowAfter:optimization.nextWindowAfter,tuning:strategyTuning(optimization.tuning),proposalHash:sha(JSON.stringify(optimization))}}:{})};
   assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');
+  state.observationLog={market:marketLog(m,null,null,'INITIAL_OBSERVATION'),decision:decisionLog(r.planPreview,{slot:m.slot,observedAt:state.frozenAt,reason:'INITIAL_FROZEN_CONTROLS',inputHash:state.researchBinding.reportHash}),operations:operationLog(null,state)};
   await save(state);await atomic(pointer,{pool,id,running:true});job={id,status:'WAITING_FOR_OBSERVATION',running:true};features=null;lastFeatureAttempt=-Infinity;return get();
  })}
  async function finish(a,status,reason=null){await atomic(pointer,{...a,running:false,finalStatus:status,finishedAt:Date.now()});job={id:a.id,status,running:false,...(reason?{reason}:{})}}
@@ -83,7 +86,9 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
     let next=await advancePaperCapture(state,{load,snapshot,backendHash,now:Date.now(),exit:windowCapture==='ENDPOINT'});
     const sample=features?.observation,prior=state.collectedObservations??[];
     if(sample?.basis===PAPER_OBSERVATION_BASIS&&sample.receivedAt<=Date.parse(snapshot.proof.requestedAt)&&sample.slot<m.slot&&sample.event.t>(prior.at(-1)?.event.t??-1))next.collectedObservations=[...prior,sample].slice(-12);
-    const row=next.rows.find(r=>r.mode==='adaptive');
+    const row=next.rows.find(r=>r.mode==='adaptive'),beforeDecision=row?.points.at(-1),req=next.adaptiveRequest??next.researchRequest;
+    let logMarket=marketLog(m,null,null,'MODEL_INPUT_UNAVAILABLE'),logDecision=decisionLog(null,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),reason:windowCapture==='ENDPOINT'?'WINDOW_ENDPOINT':next.adaptiveRequest?'NO_ELIGIBLE_ADAPTIVE_PATH':'ADAPTIVE_DISABLED'});
+    if(req&&next.collectedObservations?.length){try{const collected=collectedPaperInputs({m,req,samples:next.collectedObservations,asOf:Math.floor(Date.parse(snapshot.proof.receivedAt)/1000)});logMarket=marketLog(m,collected,paperEnvironment(collected))}catch(e){logMarket=marketLog(m,null,null,errorCode(e,'PAPER_MARKET_ENVIRONMENT_UNAVAILABLE'))}}
     if(windowCapture!=='ENDPOINT'&&next.adaptiveRequest&&['HOLD_ONLY','OPEN_PROXY'].includes(row?.status)){
      try{
       let reviewed,reviewHash,collectedError;
@@ -99,18 +104,21 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
         reviewHash=review.reviewHash;
        }catch(e){throw collectedError??e}
       }
+      logMarket=marketLog(m,reviewed,paperEnvironment(reviewed));
       const management=virtualManagement({state:next,row,snapshot,reviewed});
       next=updateAdaptiveSnapshot(next,{snapshot,reviewed,preview:management,reviewHash,now:Date.now()});
       next.adaptiveInputBasis=reviewed.basis??'REVIEWED_MODEL';
-     }catch(e){next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE')}:r)}}
+      const decided=next.rows.find(r=>r.mode==='adaptive');logDecision=decisionLog(management,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),inputHash:reviewHash,outcome:decided.adaptiveReason});
+     }catch(e){const reason=errorCode(e,'PAPER_ADAPTIVE_REVIEW_UNAVAILABLE');next={...next,rows:next.rows.map(r=>r.mode==='adaptive'?{...r,pendingAdaptive:null,adaptiveReason:reason}:r)};logDecision=decisionLog(null,{slot:m.slot,observedAt:Date.parse(snapshot.proof.receivedAt),reason,outcome:'NO_ACTION'})}
     }
     if(windowCapture==='ENDPOINT')next={...next,window:finishPaperWindow(state.window,'ENDPOINT_OBSERVED',Date.parse(snapshot.proof.receivedAt))};
+    next.observationLog={market:logMarket,decision:logDecision,operations:operationLog(state,next,logDecision.selected?beforeDecision:null)};
     next=await save(next,state);
     if(windowCapture==='ENDPOINT'){await finish(a,'ENDPOINT_OBSERVED');return}
     if(next.snapshotCount>=PAPER_SNAPSHOT_LIMIT){await finish(a,'SNAPSHOT_LIMIT_REACHED');return}
     job={id:a.id,status:'UPDATED_UNVERIFIED',running:true};
     // Feature collection is independent of accounting; never hold the paper writer waiting on remote APIs.
-    if(next.adaptiveRequest&&refreshFeatures&&!featureFlight&&Date.now()-lastFeatureAttempt>=60000){
+    if(req&&refreshFeatures&&!featureFlight&&Date.now()-lastFeatureAttempt>=60000){
      lastFeatureAttempt=Date.now();const task=Promise.resolve().then(()=>refreshFeatures(m)).then(result=>{if(job?.id===a.id&&job.running)features=result}).catch(()=>{}).finally(()=>{if(featureFlight===task)featureFlight=null});featureFlight=task;
     }
    }catch(e){job={id:a.id,status:'BLOCKED',reason:errorCode(e,'PAPER_AUTO_UPDATE_FAILED'),running:true};
