@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {IntegerKernel as K} from '../integer.mjs';
 import {openSnapshotExperiment,advanceSnapshotExperiment,updateAdaptiveSnapshot} from './paper-snapshot-run-core.mjs';
+import {advancePaperCapture} from './paper-snapshot.mjs';
 const Q=K.Q,pool='A'.repeat(32),mintX='B'.repeat(32),mintY='C'.repeat(32),backendHash='f'.repeat(64);
 function snapshot(slot,fee=0n){
  const rawHash=String(slot).repeat(64),identity={pool,mintX,mintY,slot,rawHash,sdkCommit:K.SDK_COMMIT,idlBlob:'idl',activeId:0,binStep:100,orientation:'MEME_X_SOL_Y',status:'IDENTITY_CHECKED_UNVERIFIED',sides:[{mint:mintX,decimals:6},{mint:mintY,decimals:9}]};
@@ -114,3 +115,5 @@ test('adaptive risk exit cannot reenter even with later profitable preview',()=>
  const s3=advance(s2,a,b,c);const result=updateAdaptiveSnapshot(s3,{snapshot:c,reviewed:{cfg:{},latest:{t:31}},preview:{},reviewHash:'e'.repeat(64),now:32000});
  assert.equal(result.rows[7].status,'EXITED_PROXY');
 });
+
+test('advancing uses only the preceding capture and frozen original baseline',async()=>{const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);const second=advance(state,a,a,b),calls=[];const third=await advancePaperCapture(second,{load:async path=>{calls.push(path);assert.equal(path,b.proof.path);return b},snapshot:c,backendHash,now:1000000});assert.deepEqual(calls,[b.proof.path]);assert.equal(third.rows[0].initialNavYRaw,state.rows[0].initialNavYRaw);assert.equal(third.opening.priceQ64Raw,state.opening.priceQ64Raw);assert.throws(()=>advanceSnapshotExperiment({...second,opening:{...second.opening,priceQ64Raw:String(2n*Q)}},{previous:b,snapshot:c,backendHash,now:1000000}),/PAPER_BASELINE_CHANGED/)});
