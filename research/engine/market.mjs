@@ -22,18 +22,18 @@ function classify(s,c){
   if(!Number.isFinite(m.exitDepth)||m.exitDepth<c.minDepthSol)flags.push("EXIT_DEPTH_LOW");
   if(!Number.isFinite(m.flowSol)||m.flowSol<c.minFlowSol)flags.push("FLOW_LOW");
   if(!Number.isFinite(m.holderOutflow)||!Number.isFinite(m.buyImbalance))flags.push("FLOW_UNKNOWN");
-  const ps=s.history.slice(-12).map(x=>x.ref.price);
+  const ps=s.history.slice(-c.regimeLookback).map(x=>x.ref.price);
   const returns=ps.slice(1).map((p,i)=>Math.log(p/ps[i])),trend=returns.length?sum(returns):0,volatility=Math.sqrt(sum(returns.map(r=>r*r))),path=sum(returns.map(Math.abs)),efficiency=path>EPS?Math.abs(trend)/path:0;
   const mature=markoutSummary(s);
-  if(mature.bid.count>=3&&mature.bid.bps<-100)flags.push("TOXIC_BID");
-  if(mature.ask.count>=3&&mature.ask.bps<-100)flags.push("TOXIC_ASK");
+  if(mature.bid.count>=c.toxicMarkoutMinSamples&&mature.bid.bps<-c.toxicMarkoutBps)flags.push("TOXIC_BID");
+  if(mature.ask.count>=c.toxicMarkoutMinSamples&&mature.ask.bps<-c.toxicMarkoutBps)flags.push("TOXIC_ASK");
   let regime="HEALTHY_RANGE";
-  if(flags.includes("TOKEN_RISK")||flags.includes("EXIT_DEPTH_LOW")||returns.some(r=>r<-.20))regime="STRESS";
-  else if(flags.includes("HOLDER_UNKNOWN")||flags.includes("FLOW_UNKNOWN")||ps.length<3)regime="UNKNOWN";
-  else if(m.holderOutflow>.1&&m.buyImbalance<0)regime="DISTRIBUTION_RANGE";
+  if(flags.includes("TOKEN_RISK")||flags.includes("EXIT_DEPTH_LOW")||returns.some(r=>r < -c.stressLogReturnThreshold))regime="STRESS";
+  else if(flags.includes("HOLDER_UNKNOWN")||flags.includes("FLOW_UNKNOWN")||ps.length<c.regimeMinObservations)regime="UNKNOWN";
+  else if(m.holderOutflow>c.holderOutflowThreshold&&m.buyImbalance<0)regime="DISTRIBUTION_RANGE";
   else if(flags.includes("FLOW_LOW"))regime="DEAD_RANGE";
-  else if(efficiency>.65&&trend>.025)regime="UPTREND";
-  else if(efficiency>.65&&trend<-.025)regime="DOWNTREND";
+  else if(efficiency>c.trendEfficiencyThreshold&&trend>c.trendLogReturnThreshold)regime="UPTREND";
+  else if(efficiency>c.trendEfficiencyThreshold&&trend < -c.trendLogReturnThreshold)regime="DOWNTREND";
   return {regime,flags,features:{trend,volatility,efficiency,buyImbalance:m.buyImbalance,holderOutflow:m.holderOutflow,markout:mature},calibration:"UNCALIBRATED_RULES"};
 }
 // Shared admission rule for all research and paper decision adapters.

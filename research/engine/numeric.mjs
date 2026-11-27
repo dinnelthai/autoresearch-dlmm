@@ -1,14 +1,15 @@
 // Extracted from the offline research engine; calculations unchanged.
 
 const EPS=1e-9, clone=o=>JSON.parse(JSON.stringify(o)), sum=a=>a.reduce((s,v)=>s+v,0), clip=(x,l,h)=>Math.min(h,Math.max(l,x));
-const DEFAULTS=Object.freeze({binStepBps:100,anchorPrice:0.0001,maxInventoryRatio:.65,maxInventoryTokens:200000,minSolReserve:1,maxLossSol:6,stressDrop:.6,maxBinShare:.1,lambda:.5,kappaSol:.2,targetRatio:.45,beta:.95,minImprovementSol:.005,uncertaintySol:.005,operationCostSol:.002,cooldownSeconds:120,executionDelaySeconds:10,maxRebalances:8,maxTurnoverSol:30,maxReferenceAge:120,maxReferenceDivergence:.05,minDepthSol:2,maxHolderShare:.55,minFlowSol:1,markoutSeconds:30,forecastSteps:8,forecastHorizonSeconds:480,feeBps:30,protocolShare:.05,slippageBps:50,referencePrice:0.0001});
+const DEFAULTS=Object.freeze({binStepBps:100,anchorPrice:0.0001,maxInventoryRatio:.65,maxInventoryTokens:200000,minSolReserve:1,maxLossSol:6,stressDrop:.6,maxBinShare:.1,lambda:.5,kappaSol:.2,targetRatio:.45,beta:.95,minImprovementSol:.005,uncertaintySol:.005,operationCostSol:.002,cooldownSeconds:120,executionDelaySeconds:10,maxRebalances:8,maxTurnoverSol:30,maxReferenceAge:120,maxReferenceDivergence:.05,minDepthSol:2,maxHolderShare:.55,minFlowSol:1,markoutSeconds:30,regimeLookback:12,regimeMinObservations:3,trendEfficiencyThreshold:.65,trendLogReturnThreshold:.025,stressLogReturnThreshold:.20,holderOutflowThreshold:.1,toxicMarkoutBps:100,toxicMarkoutMinSamples:3,forecastSteps:8,forecastHorizonSeconds:480,feeBps:30,protocolShare:.05,slippageBps:50,referencePrice:0.0001});
 const assert=(b,m)=>{if(!b)throw Error(m)};
 const finite=(v,n,min=0,max=Infinity)=>{assert(typeof v==="number"&&Number.isFinite(v)&&v>=min&&v<=max,n+" invalid");return v};
 function config(overrides={}) {
   for(const k of Object.keys(overrides))assert(k in DEFAULTS,"Unknown parameter "+k);
   const c={...DEFAULTS,...overrides};
   for(const [k,v] of Object.entries(c))finite(v,k);
-  for(const k of ["maxInventoryRatio","stressDrop","maxBinShare","targetRatio","beta","maxReferenceDivergence","maxHolderShare","protocolShare"])finite(c[k],k,0,1);
+  for(const k of ["maxInventoryRatio","stressDrop","maxBinShare","targetRatio","beta","maxReferenceDivergence","maxHolderShare","protocolShare","trendEfficiencyThreshold","holderOutflowThreshold"])finite(c[k],k,0,1);
+  assert(Number.isInteger(c.regimeLookback)&&c.regimeLookback>=3&&c.regimeLookback<=10000&&Number.isInteger(c.regimeMinObservations)&&c.regimeMinObservations>=3&&c.regimeMinObservations<=c.regimeLookback&&Number.isInteger(c.toxicMarkoutMinSamples)&&c.toxicMarkoutMinSamples>=1,'invalid regime sample domain');
   assert(c.beta<1&&c.maxBinShare>0&&c.binStepBps>0&&c.anchorPrice>0&&c.referencePrice>0&&c.feeBps<10000&&c.slippageBps<10000&&c.forecastSteps>=2&&Number.isInteger(c.forecastSteps)&&c.forecastSteps<=100&&c.forecastHorizonSeconds>0&&Number.isInteger(c.maxRebalances),"invalid config domain");
   return c;
 }
