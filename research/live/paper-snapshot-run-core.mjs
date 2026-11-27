@@ -75,6 +75,12 @@ export function advanceSnapshotExperiment(state,{previous,snapshot,backendHash,n
      claimedX+=fees.x;claimedY+=fees.y;wallet={x:wallet.x+p.x+fees.x,y:wallet.y+p.y+fees.y-feeCost};cost+=feeCost;p=zero();fees=zero();feeGrowth=[];feeCarry=null;status='EXITED_PROXY';reason=exit?'MANUAL_VIRTUAL_EXIT':'RISK_VIRTUAL_EXIT';
     }
    }
+   // A temporarily flat Adaptive portfolio still carries inventory risk. A breached
+   // experiment loss limit must stop future entry even when no LP is open.
+   if(r.mode==='adaptive'&&state.adaptiveRequest&&status==='HOLD_ONLY'){
+    const nav=mark(wallet.x,wallet.y,c.price),high=nav>observedPeak?nav:observedPeak,dd=high?(high-nav)*10000n/high:0n;
+    if(initial-nav>=raw(state.policy.maxLossSolRaw)||dd>=BigInt(state.policy.maxDrawdownBps)){status='EXITED_PROXY';reason='RISK_FLAT_INVENTORY_STOP';}
+   }
    const point=samplePoint({slot:c.i.slot,received:c.received,price:c.price,wallet,principal:p,fees,initial,hold,peak:observedPeak,cost,status});
    return {...r,status,reason,feeGrowth,...(r.feeCarry?{feeCarry}:{}),...(status==='EXITED_PROXY'?{pendingAdaptive:null}:{}),claimedFeeXRaw:s(claimedX),claimedFeeYRaw:s(claimedY),...appendPoint(r,point)};
   }catch(e){return block(errorCode(e,'PAPER_SNAPSHOT_UPDATE_FAILED'))}
@@ -90,8 +96,8 @@ export function updateAdaptiveSnapshot(state,{snapshot,reviewed,preview,reviewHa
  assert(Number.isSafeInteger(now)&&now>=Date.parse(snapshot.proof.receivedAt)&&hash(reviewHash),'PAPER_ADAPTIVE_REVIEW_BINDING');
  const c=facts(snapshot);assert(state.last.slot===c.i.slot&&state.last.proof.accountsHash===c.proof.accountsHash,'PAPER_ADAPTIVE_POINT_SCOPE');
  const intent=adaptiveIntent({row,preview,slot:c.i.slot,requestedAt:c.requested,now,reviewHash,delaySeconds:Math.max(1,reviewed.cfg.executionDelaySeconds)});
- let next={...row,pendingAdaptive:intent.pending,adaptiveReason:intent.reason,adaptiveDecisions:(row.adaptiveDecisions??0)+1};
- if(row.status==='HOLD_ONLY'&&row.lastActionTime!=null&&reviewed.latest.t-row.lastActionTime<(reviewed.cfg.cooldownSeconds??0))return {...state,rows:state.rows.map(r=>r===row?{...next,pendingAdaptive:null,adaptiveReason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'}:r)};
+ let next={...row,pendingAdaptive:intent.pending,adaptiveReason:intent.reason,adaptiveDecisions:(row.adaptiveDecisions??0)+(preview?.selected&&(preview.selected.feasible===true||preview.selected.protectiveExecution===true)?1:0)};
+ if(row.status==='HOLD_ONLY'&&row.lastActionTime!=null&&(reviewed.asOf??reviewed.latest.t)-row.lastActionTime<(reviewed.cfg.cooldownSeconds??0))return {...state,rows:state.rows.map(r=>r===row?{...next,pendingAdaptive:null,adaptiveReason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'}:r)};
  if(intent.apply){
   try{
    const r=validatedAdaptiveRemap({row:{...row,rebalances:row.rebalances??0},selected:intent.apply,snapshot,state,cfg:reviewed.cfg}),last=row.points.at(-1);

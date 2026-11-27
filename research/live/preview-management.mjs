@@ -8,7 +8,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
  const block=reason=>({...result,reason});
  if(!model.bins.some(b=>b.liquidity>0)||model.status!=='OPEN')return block('NO_NONEMPTY_POSITION');
  if(!model.market?.ref?.valid||!Number.isSafeInteger(asOf)||asOf<model.lastTime||asOf>model.market.ref.expiresAt||asOf-model.market.t>cfg.maxReferenceAge)return {...block('REFERENCE_UNAVAILABLE_OR_STALE'),alerts:['MANUAL_POSITION_REVIEW_REQUIRED']};
- const s=copy(model);
+ const s=copy(model);s.lastTime=asOf;
  const p=s.market.ref.price,g=Engine.classify(s,cfg),risk=Engine.risk(s,cfg,p);
  result.regime=g.regime;result.currentRisk=risk;result.currentExitDiagnostic=Engine.liquidation(s,cfg);result.alerts=[...new Set([...g.flags,...risk.violations])];
  result.position={address:position?.position??null,owner:position?.owner??null,lockReleasePointRaw:position?.lockReleasePointRaw??null,feeOwner:position?.feeOwner??null};
@@ -58,7 +58,7 @@ export function previewManagement(model,cfg,market,{asOf,operations=null,positio
    if(!v.feasible)throw Error(v.reason??'MODEL_INFEASIBLE');
    if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
    evaluated.set(row,v);
-   row.feasible=true;row.score=v.utility;row.scoreBasis=v.scoreBasis??null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};
+   row.feasible=true;row.score=v.utility;row.scoreBasis=v.scoreBasis??'LOGICAL_ACTION_SCENARIOS';row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};
   }catch(e){row.feasible=false;row.reason=String(e.message).slice(0,180);}
   result.candidates.push(row);
  }

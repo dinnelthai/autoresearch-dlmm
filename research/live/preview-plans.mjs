@@ -10,6 +10,7 @@ export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
  if(model.bins.length||model.status!=='FLAT')return block('EXISTING_POSITION_REQUIRES_T10');
  if(!model.market?.ref?.valid||!Number.isSafeInteger(asOf)||asOf<model.lastTime||asOf>model.market.ref.expiresAt||asOf-model.market.t>cfg.maxReferenceAge)return block('REFERENCE_UNAVAILABLE_OR_STALE');
  const g=Engine.classify(model,cfg),p=model.market.ref.price;
+ result.currentRisk=Engine.risk(model,cfg,p);result.alerts=[...new Set([...g.flags,...result.currentRisk.violations])];result.regime=g.regime;
  if(!['HEALTHY_RANGE','UPTREND','DOWNTREND'].includes(g.regime)||g.flags.includes('HOLDER_CONCENTRATION'))return block('MARKET_ADMISSION:'+g.regime);
  assert(Number.isInteger(market.activeId)&&Array.isArray(market.bins),'market bin metadata required');
  if(Engine.binId(cfg,p)!==market.activeId)return block('REFERENCE_AND_ACTIVE_BIN_MISMATCH');
@@ -45,7 +46,7 @@ export function previewPlans(model,cfg,market,{asOf,checkAllocation=null}){
    if(checkAllocation&&action.type==='OPEN'){const {modelStart,...summary}=checkAllocation(row);row.integerMapping=summary;v=Engine.evaluate(model,cfg,action,scenarios,{mappedStart});}
    if(!v?.feasible)throw Error(v?.reason??'MODEL_INFEASIBLE');
    if(![v.utility,v.expectedPnl,v.expectedAlpha,v.expectedFee,v.cvar,v.terminalCvar].every(finite))throw Error('NONFINITE_MODEL_OUTPUT');
-   row.score=v.utility;row.scoreBasis=v.scoreBasis??null;row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};row.risk=v.risk;
+   row.score=v.utility;row.scoreBasis=v.scoreBasis??'LOGICAL_ACTION_SCENARIOS';row.reason=null;row.scenarioEstimates={pnlSol:v.expectedPnl,alphaSol:v.expectedAlpha,feeSol:v.expectedFee,operationCostSol:v.expectedOperationCost,cvarLossSol:v.cvar,terminalCvarLossSol:v.terminalCvar,pathRisk:v.pathRisk,cvarBasis:'SAMPLED_PATH_MAX_LOSS_FROM_START_NAV',volumeDiagnostics:v.volumeDiagnostics,fillDiagnostics:v.fillDiagnostics};row.risk=v.risk;
   }catch(e){row.feasible=false;row.reason=String(e.message).slice(0,180)}
   rows.push(row);
  }

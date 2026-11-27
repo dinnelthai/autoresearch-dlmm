@@ -19,7 +19,7 @@ export function decisionLog(preview,{inputHash,reason,outcome,slot,observedAt,ki
   g.total++;if(r.feasible){g.feasible++;if(!g.best||r.score>g.best.score)g.best=candidateSummary(r)}else{const k=String(r.reason??'UNKNOWN').slice(0,180);g.rejections[k]=(g.rejections[k]??0)+1}groups.set(key,g);
  }
  if(!preview?.candidates?.length&&Array.isArray(preview?.families))for(const f of preview.families)groups.set(f.family,{family:f.family,total:f.total??1,feasible:f.feasible??(f.best?1:0),best:candidateSummary(f.best),rejections:f.best?{}:{NO_FEASIBLE_PLAN:1}});
- return {slot,observedAt,...(kind?{kind}:{}),...(decidedAt!=null?{decidedAt}:{}),...(input?{input}:{}),inputHash:inputHash??null,status:preview?.status??'NO_MODEL_DECISION',reason:reason??preview?.reason??null,selected:candidateSummary(preview?.selected),candidateCount:[...groups.values()].reduce((n,g)=>n+g.total,0),groups:[...groups.values()],outcome:outcome??null,controls:preview?.controls??null,alerts:preview?.alerts??[]};
+ return {slot,observedAt,...(kind?{kind}:{}),...(decidedAt!=null?{decidedAt}:{}),...(input?{input}:{}),inputHash:inputHash??null,status:preview?.status??'NO_MODEL_DECISION',reason:reason??preview?.reason??null,selected:candidateSummary(preview?.selected),candidateCount:[...groups.values()].reduce((n,g)=>n+g.total,0),groups:[...groups.values()],outcome:outcome??null,controls:preview?.controls??null,...(preview?.currentRisk?{currentRisk:preview.currentRisk}:{}),alerts:preview?.alerts??[]};
 }
 export function operationLog(previous,next,beforeDecision=null){
  return next.rows.flatMap(r=>{

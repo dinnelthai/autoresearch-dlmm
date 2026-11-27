@@ -156,3 +156,24 @@ test('canonical forecast uses mapped integer principal, fixed capital, cost and 
  assert.equal(v.feasible,true,v.reason);assert.equal(v.scoreBasis,'MAPPED_IMMEDIATE_ACTION_SCENARIOS');assert.equal(v.allocation[0].x,.5);assert.ok(v.expectedFee>0);assert.equal(v.expectedOperationCost,0);
  assert.equal(E.evaluate(m,cfg,selected.action,scenarios,{mappedStart:{...start,initialNav:9}}).feasible,false);
 });
+
+test('Adaptive flat inventory loss stops reentry without inventing an LP exit cost',()=>{
+ const {a,state}=fixture(),b=snapshot(2);state.adaptiveRequest={goal:'balanced'};state.rows[7]={...structuredClone(state.rows[0]),mode:'adaptive',mapping:null,entries:0,pendingAdaptive:{action:'OPEN'}};
+ state.policy.maxLossSolRaw='100000';b.bins.arrays[0].bins[0].priceQ64Raw=String(Q/2n);
+ const next=advance(state,a,a,b),row=next.rows[7];assert.equal(row.status,'EXITED_PROXY');assert.equal(row.reason,'RISK_FLAT_INVENTORY_STOP');assert.equal(row.points.at(-1).costYRaw,'0');assert.equal(row.pendingAdaptive,null);assert.equal(next.rows[0].status,'HOLD_ONLY');
+});
+test('blocked or unselected preview does not count as a completed Adaptive decision',()=>{
+ const {a,state}=fixture(),b=snapshot(2);state.adaptiveRequest={goal:'balanced'};const s2=advance(state,a,a,b);
+ const next=updateAdaptiveSnapshot(s2,{snapshot:b,reviewed:{cfg:{executionDelaySeconds:1},latest:{t:21}},preview:{status:'BLOCKED',reason:'REFERENCE_UNAVAILABLE_OR_STALE'},reviewHash:'e'.repeat(64),now:22000});
+ assert.equal(next.rows[7].adaptiveDecisions,0);assert.equal(next.rows[7].adaptiveReason,'REFERENCE_UNAVAILABLE_OR_STALE');
+});
+test('Paper cooldown uses analysis time while retaining original market observation time',async()=>{
+ const {virtualManagement}=await import('./paper-adaptive-core.mjs'),{Engine:E}=await import('../engine.mjs');
+ const {a,state}=fixture(),b=snapshot(2),s2=advance(state,a,a,b);
+ s2.adaptiveRequest={goal:'balanced'};const row={...structuredClone(s2.rows[0]),mode:'adaptive',mapping:null,entries:1,rebalances:0,lastActionTime:5};
+ const cfg=E.config({anchorPrice:.001,binStepBps:100,minSolReserve:0,maxLossSol:10,maxInventoryTokens:1000000,maxInventoryRatio:1,maxBinShare:.1,cooldownSeconds:15});
+ const obs=[1,6,11].map(t=>{const e={type:'MARKET',id:'m'+t,t,pool,references:[{pool:'ref1',price:.001,depth:10,availableAt:t},{pool:'ref2',price:.001,depth:10,availableAt:t}],exitDepth:10,tokenSafe:true,holderShare:.1,holderOutflow:0,buyImbalance:0,flowSol:10,flowWindowSeconds:60};return {...e,ref:E.reference(e,cfg)}});
+ const reviewed={cfg,latest:obs.at(-1),observations:obs,asOf:21},preview=virtualManagement({state:s2,row,snapshot:b,reviewed});
+ assert.notEqual(preview.reason,'PAPER_ADAPTIVE_REENTRY_COOLDOWN');assert.equal(reviewed.latest.t,11);assert.equal(preview.regime,'HEALTHY_RANGE');
+ const blocked=virtualManagement({state:s2,row:{...row,lastActionTime:7},snapshot:b,reviewed});assert.equal(blocked.reason,'PAPER_ADAPTIVE_REENTRY_COOLDOWN');
+});

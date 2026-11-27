@@ -29,13 +29,16 @@ export function virtualManagement({state,row,snapshot,reviewed}){
  model.history=observations.slice(0,-1);E.event(model,cfg,{...latest,id:'virtual-market:'+latest.id});
  const bins=[...map.values()],external=bins.flatMap(b=>{const x=rawHuman(b.amountXRaw,i.sides[0].decimals),y=rawHuman(b.amountYRaw,9);return x+y>0?[{id:b.binId,externalLiquiditySol:x*E.price(cfg,b.binId)+y}]:[]});
  if(external.length)E.event(model,cfg,{type:'POOL_STATE',id:'virtual-pool:'+i.rawHash,t:latest.t,bins:external});
+ // The position is marked at the capture/analysis boundary, not the older quote timestamp.
+ // Do not change any evidence timestamp or synthesize a newer MARKET observation.
+ model.lastTime=asOf;
  const checkAllocation=selected=>{
   const mapped=validatedAdaptiveRemap({row:{...row,rebalances:row.rebalances??0},selected,snapshot,state,cfg});
   const modelStart=mappedScenarioStart(model,cfg,map,i,row,mapped,selected.action.type);
   return {modelStart,basis:'OBSERVED_SHARE_PROXY',binCount:mapped.mapping?.rows.length??0,principalXRaw:String(mapped.principalX),principalYRaw:String(mapped.principalY),walletXRaw:String(mapped.walletX),walletYRaw:String(mapped.walletY),costYRaw:String(mapped.cost),navYRaw:String(mapped.nav),turnoverYRaw:String(mapped.turnover)};
  };
  if(row.status==='HOLD_ONLY'){
-  if(row.lastActionTime!=null&&latest.t-row.lastActionTime<cfg.cooldownSeconds)return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'};
+  if(row.lastActionTime!=null&&asOf-row.lastActionTime<cfg.cooldownSeconds)return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_COOLDOWN'};
   if((row.entries??0)>0&&((row.rebalances??0)>=cfg.maxRebalances||raw(row.turnoverYRaw??'0')>=scaledFloat(cfg.maxTurnoverSol,9)))return {status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:null,reason:'PAPER_ADAPTIVE_REENTRY_BUDGET'};
   return previewPlans(model,cfg,{activeId:i.activeId,bins},{asOf,checkAllocation});
  }
