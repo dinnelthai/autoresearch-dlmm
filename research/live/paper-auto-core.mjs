@@ -1,5 +1,6 @@
 // Pure scheduling/public projection helpers; no real trading.
 import {assert,hash} from './research-contract.mjs';
+import {INTERVAL_FEE_BASIS} from './paper-fee-core.mjs';
 export function nextPaperCapture(state,market){
  assert(state?.pool===market?.pool&&state.mintX===market.mintX&&state.mintY===market.mintY&&Number.isSafeInteger(market.slot)&&hash(market.rawHash),'PAPER_AUTO_SCOPE');
  assert(market.slot>=state.last.slot,'PAPER_AUTO_SLOT_REGRESSED');
@@ -11,7 +12,7 @@ export function pairedObservation(state){
  const base=state.rows.find(r=>r.mode==='NO_LP'),b=base?.points?.at(-1),n=state.snapshotCount;
  const count=r=>(r.pointsDropped??0)+(r.points?.length??0);
  const signed=v=>typeof v==='string'&&/^-?\d{1,80}$/.test(v);
- const eligible=state.feeBasis==='FROZEN_FEE_FLOW_DILUTION_PROXY_V1'&&state.gapCount===0&&Number.isSafeInteger(n)&&n>=2&&base?.status==='HOLD_ONLY'&&b?.slot===state.last.slot&&count(base)===n&&signed(b.navYRaw);
+ const eligible=[INTERVAL_FEE_BASIS,'FROZEN_FEE_FLOW_DILUTION_PROXY_V1'].includes(state.feeBasis)&&state.gapCount===0&&Number.isSafeInteger(n)&&n>=2&&base?.status==='HOLD_ONLY'&&b?.slot===state.last.slot&&count(base)===n&&signed(b.navYRaw);
  const rows=state.rows.map(r=>{
   const p=r.points?.at(-1);let status='UNPAIRED_OBSERVATION',alpha=null;
   if(r.status==='BLOCKED')status='BLOCKED_PATH';

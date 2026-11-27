@@ -45,6 +45,26 @@ export function estimateFeeGrowth({before,after,allocation}){
  }catch(e){result.reason=errorCode(e,'PAPER_FEE_INPUT_INVALID');result.rows=[];result.totals=null}
  return {...result,limitations:['Shares are user-declared hypothetical fixed shares, not deposits, positions or claims. No proof of ex ante allocation.','SDK checkpoint arithmetic uses observed growth; virtual addition changes denominator and potentially trade paths. Diluted estimate assumes constant external supply and unchanged total fee flow; equal endpoints do not prove this.','No missing intermediate state, liquidity changes, principal attribution, operating costs, markout, exit valuation or PnL inferred.','Not a bound on realized fees, not a complete history or protocol replay.']};
 }
+// Forward paper accounting: approximate external supply by the interval midpoint.
+// Accumulate discounted Q64 growth per bin, then apply SDK rounding once to the running total.
+export const INTERVAL_FEE_BASIS='MIDPOINT_SUPPLY_INTERVAL_FEE_PROXY_V2';
+export function intervalFees(previous,current,shares,accumulated=[]){
+ const prior=new Map(accumulated.map(r=>[r.binId,r])),growth=[],fees={x:0n,y:0n};
+ assert(prior.size===accumulated.length&&(!prior.size||prior.size===shares.length),'PAPER_FEE_ACCUMULATOR_SCOPE');
+ for(const item of shares){
+  const id=item.binId,a=previous.get(id),b=current.get(id),share=raw(item.shareRaw),p=prior.get(id);
+  assert(a&&b&&a.version===b.version&&a.priceQ64Raw===b.priceQ64Raw&&raw(a.priceQ64Raw)>0n,'PAPER_FEE_BIN_MISSING_OR_CHANGED');
+  assert([a,b].every(r=>limits.every(k=>r.version===2?r[k]===null:raw(r[k],64)===0n)),'PAPER_FEE_LIMIT_ORDER_UNSUPPORTED');
+  const s0=raw(a.liquiditySupplyRaw),s1=raw(b.liquiditySupplyRaw),sum=s0+s1;
+  assert(share>0n&&share*10n<=s0&&share*10n<=s1,'PAPER_FEE_SHARE_LIMIT');
+  assert(!prior.size||p,'PAPER_FEE_ACCUMULATOR_SCOPE');
+  const discounted=key=>{const from=raw(a[key]),to=raw(b[key]);assert(to>=from,'PAPER_FEE_GROWTH_REGRESSED');return (to-from)*sum/(sum+2n*share)};
+  const x=raw(p?.xRaw??'0')+discounted('feeXPerTokenRaw'),y=raw(p?.yRaw??'0')+discounted('feeYPerTokenRaw');
+  const value=checkpointFees(id,share,{x:0n,y:0n},{x,y});
+  fees.x+=value.feeX;fees.y+=value.feeY;growth.push({binId:id,xRaw:text(x),yRaw:text(y)});
+ }
+ return {fees,growth};
+}
 // Compare observed market-supply entitlement to a single event fee as a calibration diagnostic.
 export function feeEventDiagnostic(candidate){
  const a=candidate.preBin,b=candidate.postBin,share=raw(a.liquiditySupplyRaw);

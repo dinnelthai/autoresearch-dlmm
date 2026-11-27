@@ -34,12 +34,9 @@ export function readSnapshotCheckpoint(cp,id,pool=null){
  assert(hash(checkpointHash)&&sha(JSON.stringify(state))===checkpointHash&&state.id===id&&(!pool||state.pool===pool)&&state.scope==='PAPER_SNAPSHOT_FIXED_SHARE_ONLY'&&state.executionReady===false&&state.pnlReady===false,'PAPER_SNAPSHOT_CHECKPOINT_HASH');
  return state;
 }
-// Both manual and scheduled runs consume the same opening, prior and adaptive segment snapshots.
+// Both manual and scheduled runs consume the same opening and prior snapshots.
 export async function advancePaperCapture(state,{load,snapshot,backendHash,now,exit=false}){
  const opening=await load(state.opening.proof.path);
  const previous=state.opening.slot===state.last.slot?opening:await load(state.last.proof.path);
- const segmentOpenings={};
- for(const row of state.rows)if(row.status==='OPEN_PROXY'&&row.segmentOpening)
-  segmentOpenings[row.mode]=row.segmentOpening.slot===state.opening.slot?opening:row.segmentOpening.slot===state.last.slot?previous:await load(row.segmentOpening.proof.path);
- return advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,segmentOpenings,exit});
+ return advanceSnapshotExperiment(state,{opening,previous,snapshot,backendHash,now,exit});
 }
