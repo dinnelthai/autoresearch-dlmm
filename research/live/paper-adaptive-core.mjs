@@ -24,7 +24,7 @@ export function paperDecisionConfig(riskConfig,controls,tuning,policy){
 }
 export function paperEnvironment(reviewed){
  const {latest,observations,asOf,cfg}=reviewed;
- return E.classify({market:latest,history:observations,lastTime:asOf,marks:[],fills:[]},cfg);
+ return {...E.classify({market:latest,history:observations,lastTime:asOf,marks:[],fills:[]},cfg),markoutBasis:'UNAVAILABLE_OBSERVED_SHARE_SNAPSHOTS'};
 }
 export function restoreVirtualModel({state,row,snapshot,reviewed}){
  const {identity:i,map}=snapshotRows(snapshot),{cfg,latest,observations,asOf}=reviewed,p=row.points.at(-1);
