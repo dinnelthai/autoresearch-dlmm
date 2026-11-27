@@ -32,7 +32,7 @@ function planBins(c,p,bid,ask,spec){
   add(mid,ask*active,bid*active);return [...map.values()].filter(b=>b.liquidity>EPS).sort((a,b)=>a.id-b.id);
 }
 function deploy(s,c,p,spec){
-  const cap=bidCap(s,c,p),bid=Math.min(spec.bidFraction*cap,Math.max(0,s.wallet.y-c.minSolReserve)),ask=s.wallet.x*spec.askFraction;
+  const cap=bidCap(s,c,p,planBins(c,p,1,0,spec)),bid=Math.min(spec.bidFraction*cap,Math.max(0,s.wallet.y-c.minSolReserve)),ask=s.wallet.x*spec.askFraction;
   const bins=planBins(c,p,bid,ask,spec);s.wallet.y-=sum(bins.map(b=>b.y));s.wallet.x-=sum(bins.map(b=>b.x));
   for(const b of bins){const old=s.bins.find(a=>a.id===b.id);if(old){old.x+=b.x;old.y+=b.y;old.liquidity+=b.liquidity}else s.bins.push(b)}
   s.status=s.bins.length?"OPEN":"FLAT";return {bid,ask};

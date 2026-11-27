@@ -23,9 +23,23 @@ function risk(s,c,p){
   if(loss>c.maxLossSol+EPS)violations.push("STRESS_LOSS");
   return {bid,postX,postY,worstRatio,stressLoss:loss,stressedValue,exitExposure:exit,violations};
 }
-function bidCap(s,c,p){
-  const b=balances(s),v=nav(s,p),z=v>EPS?b.x*p/v:1,existing=sum(s.bins.map(b=>b.y));
-  return Math.max(0,Math.min(s.wallet.y-c.minSolReserve,(c.maxInventoryRatio-z)*v-existing));
+// A unit SOL allocation supplies exact per-bin conversion and stress coefficients.
+// Existing commitments are already included in risk(); do not deduct them twice.
+function bidCap(s,c,p,unitBins=null){
+  const r=risk(s,c,p),v=nav(s,p);
+  if(r.violations.length||!(v>EPS))return 0;
+  const stressP=p*(1-c.stressDrop);
+  const units=unitBins??[{id:null,y:1}];
+  const quantity=sum(units.map(b=>b.y/(b.id===null?p:price(c,b.id))));
+  const stress=sum(units.map(b=>b.y*Math.max(0,1-stressP/(b.id===null?p:price(c,b.id)))));
+  const ratioSlope=(1-c.maxInventoryRatio)*quantity*p+c.maxInventoryRatio;
+  const caps=[s.wallet.y-c.minSolReserve,
+    (c.maxInventoryTokens-r.postX)/quantity,
+    (c.maxInventoryRatio*(r.postX*p+r.postY)-r.postX*p)/ratioSlope];
+  if(r.exitExposure.status==='PROXY_ONLY')caps.push(r.exitExposure.prospectiveHeadroomSol/(quantity*p));
+  else if(s.market?.ref.valid)return 0;
+  if(stress>0)caps.push((c.maxLossSol-r.stressLoss)/stress);
+  return Math.max(0,Math.min(...caps));
 }
 function liquidation(s,c){
   if(!fresh(s,c))return {status:'UNAVAILABLE',value:null,netLiquidationValue:null};
