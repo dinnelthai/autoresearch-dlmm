@@ -50,7 +50,7 @@ export function createTerminalPaperService({ROOT,DATA,pool,maxAgeMs,backendHash,
   if(body.policy.adaptive){
    const controls=adaptivePolicy(body.policy.adaptive);state.adaptiveRequest={...request,riskConfig:{...riskConfig,...controls}};
    const row=state.rows.find(r=>r.mode==='adaptive'),base=state.rows[0];
-   if(row?.status==='BLOCKED'&&base.status==='HOLD_ONLY')state.rows=state.rows.map(v=>v===row?{...structuredClone(base),mode:'adaptive',mapping:null,adaptiveReason:row.reason}:v);
+   if(row?.status==='BLOCKED'&&base.status==='HOLD_ONLY')state.rows=state.rows.map(v=>v===row?{...structuredClone(base),mode:'adaptive',mapping:null,entries:0,adaptiveReason:row.reason}:v);
   }
   state.window=freezePaperWindow(state.frozenAt,body.policy.evaluationDays,state.policy.maxGapSeconds);state.researchBinding={requestHash:sha(JSON.stringify(request)),reviewHash,reportHash:sha(JSON.stringify(r)),marketSlot:m.slot,marketRawHash:m.rawHash,planBasis:reviewHash?'REVIEWED_MODEL':'FIXED_OBSERVED_BIN_CONTROL'};
   assert(state.rows[0].status==='HOLD_ONLY','PAPER_AUTO_BASELINE_UNAVAILABLE');

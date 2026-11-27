@@ -92,3 +92,25 @@ test('adaptive can start flat and later open from a newer feasible model plan wi
  assert.equal(s3.rows[7].status,'OPEN_PROXY');assert.equal(s3.rows[7].rebalances,0);assert.equal(s3.rows[7].initialNavYRaw,state.rows[0].initialNavYRaw);assert.equal(s3.rows[7].points.length,3);
  const s4=advance(s3,a,c,d);assert.equal(s4.rows[7].points.at(-1).feeXRaw,'9');assert.equal(s4.rows[7].points.at(-1).excessVsHoldYRaw,'9');
 });
+
+test('adaptive voluntary exit settles fees once, observes cooldown, then reenters without resetting capital',()=>{
+ const {a,state}=fixture(),b=snapshot(2,1n),c=snapshot(3,2n),d=snapshot(4,3n),e=snapshot(5,4n),f=snapshot(6,5n),g=snapshot(7,6n);
+ state.adaptiveRequest={goal:'balanced'};
+ const cfg={executionDelaySeconds:1,operationCostSol:0,cooldownSeconds:15,maxRebalances:8,maxTurnoverSol:30,minSolReserve:0,maxBinShare:.1};
+ const remove={status:'RESEARCH_MANAGEMENT_PREVIEW_UNVERIFIED',selected:{feasible:true,action:{type:'REMOVE_AND_HOLD'},estimatedOperationCostSol:0}};
+ const open={status:'RESEARCH_PLAN_PREVIEW_UNVERIFIED',selected:{feasible:true,action:{type:'OPEN'},allocation:{bins:[{binId:1,meme:1,sol:0}]}}};
+ const update=(s,x,p)=>updateAdaptiveSnapshot(s,{snapshot:x,reviewed:{cfg,latest:{t:x.identity.slot*10+1}},preview:p,reviewHash:'e'.repeat(64),now:x.identity.slot*10000+2000});
+ let s2=update(advance(state,a,a,b),b,remove),s3=update(advance(s2,a,b,c),c,remove);
+ assert.equal(s3.rows[7].status,'HOLD_ONLY');assert.equal(s3.rows[7].mapping,null);assert.equal(s3.rows[7].claimedFeeXRaw,'18');assert.equal(s3.rows[7].entries,1);
+ let s4=update(advance(s3,a,c,d),d,open);assert.equal(s4.rows[7].pendingAdaptive,null);assert.equal(s4.rows[7].adaptiveReason,'PAPER_ADAPTIVE_REENTRY_COOLDOWN');
+ let s5=update(advance(s4,a,d,e),e,open),s6=update(advance(s5,a,e,f),f,open);
+ assert.equal(s6.rows[7].status,'OPEN_PROXY');assert.equal(s6.rows[7].entries,2);assert.equal(s6.rows[7].rebalances,1);assert.equal(s6.rows[7].claimedFeeXRaw,'18');assert.equal(s6.rows[7].initialNavYRaw,state.rows[0].initialNavYRaw);assert.equal(s6.rows[7].turnoverYRaw,'2000000');
+ const s7=advance(s6,a,f,g);assert.equal(s7.rows[7].points.at(-1).feeXRaw,'9');assert.equal(s7.rows[7].points.at(-1).excessVsHoldYRaw,'27');
+});
+test('adaptive risk exit cannot reenter even with later profitable preview',()=>{
+ const {a,state}=fixture(),b=snapshot(2),c=snapshot(3);
+ state.adaptiveRequest={goal:'balanced'};state.policy.maxLossSolRaw='1';b.bins.arrays[0].bins[1].amountXRaw='9000000';
+ const s2=advance(state,a,a,b);assert.equal(s2.rows[7].status,'EXITED_PROXY');
+ const s3=advance(s2,a,b,c);const result=updateAdaptiveSnapshot(s3,{snapshot:c,reviewed:{cfg:{},latest:{t:31}},preview:{},reviewHash:'e'.repeat(64),now:32000});
+ assert.equal(result.rows[7].status,'EXITED_PROXY');
+});
