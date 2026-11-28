@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {advance,windows,auditCandles} from './core.mjs';
+const pool='p',a='A'.repeat(88),b='B'.repeat(88),s={pool,cursor:null,since:100,signatures:0};
+const m={pool,indexAddress:pool,position:null,commitment:'finalized',before:null,gaps:[],status:'BOUNDED_SAMPLE_CAPTURED_UNVERIFIED',signatures:[{signature:a,slot:2,blockTime:110},{signature:b,slot:1,blockTime:90}],nextBefore:b};
+test('advance preserves unverified scope and counts',()=>{const n=advance(s,m);assert.equal(n.cursor,b);assert.equal(n.status,'READY');assert.equal(n.signatures,2);assert.equal(n.oldestObserved,90)});
+test('boundary requires an entire batch below threshold',()=>assert.equal(advance(s,{...m,signatures:[{signature:a,slot:2,blockTime:99},{signature:b,slot:1,blockTime:90}]}).status,'BOUNDARY_OBSERVED_UNVERIFIED'));
+test('partial, mismatched identity, malformed time and backwards slot fail',()=>{for(const x of [{gaps:[{}]},{before:a},{nextBefore:a},{signatures:[{signature:b,slot:1,blockTime:null}]},{signatures:[{signature:a,slot:1,blockTime:90},{signature:b,slot:2,blockTime:80}]}])assert.throws(()=>advance(s,{...m,...x}))});
+test('empty and short page never certify history',()=>{assert.equal(advance(s,{...m,status:'EMPTY_PAGE_OBSERVED_UNVERIFIED',signatures:[]}).status,'SOURCE_EXHAUSTED_UNVERIFIED');assert.equal(advance(s,{...m,stopReason:'SHORT_PAGE'}).status,'SOURCE_EXHAUSTED_UNVERIFIED')});
+test('half-open windows are bounded and contiguous',()=>assert.deepEqual(windows(0,10800,2),[{start:0,end:7200},{start:7200,end:10800}]));
+const row=t=>({timestamp:t,open:1,high:2,low:1,close:2,volume:0});
+test('candles preserve holes and drop shared end',()=>{const r=auditCandles({data:[row(7200),row(0)]},{start:0,end:7200});assert.deepEqual(r.missing,[3600]);assert.deepEqual(r.rows,[row(0)])});
+test('invalid candles rejected',()=>{for(const data of [[row(0),row(0)],[row(1)],[{...row(0),low:3}],[row(10800)]])assert.throws(()=>auditCandles({data},{start:0,end:7200}))});
