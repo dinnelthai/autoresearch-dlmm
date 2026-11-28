@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "pools": [
+    "REPLACE_WITH_USER_SELECTED_POOL"
+  ],
+  "start": "2026-11-01",
+  "validationStart": "2026-11-21",
+  "testStart": "2026-11-26",
+  "end": "2026-12-01",
+  "snapshotManifests": [
+    "../../data/historical/REPLACE_WITH_POOL/snapshots/2026-11-27/manifest.json"
+  ],
+  "swapReports": [
+    {
+      "report": "../../data/decoded-sample.json",
+      "quality": "../../data/sample-quality.json"
+    }
+  ]
+}
