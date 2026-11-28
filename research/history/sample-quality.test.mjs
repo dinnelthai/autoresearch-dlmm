@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {auditReport} from './sample-quality-core.mjs';
+const pool="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",sig="BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",tx={"signature":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","slot":2,"txIndex":0,"blockTime":100,"success":true,"eventCount":1},ev={"signature":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","id":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB:0","pool":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","slot":2,"txIndex":0,"blockTime":100,"event":"Swap","direction":"X_TO_Y","startBinId":0,"endBinId":1,"amountInRaw":"9007199254740993","amountOutRaw":"1","legacyFeeRaw":"1","mmFeeRaw":null};
+const fixture={pool,position:null,status:'EVENTS_DECODED_UNVERIFIED',events:[ev],transactions:[tx],gaps:[]};
+test("legacy fee never becomes mm fee",()=>assert.equal((()=>{let a=auditReport(fixture);return a.coverage.mmFeeRaw.present===0&&a.coverage.legacyFeeRaw.present===1&&a.counts.multiBin===1&&!a.perBinReplayReady})(),true));
+test("partial reports remain partial",()=>assert.equal((()=>auditReport({...fixture,gaps:[{reason:'RPC_NULL'}]}).status==='PARTIAL_OR_EMPTY')(),true));
+test("empty report no coverage",()=>assert.equal((()=>{let a=auditReport({...fixture,events:[],transactions:[]});return a.coverage.mmFeeRaw.fraction===null&&a.status==='PARTIAL_OR_EMPTY'})(),true));
+test("duplicate rejected",()=>assert.equal((()=>{try{auditReport({...fixture,events:[ev,ev]});return false}catch{return true}})(),true));
+test("missing tx rejected",()=>assert.equal((()=>{try{auditReport({...fixture,transactions:[]});return false}catch{return true}})(),true));
+test("bad event count rejected",()=>assert.equal((()=>{try{auditReport({...fixture,transactions:[{...tx,eventCount:2}]});return false}catch{return true}})(),true));
+test("unsafe numerical raw amounts marked invalid",()=>assert.equal((()=>auditReport({...fixture,events:[{...ev,amountInRaw:9007199254740992}]}).counts.invalid===1)(),true));
